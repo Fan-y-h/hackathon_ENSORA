@@ -1,0 +1,73 @@
+# API contracts — proposed v1
+
+[RECOMMENDATION] Freeze these conventions before feature branches; generate OpenAPI from Pydantic and TypeScript types from the same schema. Contract changes require integration-owner review. Base `/api/v1`, JSON UTF-8, snake_case, UUID IDs, UTC timestamps, minutes integer. Authenticated user resolved from session, not request body. All list endpoints accept `limit` (default 50, max 200) and opaque `cursor`, return `{items,next_cursor}`. Mutations return resource and revision or 202 job. Errors use `{error:{code,message,details,request_id}}`; 400 invalid input, 401 auth, 403 forbidden/policy, 404 absent, 409 stale/conflict, 422 validation, 429 quota, 503 unavailable. No secret values in responses. POST jobs and evidence accept `Idempotency-Key`; revision checks use `expected_revision` or If-Match.
+
+## Endpoint catalogue
+| Method/path (relative to base) | Request / response and behavior |
+|---|---|
+| GET /health | service readiness, DB/index availability; no credentials |
+| POST /auth/login, POST /auth/logout | local credentials/session; logout invalidates; explicit demo mode only |
+| GET/PATCH /profile | Profile, Preferences; validate cohort and limits |
+| GET/PATCH /settings | provider policy, sync preferences, notification channels; secrets write-only |
+| GET /connections; POST /connections | list/create source config; authorization handshake separately |
+| POST /connections/{id}/authorize; DELETE /connections/{id} | authorized OAuth flow or revoke locally |
+| POST /sync | `{connection_id?,subject_id?,folder_id?}` → Job; selective or all |
+| GET /sync/runs; GET /jobs/{id}; POST /jobs/{id}/cancel | sync history and job status; cancel cooperative |
+| GET/POST /subjects; GET/PATCH /subjects/{id} | catalog and manual mapping |
+| GET /subjects/{id}/chapters; GET /subjects/{id}/concepts | chapter/concept list with evidence |
+| PATCH /concepts/{id}; POST /subjects/{id}/aliases | confirm mapping/prerequisites via approved DTO |
+| GET /documents; POST /documents/import | filters subject/chapter/type/source/year; multipart file + metadata → Job |
+| GET /documents/{id}; GET /documents/{id}/versions/{version_id}/content | metadata, authorized blob stream |
+| PATCH /documents/{id}; POST /documents/{id}/links | classify/associate solution, expected revision |
+| GET /search | q, subject_id, document_ids, mode lexical/semantic/hybrid → hits with citations |
+| GET /citations/{id} | authorized exact locator and excerpt |
+| GET/POST /events; PATCH/DELETE /events/{id} | calendar range, personal events; imported originals read-only; separate confirmation action |
+| GET /assessments; PATCH /assessments/{id} | scope confirmation, format, concept IDs, revision |
+| GET/POST /tasks; PATCH/DELETE /tasks/{id} | CRUD, status, remaining_min, priorities, user overrides |
+| POST /tasks/decompose | instructions/document IDs → Job returning editable proposal |
+| POST /planner/preview | horizon, optional overrides → PlanPreview; no plan commit |
+| POST /planner/accept | preview_id, input_revision → accepted Plan; conflict 409 if stale |
+| GET /plans/current; PATCH /sessions/{id} | get current, move/lock with constraint validation |
+| POST /sessions/{id}/start; POST /sessions/{id}/finish | state transition, actual/remaining time, reflection; start can request selected artifact |
+| POST /planner/replan | reason, base_plan_revision → preview/diff |
+| GET/POST /conversations; GET /conversations/{id}/messages | scoped history |
+| POST /conversations/{id}/messages | TutorRequest → response or Job, citation IDs, evidence status |
+| POST /artifacts/generate; GET /artifacts | GenerationSpec → cached artifact or 202 Job; filters |
+| GET/PATCH /artifacts/{id}; GET /artifacts/{id}/versions | content/version history; edits create new version |
+| GET /providers; GET /usage | capabilities, permitted model IDs, budget consumption |
+| GET/POST /decks; GET/POST /decks/{id}/cards | create/list decks/cards; patch card by ID |
+| GET /reviews/due; POST /cards/{id}/review | rating + reviewed_at server-validated → due date, evidence |
+| GET/POST /quizzes; POST /quizzes/{id}/attempts | create definition or attempt; active payload excludes answer key |
+| PATCH /attempts/{id}/responses; POST /attempts/{id}/submit | response save and idempotent finalize; server checks expiry |
+| GET /attempts/{id}/result | post-submit rubric, score, feedback; 403 while active |
+| GET /mastery; GET /study-needs | subject/concept filter; estimates and next actions |
+| GET/POST /notes; PATCH/DELETE /notes/{id} | Markdown, citations, revision, user-owned notes |
+| GET/POST /annotations; GET/POST /errors | document anchors and error notebook |
+| POST /focus/start; POST /focus/{id}/transition; POST /focus/{id}/finish | work/break intervals and reflection; idempotent state machine |
+| GET /analytics | range, subject filter → work, adherence, scores, mastery, readiness |
+| GET /notifications; PATCH /notifications/{id} | read state; configured delivery later |
+| POST /shares/export; POST /shares/import | rights-checked package; later shared service |
+| POST /account/export; DELETE /account | explicit confirmation, asynchronous export/deletion |
+
+## Canonical DTO examples (illustrative UUID placeholders)
+```json
+{"id":"uuid","subject_id":"uuid","title":"PPDP","type":"exam","start_at":"2026-12-07T08:30:00+01:00","end_at":"2026-12-07T10:30:00+01:00","source":"pamplemousse","confirmation_required":true,"revision":1}
+```
+Calendar output normalizes timestamps to UTC; input accepts explicit offsets. Event type enum class/td/tp/exam/presentation/deadline/personal/other; planned sessions returned separately or with `origin=planner`.
+
+```json
+{"type":"revision_sheet","subject_id":"uuid","document_ids":["uuid"],"concept_ids":["uuid"],"objective":"understand","locale":"fr","difficulty":"intermediate","duration_min":20,"detail_level":"detailed","model":"auto","user_instructions":"Include formulas","force_regenerate":false}
+```
+```json
+{"id":"uuid","kind":"generation","status":"queued","progress":0,"result_id":null,"error":null}
+```
+```json
+{"preview_id":"uuid","input_revision":"snapshot-hash","sessions":[{"id":"uuid","subject_id":"uuid","concept_ids":["uuid"],"activity_type":"active_recall","start_at":"2026-12-06T13:00:00Z","end_at":"2026-12-06T13:30:00Z","estimated_min":30,"objective":"Recall definitions","success_criteria":"Answer independently","resource_ids":["uuid"],"locked":false}],"unscheduled":[{"need_id":"uuid","remaining_min":30,"reason":"CAPACITY"}],"warnings":[]}
+```
+```json
+{"question":"Explain k-anonymity","subject_id":"uuid","document_ids":["uuid"],"mode":"explain","locale":"en","model":"auto"}
+```
+TutorResponse: `{message_id,answer_markdown,citations:[Citation],evidence_status,provider,model,usage}`. Citation defined in [RAG_ARCHITECTURE](RAG_ARCHITECTURE.md). ReviewRequest `{rating:"again|hard|good|easy", expected_revision:1}`; ReviewResult `{card_id,next_due_at,interval_days,mastery_updates}`. AttemptResponse includes question IDs, prompts, options, points, expires_at and status only; result adds score, corrections and evidence after submit. Job status enum queued/running/succeeded/failed/cancelled. Session status defined in [FEATURES](FEATURES.md).
+
+## Contract tests
+Validate schema examples, unauthorized and wrong-user requests, 409 stale preview, idempotent repeated review/submit, active exam response with no private key/citations, provider failure and quota, import result and job polling, empty lists, timezone handling, client generated types. Mock server uses same DTO fixtures; no frontend-only field inventions. Endpoints not implemented at MVP must be documented as planned, not falsely return success.
