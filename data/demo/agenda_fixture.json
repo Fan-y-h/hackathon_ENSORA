@@ -1,0 +1,318 @@
+{
+  "_notice": "SYNTHETIC DEMO DATA - not a real ENSAI timetable. Labeled fixture source, not a live connector.",
+  "source": "fixture",
+  "profile": {
+    "display_name": "Camille (démo)",
+    "cohort": "2A",
+    "track": "Data Science",
+    "academic_year": "2026-2027",
+    "locale": "fr",
+    "timezone": "Europe/Paris",
+    "goals": [
+      {
+        "label": "Réviser 10 h par semaine",
+        "kind": "study_time",
+        "target_minutes_per_week": 600
+      },
+      {
+        "label": "Préparer l'examen de Statistique",
+        "kind": "exam_preparation"
+      }
+    ],
+    "preferences": {
+      "work_windows": [
+        {
+          "weekday": 0,
+          "start": "17:30",
+          "end": "21:00"
+        },
+        {
+          "weekday": 1,
+          "start": "17:30",
+          "end": "21:00"
+        },
+        {
+          "weekday": 2,
+          "start": "14:00",
+          "end": "19:00"
+        },
+        {
+          "weekday": 3,
+          "start": "17:30",
+          "end": "21:00"
+        },
+        {
+          "weekday": 4,
+          "start": "17:00",
+          "end": "20:00"
+        },
+        {
+          "weekday": 5,
+          "start": "10:00",
+          "end": "12:30"
+        },
+        {
+          "weekday": 5,
+          "start": "14:00",
+          "end": "18:00"
+        }
+      ],
+      "rest_windows": [
+        {
+          "weekday": 0,
+          "start": "19:30",
+          "end": "20:00"
+        },
+        {
+          "weekday": 1,
+          "start": "19:30",
+          "end": "20:00"
+        },
+        {
+          "weekday": 3,
+          "start": "19:30",
+          "end": "20:00"
+        }
+      ],
+      "daily_max_min": 180,
+      "weekly_max_min": 720,
+      "min_session_min": 25,
+      "max_session_min": 90,
+      "preferred_formats": [
+        "flashcards",
+        "quiz",
+        "past_exams"
+      ]
+    }
+  },
+  "events": [
+    {
+      "external_id": "demo-class-stat-1",
+      "type": "class",
+      "title": "Statistique inférentielle (CM)",
+      "start_at": "2026-11-30T08:30:00+01:00",
+      "end_at": "2026-11-30T10:30:00+01:00",
+      "room": "Amphi A",
+      "teacher": "Enseignant·e démo",
+      "group": "2A",
+      "subject_id": "stat"
+    },
+    {
+      "external_id": "demo-td-ml-1",
+      "type": "td",
+      "title": "Machine Learning (TD)",
+      "start_at": "2026-12-01T13:30:00+01:00",
+      "end_at": "2026-12-01T16:30:00+01:00",
+      "room": "Salle 105",
+      "group": "2A-G1",
+      "subject_id": "ml"
+    },
+    {
+      "external_id": "demo-tp-opti-1",
+      "type": "tp",
+      "title": "Optimisation (TP)",
+      "start_at": "2026-12-02T09:00:00+01:00",
+      "end_at": "2026-12-02T12:00:00+01:00",
+      "room": "Salle info 2",
+      "subject_id": "opti"
+    },
+    {
+      "external_id": "demo-pres-ppdp",
+      "type": "presentation",
+      "title": "PPDP – soutenance (créneau à confirmer)",
+      "start_at": "2026-12-03T14:00:00+01:00",
+      "end_at": "2026-12-03T14:30:00+01:00",
+      "confirmation_required": true
+    },
+    {
+      "external_id": "demo-deadline-ml",
+      "type": "deadline",
+      "title": "Rendu projet ML (Moodle)",
+      "start_at": "2026-12-04T23:59:00+01:00",
+      "end_at": "2026-12-05T00:00:00+01:00",
+      "subject_id": "ml"
+    },
+    {
+      "external_id": "demo-exam-stat",
+      "type": "exam",
+      "title": "Examen Statistique inférentielle",
+      "start_at": "2026-12-07T08:30:00+01:00",
+      "end_at": "2026-12-07T10:30:00+01:00",
+      "room": "Amphi B",
+      "subject_id": "stat"
+    }
+  ],
+  "personal_events": [
+    {
+      "type": "personal",
+      "title": "Entraînement sport",
+      "start_at": "2026-12-02T17:00:00+01:00",
+      "end_at": "2026-12-02T18:30:00+01:00"
+    }
+  ],
+  "tasks": [
+    {
+      "title": "Projet ML : rapport final",
+      "deadline_at": "2026-12-04T23:59:00+01:00",
+      "estimated_min": 240,
+      "priority": 5,
+      "subject_id": "ml"
+    },
+    {
+      "title": "Fiche de révision Statistique ch. 1–3",
+      "deadline_at": "2026-12-06T20:00:00+01:00",
+      "estimated_min": 90,
+      "priority": 4,
+      "subject_id": "stat"
+    }
+  ],
+  "exam_scope": {
+    "external_id": "demo-exam-stat",
+    "concept_ids": [
+      "stat-biais",
+      "stat-lgn",
+      "stat-tcl"
+    ],
+    "difficulty": "medium",
+    "format": "written"
+  },
+  "academic": {
+    "_notice": "SYNTHETIC coefficients and marks - not official ENSAI rules.",
+    "program": {
+      "title": "2A Data Science (démo)",
+      "academic_year": "2026-2027",
+      "cohort": "2A",
+      "specialization": "Data Science"
+    },
+    "nodes": [
+      {
+        "key": "s3",
+        "kind": "semester",
+        "title": "Semestre 3"
+      },
+      {
+        "key": "ue_ds",
+        "parent_key": "s3",
+        "kind": "unit",
+        "title": "UE Data Science",
+        "weight": 5
+      },
+      {
+        "key": "ml",
+        "parent_key": "ue_ds",
+        "kind": "subject",
+        "title": "Machine Learning",
+        "weight": 3,
+        "subject_id": "ml",
+        "weight_mode": "fraction"
+      },
+      {
+        "key": "ml_final",
+        "parent_key": "ml",
+        "kind": "assessment",
+        "title": "Examen final",
+        "weight": "0.5"
+      },
+      {
+        "key": "ml_cc",
+        "parent_key": "ml",
+        "kind": "assessment_group",
+        "title": "Contrôle continu",
+        "weight": "0.5",
+        "weight_mode": "fraction"
+      },
+      {
+        "key": "ml_mid",
+        "parent_key": "ml_cc",
+        "kind": "assessment",
+        "title": "Partiel",
+        "weight": "0.5"
+      },
+      {
+        "key": "ml_proj",
+        "parent_key": "ml_cc",
+        "kind": "assessment",
+        "title": "Projet",
+        "weight": "0.5"
+      },
+      {
+        "key": "stat",
+        "parent_key": "ue_ds",
+        "kind": "subject",
+        "title": "Statistique inférentielle",
+        "weight": 2,
+        "subject_id": "stat"
+      },
+      {
+        "key": "ue_opt",
+        "parent_key": "s3",
+        "kind": "unit",
+        "title": "UE Optimisation",
+        "weight": 4
+      },
+      {
+        "key": "opti",
+        "parent_key": "ue_opt",
+        "kind": "subject",
+        "title": "Optimisation",
+        "subject_id": "opti"
+      }
+    ],
+    "marks": {
+      "ml_mid": "8",
+      "opti": "13"
+    },
+    "objective_per_unit": "12"
+  },
+  "learning": {
+    "deck": {
+      "title": "Statistique — formules",
+      "subject_id": "stat",
+      "cards": [
+        {
+          "front": "Biais d'un estimateur",
+          "back": "E[θ̂] − θ",
+          "concept_id": "stat-biais"
+        },
+        {
+          "front": "Loi des grands nombres",
+          "back": "X̄n → E[X] (p.s.)",
+          "concept_id": "stat-lgn"
+        }
+      ]
+    },
+    "quiz": {
+      "title": "Diagnostic Statistique",
+      "subject_id": "stat",
+      "type": "diagnostic",
+      "questions": [
+        {
+          "type": "true_false",
+          "prompt": "Un estimateur sans biais vérifie E[θ̂] = θ.",
+          "answer": true,
+          "concept_ids": [
+            "stat-biais"
+          ]
+        },
+        {
+          "type": "single_choice",
+          "prompt": "Le TCL concerne la loi de…",
+          "options": [
+            {
+              "id": "a",
+              "text": "la moyenne empirique normalisée"
+            },
+            {
+              "id": "b",
+              "text": "la variance empirique"
+            }
+          ],
+          "answer": "a",
+          "concept_ids": [
+            "stat-tcl"
+          ]
+        }
+      ]
+    }
+  }
+}

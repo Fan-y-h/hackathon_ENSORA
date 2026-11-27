@@ -1,0 +1,26 @@
+[project]
+name = "ensora-backend"
+version = "0.1.0"
+description = "Ensora+ local-first backend (FastAPI modular monolith)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.7",
+    "sqlalchemy>=2.0",
+    "uvicorn>=0.30",
+    "tzdata",  # IANA timezones on Windows (zoneinfo)
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+optim = ["ortools>=9.10"]  # CP-SAT planner (T26), optional
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
