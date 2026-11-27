@@ -37,3 +37,15 @@ Latest French LaTeX specification lists personal Drive but leaves its platform t
 
 ## Change procedure
 Record date, owner, context, alternatives, decision, consequence and superseded ADR. Human approves changes affecting contracts, dependencies, access or scope; update [REQUIREMENTS](REQUIREMENTS.md), [API_CONTRACTS](API_CONTRACTS.md) or relevant domain docs and tests. Keep unresolved choices visible rather than treating assumptions as facts.
+
+## Academic extension ADRs / unresolved questions
+| ID | Status | Decision |
+|---|---|---|
+| ADR-13 | REQUIREMENT | S4 adds hierarchical grade tracking, what-if, academic goals and planner integration; calculations deterministic. |
+| ADR-14 | PROPOSED | Existing SQLite + versioned recursive nodes/Decimal, independent JSON/YAML seed; later PostgreSQL. |
+| ADR-15 | PROPOSED | Coverage-weighted leaf provisional mean; separate actual/estimated/scenario values; unknown official rules produce unknown status. |
+| ADR-16 | PROPOSED | Academic signals soft-blended into planner; baseline fallback, no guaranteed grade gains. |
+| O12 | OPEN | Verify authorized Pamplemousse marks/coefficients access and official ENSAI rules, scale, rounding, retakes, absence and compensation. C1/human before institutional claims. |
+| O13 | OPEN | Confirm provisional averaging convention, priority blend/weights, forecast method and time budget for expanded P0. C3/human before contract freeze. |
+| O14 | OPEN | Confirm corrected-paper privacy, retention and external AI permission. Human before P2. |
+S4 synthetic academic dashboard shows 12.44, but listed flat subject marks and coefficients yield 12.25; use deterministic calculation, not mock display. The UE example omits explicit numeric coefficients; 4 and 3 are inferred solely as an illustrative test consistent with displayed results. No official policy assumed.

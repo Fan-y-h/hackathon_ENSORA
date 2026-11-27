@@ -44,3 +44,19 @@ Proposed ownership: C1 = Codex integration/data; G = Gemini frontend/AI; C3 = Co
 
 ## Coverage and queue management
 R01/R30/R32/R33 → T00–T02,T14,T32,T34; R02–R08/R31 → T03–T05,T15–T20; R09/R10 → T07,T08,T12; R11–R13 → T09,T11,T20,T26; R14–R19 → T05,T06,T20,T27–T31,T36; R20–R23 → T10,T11,T24,T26,T33,T35; R24–R26 → T21–T23; R27/R28 → T12,T25; R29 → T32/T34; R34 → T13/T14. Full scope preserved. Status initially **planned**, not implemented. Integration owner assigns a single primary editor for each shared task before work. Scope changes require updated ADR and acceptance test.
+
+## Academic extension tickets (S4)
+| ID / priority | Owner | Dependencies | Deliverable and acceptance |
+|---|---|---|---|
+| T37 P0 | C1 | T02 | Freeze academic tree/record/goal/signal DTOs, migration and synthetic fixture; same fixture shared by G/C3 |
+| T38 P0 | C3 | T37 | Curriculum and manual mark CRUD, nested weights, exact calculator; reject cycles and invalid sums; missing vs zero tested |
+| T39 P0 | C3 | T38 | Objectives, required grades, feasible bounds/combinations and scenarios; no actual writes; impossible/fully assessed cases tested |
+| T40 P0 | C3 | T39,T09 | Academic signals and planner priority preview; caps/locks preserved; unknown inputs use baseline |
+| T41 P0 | G | T37 | Academic editor/dashboard/objective/simulator UI against mocks then real endpoints; show coverage and provenance; link planner preview |
+| T42 P0 | C1+G+C3 | T38–T41 | Academic end-to-end demo, restart persistence, isolation and regression; required before T13/T14 release gate |
+| T43 P1 | C1 | T37,T17 | Authorized academic source sync, conflicts/overrides and provenance; permission evidence or manual fallback |
+| T44 P1 | C3 | T39 | Verified validation rules/compensation, risk and explanations; unknown for unsupported rules |
+| T45 P1 | C3+G | T40,T44,T11 | Grade-triggered replan preview, reasons, diagnostic recommendations, trend UI; no aggregate mark mastery update |
+| T46 P2 | G+C3 | T45,T06,T22 | Corrected-script analysis with consent and citations, confirmed evidence links |
+| T47 P2 | C3 | T44,T26 | Calibrated uncertain forecasts and advanced time optimizer; compare baseline, no unsupported guarantees |
+Coverage: R35→T37/T38/T43; R36/R37→T38; R38/R39→T39/T41; R40→T44; R41→T40/T45/T47; R42→T45/T46; R43→T41/T45; R44→T38/T39/T47. T42 is an additional dependency of T13; avoid circular dependency. All planned.

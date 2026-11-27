@@ -19,3 +19,6 @@ Do not implement, scaffold application files, install packages, modify existing 
 
 ## Start-of-task response
 State role/session, ticket ID, worktree/branch, base commit, docs read, current tree findings, exact files in scope, dependencies, plan, acceptance tests and blockers. If still Plan Mode, return plan only and wait for explicit authorization. Once authorized, implement smallest end-to-end slice and report handoff using AGENT_TEAM template. Update relevant docs only with agreed decisions.
+
+## Academic scope amendment (S4)
+Read [Grade Tracker & Academic Optimizer](docs/GRADE_TRACKER.md) before planning academic, planner, learning, analytics or UI work. Follow R35–R44 and T37–T47; preserve prior scope. Deterministic grade arithmetic and official rules only; never infer concept mastery from an aggregate mark. Scenario values must not modify real marks. C3 owns grades backend, G owns grade UI, C1 owns contracts/migrations/connectors. Stay in Plan Mode.

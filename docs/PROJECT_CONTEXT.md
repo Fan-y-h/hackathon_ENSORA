@@ -25,3 +25,6 @@ S1 prevails when requirements differ; earlier scope supplements it (especially C
 
 ## Reading order
 Start with [REQUIREMENTS](REQUIREMENTS.md), [ARCHITECTURE](ARCHITECTURE.md), [DATA_MODEL](DATA_MODEL.md), [API_CONTRACTS](API_CONTRACTS.md), [MVP](MVP.md), [AGENT_TEAM](AGENT_TEAM.md) and [BACKLOG](BACKLOG.md). Follow the domain documents for each task. [PROJECT_STRUCTURE](PROJECT_STRUCTURE.md) is target, not current state.
+
+## Scope amendment S4 (2026-11-27)
+User-supplied Grade Tracker & Academic Optimizer specification (`Texte collé(20261127-131527).txt`, sections 1–12) extends the academic feedback loop: what to learn, what grades are needed, what subjects to prioritize and how to allocate study time. All original requirements remain. Academic records, objectives, simulation and planner integration are P0 in S4; source access and ENSAI validation/compensation rules remain unverified. See [GRADE_TRACKER](GRADE_TRACKER.md).

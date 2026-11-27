@@ -7,3 +7,6 @@ Default Gemini workstream: frontend + AI Tutor/Learning Studio and router, under
 Start from contract mocks while Codex delivers catalog/RAG and planner/learning. Use shared DTOs and agreed fixtures. Do not directly manipulate another module's tables, change backend contracts/lockfiles/migrations without integration-owner approval, or substitute UI placeholders for verified functionality. Show actual provider/model and mock state; preserve source citations and local artifact versions. Never send source documents or secrets to external models without authorization. CLI authentication does not imply runtime API access.
 
 Before action: identify ticket, branch/worktree, allowed paths, dependencies, test plan and blockers. Coordinate handoff via [DEVELOPMENT_WORKFLOW](docs/DEVELOPMENT_WORKFLOW.md). Follow canonical shared policy on tests, Git, review and human approval. If no task is assigned, return a concise implementation plan, not code.
+
+## Academic UI amendment
+Read [GRADE_TRACKER](docs/GRADE_TRACKER.md), academic API extension and T41/T45. Own academic frontend only unless explicitly assigned AI corrected-script work. Use shared mock DTOs; distinguish actual/provisional/forecast/simulated/missing, show coverage and unknown rules. No independent authoritative grade calculator or backend contract changes. Stay in Plan Mode.

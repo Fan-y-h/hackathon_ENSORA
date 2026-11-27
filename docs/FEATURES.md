@@ -34,3 +34,6 @@ All modules below preserve the full scope. Implementation order is independent; 
 Document: discovered → downloaded → parsed → indexed, or failed/blocked/tombstoned. Generation job: queued → running → succeeded/failed/cancelled. Session: planned → in_progress → completed/partial/skipped/cancelled. Exam: draft → active → submitted/expired → graded. A lock is independent of session status. A failed job never creates a successful artifact; retries are explicit and idempotent. Source refresh must not silently reset a user's edit or review.
 
 Domain details: [DATA_ENGINEERING](DATA_ENGINEERING.md), [AI_ENGINE](AI_ENGINE.md), [SMART_PLANNER](SMART_PLANNER.md), [ADAPTIVE_LEARNING](ADAPTIVE_LEARNING.md), [FRONTEND_UX_UI](FRONTEND_UX_UI.md).
+
+## Grade Tracker & Academic Optimizer (R35–R44)
+Academic Dashboard manages curriculum hierarchy and marks, computes weighted results and goals, required remaining scores and non-mutating what-if projections. Official rules are independent and verified before validation claims. Academic Optimizer supplies explanatory signals to Smart Planner; Learning Analytics displays grade trends, coverage and risk separately from mastery. Corrected assessment feedback drives diagnostics and targeted learning. Manual entry always available; authorized synchronization P1. Full behavior: [GRADE_TRACKER](GRADE_TRACKER.md).

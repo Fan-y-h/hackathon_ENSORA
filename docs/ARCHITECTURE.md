@@ -52,3 +52,6 @@ Local-first does not mean air-gapped: external calls are opt-in and minimized. B
 
 ## Evolution
 Post-hackathon: move relational store to PostgreSQL, optionally pgvector, split worker process, add institutional authentication and authorized collaboration service. Keep storage/search/provider interfaces stable; migrations and tests precede changes. See [DECISIONS](DECISIONS.md) and [DEPLOYMENT](DEPLOYMENT.md).
+
+## Academic domain extension
+[RECOMMENDATION] Add `grades` as a bounded module in the existing modular monolith, not a separate service. Authorized connectors/manual input → versioned curriculum and grades → deterministic calculator/validation/simulator → academic signals → planner priority and analytics. Grade feedback → diagnostic learning activities → evidence/mastery → planner. AI only explains/analyzes approved evidence; no arithmetic authority. Persist locally with existing DB and migrations. Read-only service ports and post-commit revision events prevent circular dependencies. See [GRADE_TRACKER](GRADE_TRACKER.md).

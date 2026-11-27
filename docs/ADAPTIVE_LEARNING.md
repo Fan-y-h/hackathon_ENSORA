@@ -34,3 +34,6 @@ Single/multiple-choice exact set grading (partial credit only explicit rubric), 
 | Near exam or changed syllabus | Prioritize essential current topics, typical exercises, refresh scope |
 
 Return `StudyNeed(concept_id, dimension, activity_type, priority_factors, estimated_min, due_window, reason, resource_ids, success_criteria)` to planner. Analytics derive from persisted attempts and actual active intervals; no fabricated progress. Tests: passive completion, assisted vs unassisted, incorrect answer, repeat intervals, unknown mastery, duplicate submission, exam key protection, confidence distinction, overdue and prerequisite recommendations.
+
+## Academic feedback extension (R42)
+An official mark is subject-level evidence only unless rubric/question-to-concept evidence is available. A low result requests diagnostic quiz or user review of corrected script/comments; never directly decrease all concept mastery estimates. Confirm extracted errors and link to existing evidence IDs, then use existing update rules. Route calculation, formula recall, comprehension, programming, recurring errors and autonomy gaps to respective exercise/recall/explanation/debugging/error notebook/unassisted activities. Demonstrated strong performance supports longer intervals and harder tasks. Practice quiz grades are not official marks. See [GRADE_TRACKER](GRADE_TRACKER.md).

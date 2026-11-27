@@ -44,3 +44,18 @@ Every feature must handle empty/loading/error states, persist authoritative stat
 
 ## Explicitly not decided
 Provider credentials, API availability, institutional permission, exact mastery/scheduling algorithms, event duration and jury rubric, Community moderation model. Personal Drive metadata is unspecified in S1; treat it as an opt-in selected-folder connector analogous to local personal resources. These are not reasons to remove requirements.
+
+## S4 extension — Grade Tracker & Academic Optimizer [REQUIREMENT]
+| ID | Requirement | Source |
+|---|---|---|
+| R35 | Authorized academic data retrieval and manual entry/edit of formation, semester, UE, subjects, assessment/date, grades, coefficients and regulations; configuration separate from calculator. | S4 §1 |
+| R36 | Recursive coefficient hierarchy and weight validation, editable evaluation components. | S4 §2 |
+| R37 | Deterministic weighted means at assessment/subject/UE/semester/year levels; provisional and forecast; distinguish actual, estimated, simulated, missing. | S4 §3 |
+| R38 | Personal targets at all levels, official validation separate, detect incompatibilities and compute necessary remaining grades/feasible combinations. | S4 §4–5 |
+| R39 | Non-mutating what-if scenarios, marginal impact, feasibility, compensation analysis. | S4 §6 |
+| R40 | Versioned official validation/compensation/eliminatory rules, risk identification, unknown when unavailable. | S4 §1,4,6,8 |
+| R41 | Integrate academic weights, grades, goals, risk and deadlines into planner; explain priorities, adapt following updates without violating limits. | S4 §8,10–11 |
+| R42 | Diagnostic/adaptive feedback from grades, corrected papers, teacher comments and error types; never infer precise mastery from overall mark alone. | S4 §9 |
+| R43 | Academic Dashboard, grade trend, coverage, goals and risk by academic hierarchy; connected to Learning Analytics. | S4 §7,10 |
+| R44 | Deterministic calculation/feasibility; optional OR-Tools and uncertain future-gain modeling; manual fallback and local privacy. | S4 §11–12 |
+See [GRADE_TRACKER](GRADE_TRACKER.md) for detailed rules and acceptance.

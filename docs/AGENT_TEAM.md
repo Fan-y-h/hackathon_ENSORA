@@ -28,3 +28,6 @@ Known blockers / unverified assumptions:
 Integration instructions and next dependency:
 ```
 A handoff is not a claim of completion unless tests actually ran. Review feedback becomes a new scoped change; agents do not rewrite unrelated modules. See [DEVELOPMENT_WORKFLOW](DEVELOPMENT_WORKFLOW.md).
+
+## Academic extension ownership
+C3 (Codex Planner/Learning) owns `backend/app/modules/grades/**`, calculator, simulator, objective/rule logic, planner and learning integration. G (Gemini) owns `frontend/src/features/grades/**` and Academic Dashboard UI; C1 (Codex Integration/Data) owns authorized academic connectors, schema migration, shared contracts and fixtures. G handles optional AI corrected-script adapter in assigned AI paths; C3 owns diagnostic evidence flow. Freeze DTOs and synthetic examples first; G develops against mocks while C3 builds deterministic domain tests. Rebalance C3 workload with human approval before implementation; no third agent type, no simultaneous edits to shared files.

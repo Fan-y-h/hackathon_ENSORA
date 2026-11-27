@@ -56,3 +56,17 @@ Store blobs by content hash with atomic temp-file rename, but authorize referenc
 
 ## Migration ownership
 Core integration owner creates base schema and approves all revision IDs; domain agents submit isolated schema patches. One migration head before merge. Tests: fresh install, upgrade from prior snapshot, foreign keys, restart persistence, cross-user isolation, deletion and reindex. See [API_CONTRACTS](API_CONTRACTS.md).
+
+## Academic records extension (R35–R44) [RECOMMENDATION]
+| Entity | Fields / invariants |
+|---|---|
+| academic_programs | id, user_id, academic_year, cohort, specialization, revision, provenance; owns curriculum versions |
+| academic_nodes | id, program_id, parent_id nullable, kind, title, weight decimal, weight_mode, subject_id nullable, event_id nullable, grade_scale_min/max, revision; acyclic; same-owner FK |
+| grade_records | id, node_id leaf, user_id, kind actual/estimated, value decimal, source_connection_id/external_id nullable, observed_at, provenance, revision; unique current value per kind; retain revisions |
+| academic_rule_sets | id, program_id, version, scope_node_id, rules_json, verification_status, source_ref; immutable published versions |
+| academic_objectives | id, user_id, node_id, target_kind numeric/pass, target_value nullable, active, revision |
+| grade_scenarios | id, user_id, program_id, name, base_revision, assumptions_json, revision |
+| grade_scenario_values | scenario_id, leaf_node_id, simulated_value; unique pair, no actual grade writes |
+| academic_signals | derived read model: node_id, subject_id, event_id, revision, effective_weight, coverage, target_gap, required_grade, feasibility, validation_status, risk, reason_codes |
+| academic_feedback | id, user_id, grade_record_id, optional corrected_document_id, diagnostic_status, linked evidence IDs, consent flag |
+Use existing subject/event IDs; no duplicate calendar or mastery state. Scope all joins by user. Actual and estimated marks are separate; missing is absence/null, not 0. Scenario overlays stay separate. Academic changes increment snapshot revision and emit durable event after commit. Rules and curricula have versioned provenance. Preserve past calculations against historical revisions; export/delete includes academic data. Grades/corrected papers are private by default. See [GRADE_TRACKER](GRADE_TRACKER.md).

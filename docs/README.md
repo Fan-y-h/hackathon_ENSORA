@@ -11,3 +11,6 @@ This directory contains the proposed architecture and full product scope, writte
 | Delivery | [DEVELOPMENT_WORKFLOW](DEVELOPMENT_WORKFLOW.md), [ROADMAP](ROADMAP.md), [TESTING](TESTING.md), [DEPLOYMENT](DEPLOYMENT.md) |
 
 Source provenance and limitations are recorded in PROJECT_CONTEXT and DECISIONS. This archive contains no implementation or credentials. Extract into a temporary directory; review collisions before copying docs and root instruction files into Git.
+
+## Scope amendment — academic optimization
+[GRADE_TRACKER](GRADE_TRACKER.md) is the canonical detailed academic module reference. S4 extends the original requirements and P0 scope; read updated requirements, API, planner, data model, backlog and decisions before planning.

@@ -34,3 +34,6 @@ Short-lived feature branches off reviewed main, one ticket or coherent slice per
 
 ## Coordination rhythm
 Use GitHub issues or a shared ticket log: ID, owner, dependency, status (todo/in-progress/review/blocked/done), branch and test evidence. Claim before edits; at handoff record new contract needs. Prefer small PRs. Shared integration owner resolves conflicts, never assumes agent-to-agent coordination occurs automatically. On blocker use stub/mock only if explicitly labeled and contract-compatible; file follow-up ticket. Definition of done: acceptance met, tests run or limitation documented, no unauthorized files changed, docs updated, human review.
+
+## Academic workstream coordination
+Freeze T37 contracts before grade branches. C3 owns grades backend and planner/learning changes, G owns grade UI, C1 owns shared migration/contract and connector changes. Use separate worktrees and scoped PRs; integrate fixture/contracts → calculator/simulator → planner/UI → E2E. Do not overwrite local edits when importing this documentation amendment; review Git diff first.

@@ -23,3 +23,19 @@
 
 ## CI and release
 Proposed commands after project bootstrap: `python -m pytest backend/tests`, `npm --prefix frontend run lint`, `npm --prefix frontend run typecheck`, `npm --prefix frontend test`, `npm --prefix frontend run build`, E2E script. Pin dependencies and configure scripts before relying on these commands. Run contract diff and migration checks, secret scan, no fixture privacy leakage. Integration owner records commit, commands, pass/fail, environment and blockers. A skipped live test is not a pass; demo mocks must be labeled. No tests of application code were run during this documentation-only phase.
+
+## Academic acceptance matrix
+| Test | Expected |
+|---|---|
+| Nested weights | eight quizzes each 3.125% of subject; sum path weights 1 |
+| Weighted scenario | A=13 weight4, B=10 weight3 → 11.7142857; target12 requires B=10.6666667 |
+| Missing/zero | missing B → provisional13 coverage4/7; actual B=0 included |
+| Invalid config | cycle, orphan, duplicate leaf, invalid fraction sum, negative coefficient/out-of-scale marks rejected |
+| Feasibility | no remaining weight, impossible target above maximum, guaranteed target, conflicting objectives; no divide-by-zero |
+| Rules | unknown rules never report official pass; configured eliminatory minimum blocks compensation when applicable |
+| Scenarios | simulate/save/reset does not change actual records, revision or live plan |
+| Planner | academic signals affect soft rank, not locks, deadlines, limits or maintenance; missing data fallback; stale preview rejected |
+| Adaptation | poor aggregate mark creates diagnosis; only confirmed concept evidence changes mastery |
+| Sync/security | duplicate import idempotent; override conflicts visible; wrong-user access denied; no grade values in logs |
+| UI/E2E | enter marks, goal, scenario, minimum grade and preview; restart retains real data; fixture labeled |
+Use Decimal comparison before display rounding, property tests for weighted bounds and monotonicity under linear rules, contract tests and synthetic fixtures. These tests are planned, not executed.

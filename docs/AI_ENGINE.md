@@ -31,3 +31,6 @@ Media generation is asynchronous: queued/running/succeeded/failed/cancelled; per
 
 ## Concept extraction
 Return concept label, category (definition/theorem/formula/hypothesis/proof/algorithm/method/implementation/exercise), importance, difficulty, prerequisites, assessment relevance and source citations. Current course authority wins over past exams. Review ambiguous graph edges and estimated workload; planner receives structured needs, not arbitrary LLM calendar dates. See [RAG_ARCHITECTURE](RAG_ARCHITECTURE.md), [ADAPTIVE_LEARNING](ADAPTIVE_LEARNING.md).
+
+## Academic AI boundary
+Grade calculator, feasibility, coefficients and official validation must be deterministic. AI may verbalize structured reasons and (P2) analyze corrected scripts/teacher comments into tentative error/concept links, with source citations and confirmation. Never invent marks, regulations or guaranteed improvements. Treat grades and scripts as private; external transmission requires consent. No global grade-to-mastery inference. See [GRADE_TRACKER](GRADE_TRACKER.md).

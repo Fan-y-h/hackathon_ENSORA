@@ -43,3 +43,6 @@ Runtime directories: database, blobs/documents, artifacts/media, index, logs, te
 
 ## Demo/release checklist
 Clean clone, approved lockfiles, migrate/seed, test health and UI, verify real/mocked AI status, run smoke/E2E, restart, ensure no private data in fixtures, record known limitations and tag reviewed commit. Production deployment, multi-user auth, monitoring and shared storage remain separate approval; local demo configuration is not production-ready.
+
+## Academic data deployment
+No additional service required for P0. Apply integration-owned migration and versioned synthetic curriculum seed via existing setup; include academic records in local backup/export/delete and restart smoke test. Never commit real student marks or corrected scripts. PostgreSQL remains a future option, not a new MVP prerequisite.

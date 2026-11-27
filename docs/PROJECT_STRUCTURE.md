@@ -50,3 +50,24 @@ hackathon_ENSORA/
 ```
 
 Each backend module uses `router.py`, `schemas.py`, `service.py`, `domain.py`, `repository.py` as needed; do not create empty abstraction layers mechanically. Tests mirror module boundaries. Runtime `data/` (except demo), secrets, DB, indices, blobs, caches and worktrees stay ignored. `contracts/openapi.json`, `main.py`, migrations, lockfiles and shared docs are integration-owned. See [AGENT_TEAM](AGENT_TEAM.md). This archive intentionally contains documentation only.
+
+## Academic module target additions (proposed, not scaffolded)
+```text
+backend/app/modules/grades/
+  models.py
+  schemas.py
+  repository.py
+  router.py
+  calculator.py
+  coefficients.py
+  validation_rules.py
+  objectives.py
+  simulator.py
+  academic_optimizer.py
+  recommendations.py
+frontend/src/features/grades/
+  components/
+  api/
+  pages/
+```
+Integration owner reconciles paths with actual repository and owns shared migrations/contracts. Keep synthetic versioned curriculum JSON/YAML in existing fixture/config convention; no real grades in Git. Domain tests follow existing test tree.

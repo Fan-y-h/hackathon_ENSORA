@@ -41,3 +41,6 @@ PDF: PyMuPDF or compatible parser, page text, figures, tables; OCR only scanned 
 | No change | No new downloads, embeddings, tasks or duplicated events |
 
 Personal notes, attempts, history, user edits and existing artifacts never silently overwritten. Source mirrors are separate from user overrides. For demo, normalized fixture and local PDF import must work without external accounts. See [RAG_ARCHITECTURE](RAG_ARCHITECTURE.md), [DATA_MODEL](DATA_MODEL.md).
+
+## Academic source extension (R35)
+Pamplemousse or another authorized academic platform may expose program/UE/subject IDs, assessment dates, weights, marks and rules; access not confirmed. Extend connector port with capability discovery, normalized academic records and provenance; manual JSON/YAML/CSV import or UI remains functional without it. Map to existing catalog/event IDs, deduplicate by source+external ID+owner, retain versions and manual overrides, stage conflicts for confirmation. Never infer official rules from calendar color or missing marks. No upstream changes. Grade/copy access requires explicit scope; redact logs and never include real records in fixtures. See [GRADE_TRACKER](GRADE_TRACKER.md).

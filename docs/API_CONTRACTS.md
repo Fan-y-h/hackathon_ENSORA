@@ -71,3 +71,21 @@ TutorResponse: `{message_id,answer_markdown,citations:[Citation],evidence_status
 
 ## Contract tests
 Validate schema examples, unauthorized and wrong-user requests, 409 stale preview, idempotent repeated review/submit, active exam response with no private key/citations, provider failure and quota, import result and job polling, empty lists, timezone handling, client generated types. Mock server uses same DTO fixtures; no frontend-only field inventions. Endpoints not implemented at MVP must be documented as planned, not falsely return success.
+
+## Academic API extension [RECOMMENDATION]
+All routes relative to `/api/v1`; existing auth, revision, pagination and error contracts apply. Decimal grades/weights serialized as strings to avoid binary rounding; frontend never authoritatively calculates validation.
+| Method/path | Request / response |
+|---|---|
+| GET/POST /grades/programs | list/create academic program |
+| GET/PUT /grades/programs/{id}/curriculum | versioned recursive node tree; atomic replace with expected_revision; validate references and weights |
+| GET/PUT /grades/programs/{id}/rules | read/update versioned rule config and verification provenance; official status unknown unless verified |
+| GET/POST /grades/records; PATCH/DELETE /grades/records/{id} | actual/estimated record CRUD, revision/provenance; deletion preserves audit history |
+| GET/POST /grades/objectives; PATCH/DELETE /grades/objectives/{id} | node-level personal target CRUD |
+| GET /grades/summary | program_id, optional node_id → hierarchical actual/provisional/forecast coverage, bounds, validation status |
+| POST /grades/required | program_id, objective_ids, optional explicit fixed assumptions → necessary remaining mean, feasibility, example combinations, reasons |
+| POST /grades/simulate | program_id, expected_revision, values [{node_id,value}] → isolated scenario projection, impact and warnings; no actual writes |
+| GET/POST /grades/scenarios; PATCH/DELETE /grades/scenarios/{id} | optional persisted named overlays; owner isolation |
+| GET /grades/signals | program_id → academic signals + input revision; planner uses internal typed equivalent |
+| POST /grades/records/{id}/feedback | optional corrected_document_id, comments, difficulty flags → diagnostic proposal/job; no direct mastery write |
+| POST /grades/import | authorized normalized academic import or fixture; dry-run/conflict report then explicit commit |
+Example summary: `{"node_id":"uuid","provisional":"13.00","actual_coverage":"0.5714286","forecast":null,"remaining_weight":"0.4285714","official_status":"unknown","revision":4}`. Required response includes `required_mean`, `feasibility: feasible|guaranteed|impossible|unknown`, `assumptions`, `combinations`, `reason_codes`. Validation status independent of feasibility. Academic events: `grade.recorded`, `grade.updated`, `grade.deleted`, `curriculum.changed`, `academic.objective_changed`, `academic.rules_changed`; carry user/program/node IDs, revision and event ID, not raw private marks in logs. Planner preview includes academic snapshot revision, reason codes and existing constraints. Return 409 for stale inputs, 422 for cycles/invalid weights/scale/out-of-range grades. Test actual versus scenario isolation, no cross-user access and zero/missing distinction.
