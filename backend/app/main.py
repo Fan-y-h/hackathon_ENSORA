@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from sqlalchemy import text
 
 from app.core.common import Clock, SystemClock
@@ -36,6 +37,11 @@ def create_app(database_url: str | None = None, clock: Clock | None = None) -> F
         allow_credentials=True,
     )
     install_error_handlers(app)
+
+    @app.get("/", include_in_schema=False)
+    def root() -> RedirectResponse:
+        # No UI yet: opening the server URL in a browser lands on the interactive API docs.
+        return RedirectResponse(url="/docs")
 
     api = APIRouter(prefix=API_PREFIX)
 

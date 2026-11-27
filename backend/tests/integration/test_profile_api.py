@@ -118,3 +118,9 @@ def test_profile_persists_across_restart(tmp_path):
     body = second.get("/api/v1/profile").json()
     assert body["cohort"] == "2A" and body["preferences"]["work_windows"] == WINDOWS
     second.app.state.db.engine.dispose()
+
+
+def test_root_redirects_to_api_docs(client):
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 307 and r.headers["location"] == "/docs"
+    assert client.get("/docs").status_code == 200
