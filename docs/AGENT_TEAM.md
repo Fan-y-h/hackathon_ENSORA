@@ -31,3 +31,7 @@ A handoff is not a claim of completion unless tests actually ran. Review feedbac
 
 ## Academic extension ownership
 C3 (Codex Planner/Learning) owns `backend/app/modules/grades/**`, calculator, simulator, objective/rule logic, planner and learning integration. G (Gemini) owns `frontend/src/features/grades/**` and Academic Dashboard UI; C1 (Codex Integration/Data) owns authorized academic connectors, schema migration, shared contracts and fixtures. G handles optional AI corrected-script adapter in assigned AI paths; C3 owns diagnostic evidence flow. Freeze DTOs and synthetic examples first; G develops against mocks while C3 builds deterministic domain tests. Rebalance C3 workload with human approval before implementation; no third agent type, no simultaneous edits to shared files.
+
+## P1 shared-checkout assignment
+
+For the authorized P1 Data Engineering task on `feat/p1-data-engineering`, Codex and Gemini work in the same checkout. Codex owns the contracts, runtime, persistence, pipeline, API and integration tests. Gemini owns source-specific adapters, connector and parser tests, and the compatibility bridge. The human retains all Git writes and live authorization. The two coordination handoff and status pairs are the live engineering record. See [coordination protocol](coordination/PROTOCOL.md).

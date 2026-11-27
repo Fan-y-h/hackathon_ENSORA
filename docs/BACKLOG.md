@@ -22,7 +22,7 @@ Proposed ownership: C1 = Codex integration/data; G = Gemini frontend/AI; C3 = Co
 | T15 P1 | C1 | T03 | Moodle authorized REST/export adapter, deadlines and incremental update; permission proof or explicit fallback |
 | T16 P1 | C1 | T03 | Ensora Drive OAuth, recursive selected folder, exam/solution match; changes and revocation tested |
 | T17 P1 | C1 | T08 | Pamplemousse official/API/ICS/CSV, group and ambiguity; no false assumption red=exam |
-| T18 P1 | C1 | T16,T17 | Google Calendar/personal Drive, recurring/all-day events and selected access; revoke excludes retrieval |
+| T18 P1 | C1 | T16,T17 | Personal Google Calendar, recurring/all-day events and selected access; revoke excludes retrieval |
 | T19 P1 | C1 | T04,T05 | DOCX/PPTX/IPYNB/code/OCR, table/formula/figure anchors, incremental reindex; no notebook execution |
 | T20 P1 | C1+G | T05,T06 | Concept/prerequisite/exam-pattern extraction, source evidence and review; current syllabus priority, cycles flagged |
 | T21 P1 | C3+G | T08,T06 | Project TXT/PDF decomposition, editable estimates/resources, task views and remaining work; user confirms proposals |
