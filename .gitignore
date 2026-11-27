@@ -221,3 +221,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Ensora+ runtime data (local DB, blobs, indices) - never commit
+data/runtime/
+*.db
+*.db-wal
+*.db-shm
