@@ -83,7 +83,7 @@ path parameters normalized to `{}`. Full schemas: [`p3_openapi.json`](p3_openapi
 | `DELETE` | `/tasks/{}` |
 | `PATCH` | `/tasks/{}` |
 
-## Implemented but NOT in the contract — needs C1 review (48)
+## Implemented but NOT in the contract — needs C1 review (49)
 | Method | Path |
 |---|---|
 | `POST` | `/agenda/import-from-sources` |
@@ -132,6 +132,7 @@ path parameters normalized to `{}`. Full schemas: [`p3_openapi.json`](p3_openapi
 | `POST` | `/rag/reindex` |
 | `GET` | `/rag/status` |
 | `GET` | `/results` |
+| `GET` | `/runtime-mode` |
 | `POST` | `/tasks/{}/subtasks` |
 | `POST` | `/tutor/answer` |
 

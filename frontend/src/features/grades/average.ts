@@ -4,7 +4,7 @@
  * - subject mark = official Pamplemousse mark, else the coefficient-weighted mean of its
  *   assessments (each normalised to /20);
  * - UE average = Σ coef × mark / Σ coef over marked subjects;
- * - semester average = UE averages weighted by their marked coefficients.
+ * - semester average uses published UE weights and excludes unassigned courses.
  * Simulated marks (what-if) and custom coefficients override missing values only and make
  * the result explicitly provisional. Unknown coefficients are tracked, never invented.
  */
@@ -15,7 +15,8 @@ export type CustomCoefficients = Record<string, string>;
 
 export const parseMark = (value: string | number | null | undefined): number | null => {
   if (value === null || value === undefined || value === "") return null;
-  const n = typeof value === "number" ? value : Number.parseFloat(String(value).replace(",", "."));
+  if (typeof value === "string" && !/^\s*[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)\s*$/.test(value)) return null;
+  const n = typeof value === "number" ? value : Number(value.replace(",", "."));
   return Number.isFinite(n) ? n : null;
 };
 
@@ -24,11 +25,11 @@ export function effectiveCoefficient(
   key: string,
   customCoefs: CustomCoefficients = {},
 ): { value: number | null; source: "official" | "custom" | "unknown" } {
-  if (official !== null && official !== undefined && Number.isFinite(official) && official > 0) {
+  if (official !== null && official !== undefined && Number.isFinite(official) && official >= 0) {
     return { value: official, source: "official" };
   }
   const parsed = parseMark(customCoefs[key]);
-  if (parsed !== null && parsed > 0) {
+  if (parsed !== null && parsed >= 0) {
     return { value: parsed, source: "custom" };
   }
   return { value: null, source: "unknown" };
@@ -37,8 +38,13 @@ export function effectiveCoefficient(
 export function assessmentMark(a: ResultsAssessment, sims: Simulations): { mark: number | null; simulated: boolean } {
   if (a.grade !== null) return { mark: a.grade, simulated: false };
   const sim = parseMark(sims[a.key]);
-  if (sim === null || sim < 0 || sim > (a.maximum || 20)) return { mark: null, simulated: false };
+  if (a.maximum === null || sim === null || sim < (a.minimum ?? 0) || sim > a.maximum) return { mark: null, simulated: false };
   return { mark: sim, simulated: true };
+}
+
+function toTwenty(mark: number, maximum: number | null | undefined, minimum: number | null = 0): number | null {
+  const floor = minimum ?? 0;
+  return maximum != null && maximum > floor ? 20 * (mark - floor) / (maximum - floor) : null;
 }
 
 export function subjectMark(
@@ -47,29 +53,51 @@ export function subjectMark(
   customCoefs: CustomCoefficients = {},
 ): { mark: number | null; official: boolean; simulated: boolean; unknownAssessmentCoefs: number } {
   if (s.official_grade !== null) {
-    return { mark: s.official_grade, official: true, simulated: false, unknownAssessmentCoefs: 0 };
+    return { mark: toTwenty(s.official_grade, s.official_grade_maximum, s.official_grade_minimum), official: true, simulated: false, unknownAssessmentCoefs: 0 };
   }
   const direct = parseMark(sims[s.key]);
   if (direct !== null && direct >= 0 && direct <= 20) {
     return { mark: direct, official: false, simulated: true, unknownAssessmentCoefs: 0 };
   }
+  const average = assessmentAverage(s.assessments, sims, customCoefs);
+  return { mark: average.value, official: false, simulated: average.simulated, unknownAssessmentCoefs: average.unknownCoefCount };
+}
+
+function assessmentAverage(
+  assessments: ResultsAssessment[],
+  sims: Simulations,
+  customCoefs: CustomCoefficients,
+): Average {
   let sum = 0;
-  let weight = 0;
+  let marked = 0;
+  let total = 0;
   let simulated = false;
-  let unknownAssessmentCoefs = 0;
-  for (const a of s.assessments) {
-    const { mark, simulated: sim } = assessmentMark(a, sims);
-    const coefInfo = effectiveCoefficient(a.coefficient ?? a.weight, a.key, customCoefs);
-    if (coefInfo.value === null) {
-      unknownAssessmentCoefs += 1;
+  let unknownCoefCount = 0;
+  for (const assessment of assessments) {
+    const coefficient = effectiveCoefficient(assessment.coefficient ?? assessment.weight, assessment.key, customCoefs);
+    if (coefficient.value === null) {
+      unknownCoefCount += 1;
       continue;
     }
-    if (mark === null) continue;
-    sum += (coefInfo.value * mark * 20) / (a.maximum || 20);
-    weight += coefInfo.value;
-    simulated ||= sim;
+    if (coefficient.value === 0) continue;
+    total += coefficient.value;
+    const { mark, simulated: simulatedLeaf } = assessmentMark(assessment, sims);
+    const normalized = mark === null ? null : toTwenty(mark, assessment.maximum, assessment.minimum);
+    if (normalized !== null) {
+      sum += coefficient.value * normalized;
+      marked += coefficient.value;
+      simulated ||= simulatedLeaf || coefficient.source === "custom";
+    } else if (assessment.children?.length) {
+      const nested = assessmentAverage(assessment.children, sims, customCoefs);
+      unknownCoefCount += nested.unknownCoefCount;
+      if (nested.value === null || nested.unknownCoefCount > 0 || nested.totalCoef === 0) continue;
+      const coverageWeight = coefficient.value * nested.markedCoef / nested.totalCoef;
+      sum += nested.value * coverageWeight;
+      marked += coverageWeight;
+      simulated ||= nested.simulated || coefficient.source === "custom";
+    }
   }
-  return { mark: weight > 0 ? sum / weight : null, official: false, simulated, unknownAssessmentCoefs };
+  return { value: marked > 0 ? sum / marked : null, markedCoef: marked, totalCoef: total, simulated, unknownCoefCount };
 }
 
 export interface Average {
@@ -96,6 +124,7 @@ export function unitAverage(
       unknownCoefCount += 1;
       continue;
     }
+    if (coefInfo.value === 0) continue;
     total += coefInfo.value;
     const { mark, simulated: sim } = subjectMark(s, sims, customCoefs);
     if (mark === null) continue;
@@ -117,13 +146,25 @@ export function semesterAverage(
   let simulated = false;
   let unknownCoefCount = 0;
   for (const u of sem.units) {
+    if (u.unassigned) continue;
+    const coefficient = effectiveCoefficient(u.coefficient, u.key, customCoefs);
+    if (coefficient.value === null) {
+      unknownCoefCount += 1;
+      continue;
+    }
+    if (coefficient.value === 0) continue;
     const avg = unitAverage(u, sims, customCoefs);
-    total += avg.totalCoef;
+    total += coefficient.value;
     unknownCoefCount += avg.unknownCoefCount;
-    if (avg.value === null) continue;
-    sum += avg.value * avg.markedCoef;
-    marked += avg.markedCoef;
-    simulated ||= avg.simulated;
+    if (!avg.simulated && u.official_average !== null && u.official_average_maximum) {
+      sum += coefficient.value * u.official_average * 20 / u.official_average_maximum;
+      marked += coefficient.value;
+    } else if (avg.value !== null && avg.totalCoef > 0 && avg.unknownCoefCount === 0) {
+      const coverageWeight = coefficient.value * avg.markedCoef / avg.totalCoef;
+      sum += avg.value * coverageWeight;
+      marked += coverageWeight;
+    }
+    simulated ||= avg.simulated || coefficient.source === "custom";
   }
   return { value: marked > 0 ? sum / marked : null, markedCoef: marked, totalCoef: total, simulated, unknownCoefCount };
 }

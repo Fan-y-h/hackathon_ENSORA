@@ -27,6 +27,7 @@ import {
   sourcesUnavailable,
   useResults,
   type Results,
+  type ResultsAssessment,
   type ResultsSemester,
   type ResultsSubject,
   type ResultsUnit,
@@ -97,7 +98,9 @@ const NODE_KIND_LABEL: Record<NodeOut["kind"], string> = {
  */
 export function GradesPage() {
   const programs = useGradePrograms();
-  const results = useResults();
+  const [academicYear, setAcademicYear] = useState("");
+  const availableResults = useResults();
+  const results = useResults(academicYear || undefined);
   const importBridge = useImportGradesFromSources();
 
   const hasPrograms = (programs.data?.length ?? 0) > 0;
@@ -136,6 +139,11 @@ export function GradesPage() {
                   Relevé Pamplemousse
                 </button>
               </div>
+              {!!availableResults.data?.academic_years?.length && activeTab === "pamplemousse" && (
+                <label className="field"><span>Année du relevé</span><select className="select" value={academicYear || availableResults.data.academic_year || ""} onChange={(event) => setAcademicYear(event.target.value)}>
+                  {availableResults.data.academic_years.map((year) => <option value={year} key={year}>{year}</option>)}
+                </select></label>
+              )}
               {hasPamplemousse && (
                 <button
                   type="button"
@@ -143,7 +151,7 @@ export function GradesPage() {
                   disabled={importBridge.isPending}
                   onClick={() =>
                     importBridge.mutate(
-                      { source: "pamplemousse", dry_run: false },
+                      { source: "pamplemousse", dry_run: false, academic_year: results.data?.academic_year ?? undefined },
                       {
                         onSuccess: (res) => {
                           if (res.program_id) setSelectedProgramId(res.program_id);
@@ -382,7 +390,7 @@ function ProgramCalculatorView({
       const obj = objectiveByNodeId.get(node.id);
       const req = reqByNodeId.get(node.id);
       const proj = simProjByNodeId.get(node.id);
-      const isOfficial = rec?.provenance && rec.provenance !== "manual";
+      const isOfficial = rec?.provenance === "pamplemousse";
       const currentVal = markDrafts[node.id] ?? (rec ? String(rec.value) : "");
       const currentCoef = coefDrafts[node.id] ?? String(node.weight ?? "");
       const coefEdited = coefDrafts[node.id] !== undefined && coefDrafts[node.id] !== String(node.weight ?? "");
@@ -452,11 +460,12 @@ function ProgramCalculatorView({
                       inputMode="decimal"
                       placeholder="–"
                       aria-label={`Note réelle pour ${node.title}`}
+                      readOnly={isOfficial}
                       value={currentVal}
                       onChange={(e) => setMarkDrafts((d) => ({ ...d, [node.id]: e.target.value }))}
                     />
                   </label>
-                  {markEdited && (
+                  {markEdited && !isOfficial && (
                     <button
                       type="button"
                       className="btn btn--small btn--primary"
@@ -1071,6 +1080,7 @@ function PamplemousseView({
         customCoefs={customCoefs}
         general={resultsQuery.data!.general_average}
         year={resultsQuery.data!.academic_year}
+        generalMaximum={resultsQuery.data!.general_average_maximum}
       />
       <div className="results__body">
         <div className="results__tools">
@@ -1101,7 +1111,7 @@ function PamplemousseView({
                 {targetReq.status === "impossible" && `Objectif impossible (max ${fmt(targetReq.maxReachable)} /20)`}
                 {targetReq.status === "achieved" && "Objectif atteint"}
                 {targetReq.status === "guaranteed" && "Objectif garanti"}
-                {targetReq.status === "unknown" && "Coefficients manquants : complétez-les pour calculer la note nécessaire"}
+                {targetReq.status === "unknown" && "Des coefficients ou barèmes manquent pour calculer la note nécessaire"}
               </span>
             )}
           </div>
@@ -1121,7 +1131,7 @@ function PamplemousseView({
         </div>
         {semAvg.unknownCoefCount > 0 && (
           <div style={{ marginBottom: 14 }}>
-            <StatusLine tone="warning" label={`${semAvg.unknownCoefCount} matière(s) sans coefficient officiel`}>
+            <StatusLine tone="warning" label={`${semAvg.unknownCoefCount} coefficient(s) manquant(s)`}>
               Saisissez le coefficient personnalisé dans la colonne Coef (les crédits ECTS ne sont jamais utilisés comme coefficient).
             </StatusLine>
           </div>
@@ -1141,6 +1151,7 @@ function ResultsHero({
   sims,
   customCoefs,
   general,
+  generalMaximum,
   year,
 }: {
   semester: ResultsSemester;
@@ -1149,11 +1160,13 @@ function ResultsHero({
   sims: Simulations;
   customCoefs: CustomCoefficients;
   general: number | null;
+  generalMaximum?: number | null;
   year: string | null;
 }) {
   const computed = semesterAverage(semester, sims, customCoefs);
   const showOfficial = semester.official_average !== null && !computed.simulated;
   const value = showOfficial ? semester.official_average : computed.value;
+  const maximum = showOfficial ? semester.official_average_maximum : 20;
 
   return (
     <header className="results__hero">
@@ -1164,7 +1177,7 @@ function ResultsHero({
               Ma moyenne · {semester.title}
             </h2>
             <p>
-              {year ? `${year} · ` : ""}Pamplemousse{general !== null ? ` · moyenne générale officielle ${fmt(general)}` : ""}
+              {year ? `${year} · ` : ""}Pamplemousse{general !== null ? ` · moyenne générale officielle ${fmt(general)}${generalMaximum ? ` / ${generalMaximum}` : " (barème non publié)"}` : ""}
             </p>
           </div>
           {semesters.length > 1 && (
@@ -1181,7 +1194,7 @@ function ResultsHero({
           <div>
             <div className="results__big">
               {fmt(value)}
-              <small> /20</small>
+              {value !== null && <small>{maximum ? ` / ${maximum}` : " · barème non publié"}</small>}
             </div>
             <div className="results__sub">
               {value === null
@@ -1194,21 +1207,23 @@ function ResultsHero({
           <div className="results__bars">
             {semester.units.map((u) => {
               const uAvg = unitAverage(u, sims, customCoefs);
-              const avg = u.official_average !== null && !uAvg.simulated ? u.official_average : uAvg.value;
+              const official = u.official_average !== null && !uAvg.simulated;
+              const avg = official ? u.official_average : uAvg.value;
+              const unitMaximum = official ? u.official_average_maximum : 20;
               return (
                 <div key={u.key} className="results__bar" title={`${u.title} : ${fmt(avg)}`}>
                   <div>
                     <div className="results__label">{u.title}</div>
-                    <div className="results__track" role="img" aria-label={`${u.title} : ${fmt(avg)} sur 20`}>
-                      <div className="results__fill" style={{ width: `${avg === null ? 0 : Math.min(100, (avg / 20) * 100)}%` }} />
-                      <div className="results__ten" />
+                    <div className="results__track" role="img" aria-label={`${u.title} · ${fmt(avg)}${unitMaximum ? ` sur ${unitMaximum}` : " · barème non publié"}`}>
+                      <div className="results__fill" style={{ width: `${avg === null || !unitMaximum ? 0 : Math.min(100, (avg / unitMaximum) * 100)}%` }} />
+                      {unitMaximum === 20 && <div className="results__ten" />}
                     </div>
                   </div>
                   <span className="results__v">{fmt(avg)}</span>
                 </div>
               );
             })}
-            <div className="results__legend">Le trait jaune marque 10/20.</div>
+
           </div>
         </div>
       </div>
@@ -1238,13 +1253,16 @@ function UnitCard({
       <div className="ue__head">
         <h2>{unit.title}</h2>
         <span className="small muted">
-          coef {avg.totalCoef > 0 ? fmtCoef(avg.totalCoef) : "inconnu"}
+          {unit.unassigned ? "Hors moyenne du semestre" : `Coefficient UE ${fmtCoef(effectiveCoefficient(unit.coefficient, unit.key, customCoefs).value)}`}
           {avg.value !== null && avg.markedCoef < avg.totalCoef && ` · ${fmtCoef(avg.markedCoef)} noté`}
           {avg.unknownCoefCount > 0 && ` · ${avg.unknownCoefCount} coef inconnu(s)`}
         </span>
+        {!unit.unassigned && unit.coefficient == null && (
+          <input className="input ue__input" inputMode="decimal" placeholder="Coef. UE" aria-label={`Coefficient personnalisé pour ${unit.title}`} value={customCoefs[unit.key] ?? ""} onChange={(event) => onCoef(unit.key, event.target.value)} />
+        )}
         <span className="ue__avg">
           {fmt(value)}
-          {showOfficial && <span className="pill">officielle</span>}
+          {showOfficial && <span className="pill">officielle{unit.official_average_maximum ? ` / ${unit.official_average_maximum}` : " · barème non publié"}</span>}
           {avg.simulated && <span className="pill status--warning">simulée</span>}
         </span>
       </div>
@@ -1259,6 +1277,10 @@ function UnitCard({
       ))}
     </section>
   );
+}
+
+function assessmentRows(items: ResultsAssessment[], depth = 0): { assessment: ResultsAssessment; depth: number }[] {
+  return items.flatMap((assessment) => [{ assessment, depth }, ...assessmentRows(assessment.children ?? [], depth + 1)]);
 }
 
 function SubjectRow({
@@ -1310,7 +1332,7 @@ function SubjectRow({
             className={`ue__mark${official ? " ue__mark--official" : " ue__mark--computed"}`}
             title={official ? "Note officielle Pamplemousse" : "Calculée à partir des épreuves"}
           >
-            {fmt(mark)}
+            {official ? `${fmt(subject.official_grade)}${subject.official_grade_maximum ? ` / ${subject.official_grade_maximum}` : " · barème non publié"}` : fmt(mark)}
           </span>
         ) : (
           <input
@@ -1338,17 +1360,17 @@ function SubjectRow({
             <span>Sur</span>
             <span>Coef</span>
           </div>
-          {subject.assessments.map((a) => {
+          {assessmentRows(subject.assessments).map(({ assessment: a, depth }) => {
             const { mark: am } = assessmentMark(a, sims);
             const aCoef = effectiveCoefficient(a.coefficient ?? a.weight, a.key, customCoefs);
             return (
               <div key={a.key} className="ue__sub">
-                <span>{a.title}</span>
+                <span style={{ paddingInlineStart: depth * 14 }}>{a.title}</span>
                 {a.grade !== null ? (
                   <span className="ue__mark ue__mark--official">{fmt(a.grade)}</span>
-                ) : (
+                ) : a.maximum === null ? <span className="muted">Barème non publié</span> : (
                   <input
-                    className={`input ue__input${am !== null ? " ue__input--sim" : ""}${invalid(sims[a.key] ?? "", a.maximum || 20) ? " ue__input--bad" : ""}`}
+                    className={`input ue__input${am !== null ? " ue__input--sim" : ""}${invalid(sims[a.key] ?? "", a.maximum) ? " ue__input--bad" : ""}`}
                     inputMode="decimal"
                     placeholder="–"
                     aria-label={`Note simulée pour ${a.title}`}

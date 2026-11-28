@@ -235,18 +235,7 @@ export interface CatalogSubjectItem {
   next_deadline_at: string | null;
 }
 
-export interface CatalogSubjectDetail {
-  id: string;
-  code: string | null;
-  title: string;
-  documents: { id: string; title: string; resource_type?: string | null; source?: string | null }[];
-  assessments: Assessment[];
-  concepts: Mastery[];
-  quizzes: Quiz[];
-  decks: Deck[];
-  notes: Note[];
-  artifacts: ArtifactOut[];
-}
+export type CatalogSubjectDetail = S["SubjectDetailOut"];
 
 export interface AnnotationOut {
   id: string;
@@ -272,6 +261,7 @@ export interface AnnotationCreate {
 
 export interface GradesImportRequest {
   source: "pamplemousse" | "manual_json";
+  academic_year?: string;
   dry_run?: boolean;
   program?: Record<string, unknown> | null;
 }

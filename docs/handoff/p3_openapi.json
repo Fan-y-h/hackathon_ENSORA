@@ -296,6 +296,18 @@
       },
       "AcademicImportRequest": {
         "properties": {
+          "academic_year": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-\\d{4}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Academic Year"
+          },
           "dry_run": {
             "default": false,
             "title": "Dry Run",
@@ -9187,6 +9199,13 @@
             ],
             "title": "Academic Year"
           },
+          "academic_years": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Academic Years",
+            "type": "array"
+          },
           "general_average": {
             "anyOf": [
               {
@@ -9197,6 +9216,17 @@
               }
             ],
             "title": "General Average"
+          },
+          "general_average_maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "General Average Maximum"
           },
           "semesters": {
             "items": {
@@ -9851,9 +9881,25 @@
             ],
             "title": "Official Average"
           },
+          "official_average_maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Average Maximum"
+          },
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "unassigned": {
+            "default": false,
+            "title": "Unassigned",
+            "type": "boolean"
           },
           "units": {
             "items": {
@@ -10958,6 +11004,39 @@
             ],
             "title": "Official Grade"
           },
+          "official_grade_maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Grade Maximum"
+          },
+          "official_grade_minimum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Grade Minimum"
+          },
+          "official_grade_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Grade Status"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -11992,6 +12071,17 @@
             ],
             "title": "Official Average"
           },
+          "official_average_maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Average Maximum"
+          },
           "subjects": {
             "items": {
               "$ref": "#/components/schemas/SubjectOut"
@@ -12002,6 +12092,11 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "unassigned": {
+            "default": false,
+            "title": "Unassigned",
+            "type": "boolean"
           }
         },
         "required": [
@@ -12222,8 +12317,26 @@
             "type": "string"
           },
           "maximum": {
-            "title": "Maximum",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum"
           },
           "status": {
             "anyOf": [
@@ -15269,8 +15382,27 @@
     },
     "/api/v1/grades/import-from-sources": {
       "post": {
-        "description": "Sync Pamplemousse curriculum, coefficients, ECTS and official marks into Grade Tracker (idempotent).",
+        "description": "Import the selected academic year into the local Grade Tracker.",
         "operationId": "import_grades_from_sources_api_v1_grades_import_from_sources_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "academic_year",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{4}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Academic Year"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -15281,6 +15413,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Import Grades From Sources",
@@ -17778,8 +17920,27 @@
     },
     "/api/v1/results": {
       "get": {
-        "description": "UE / subject / coefficient / mark tree synced from Pamplemousse.",
+        "description": "Read one academic year's authorized Pamplemousse results.",
         "operationId": "results_from_sources_api_v1_results_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "academic_year",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{4}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Academic Year"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -17790,6 +17951,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Results From Sources",
@@ -17860,6 +18031,35 @@
         "summary": "Reviews Due",
         "tags": [
           "learning"
+        ]
+      }
+    },
+    "/api/v1/runtime-mode": {
+      "get": {
+        "operationId": "runtime_mode_api_v1_runtime_mode_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "enum": [
+                      "real",
+                      "demo"
+                    ],
+                    "type": "string"
+                  },
+                  "title": "Response Runtime Mode Api V1 Runtime Mode Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Mode",
+        "tags": [
+          "health"
         ]
       }
     },

@@ -1,6 +1,6 @@
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 
-import { useExamMode, useNotifications, useProfile } from "../api/queries";
+import { useExamMode, useNotifications, useProfile, useRuntimeMode } from "../api/queries";
 import { BrandLogo } from "../components/BrandLogo";
 import { Icon } from "../components/Icon";
 import "./shell.css";
@@ -49,6 +49,8 @@ export function AppShell() {
   const notifications = useNotifications();
   const profile = useProfile();
   const exam = useExamMode();
+  const runtime = useRuntimeMode();
+  const mode = runtime.data?.mode ?? (import.meta.env.VITE_DEMO_MODE === "true" ? "demo" : undefined);
   const unread = notifications.data?.unread_count ?? 0;
   const examActive = exam.data?.active ?? false;
 
@@ -93,14 +95,19 @@ export function AppShell() {
               </span>
             )}
           </NavLink>
+          <NavLink to="/profile" className="sidebar__link">
+            <span className="sidebar__dot" aria-hidden="true" />
+            <span>Mon profil</span>
+          </NavLink>
           <NavLink to="/settings" className="sidebar__link">
             <span className="sidebar__dot" aria-hidden="true" />
-            <span>{profile.data?.display_name || "Mon profil"}</span>
+            <span>Paramètres</span>
           </NavLink>
         </div>
       </nav>
       <main id="main" className="shell__main" tabIndex={-1}>
-        {import.meta.env.VITE_DEMO_MODE === "true" && <p className="exam-banner">Démonstration · Données synthétiques</p>}
+        {mode === "demo" && <p className="exam-banner">MODE DEMO · Démonstration · Données synthétiques</p>}
+        {mode === "real" && pathname === "/onboarding" && <p className="small muted">MODE REAL · Espace étudiant local</p>}
         {examActive && (
           <div className="exam-banner" role="status">
             <Icon name="clock" /> Mode examen : notes et corrigés bloqués
@@ -108,7 +115,11 @@ export function AppShell() {
         )}
         {examRestricted.some((path) => pathname === path || pathname.startsWith(`${path}/`)) && (examActive || exam.isPending || exam.isError)
           ? <h1>{examActive ? "Accès bloqué pendant l’examen" : "Vérification du mode examen"}</h1>
-          : <Outlet />}
+          : pathname === "/" && (runtime.isPending || profile.isPending)
+            ? <p role="status">Chargement du profil…</p>
+            : mode === "real" && pathname === "/" && profile.data && (!profile.data.onboarding_complete || !profile.data.academic_year)
+              ? <Navigate to="/onboarding" replace />
+              : <Outlet />}
       </main>
     </div>
   );

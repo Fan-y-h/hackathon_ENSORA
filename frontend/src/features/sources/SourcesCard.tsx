@@ -16,6 +16,7 @@ import {
   useJob,
   usePipelineStatus,
   useResetSyncSchedule,
+  useResults,
   useResumeJob,
   useSourcesSettings,
   useStartSync,
@@ -42,7 +43,7 @@ const REASON: Record<string, string> = {
   cancelled_by_user: "Connexion annulée par l'utilisateur.",
   service_verification_required: "Connexion faite, mais l'accès au service n'est pas confirmé : cliquez sur « Vérifier ».",
   transient_failure: "Service momentanément injoignable, réessayez.",
-  cas_login_required: "La connexion ENSAI CAS doit être renouvelée.",
+  cas_login_required: "Cliquez sur Reconnecter, terminez la connexion ENSAI CAS et le MFA dans la fenêtre ouverte, puis cliquez sur Vérifier.",
   calendar_window_unverified: "La fenêtre de dates demandée n'a pas pu être vérifiée.",
   academic_year_unknown: "L'année universitaire des données doit être confirmée.",
 };
@@ -87,6 +88,7 @@ function describeSource(
 ): SourceBadgeState {
   if (syncing) return { label: "Synchronisation en cours", tone: "neutral" };
   if (!conn.consent.read) return { label: "Lecture non autorisée", tone: "neutral" };
+  if (conn.validation_required) return { label: "Connexion à vérifier", tone: "warning" };
   if (conn.source === "local") {
     return conn.last_success_at
       ? { label: "Données disponibles", tone: "good" }
@@ -115,6 +117,11 @@ export function SourcesCard() {
   const qc = useQueryClient();
   const { timezone } = useSubjects();
   const connections = useConnections();
+  const results = useResults();
+  const programmeSubjects = results.data?.semesters.flatMap((semester) =>
+    semester.units.filter((unit) => !unit.unassigned).flatMap((unit) => unit.subjects),
+  ) ?? [];
+  const [subjectId, setSubjectId] = useState("");
   const schedule = useSyncSchedule();
   const sourcesSettings = useSourcesSettings();
   const runs = useSyncRuns(8);
@@ -155,7 +162,7 @@ export function SourcesCard() {
   const triggerSync = (source?: SourceKind) => {
     handledJob.current = null;
     setActiveSource(source ?? "all");
-    startSync.mutate(source, {
+    startSync.mutate(source === "moodle" && subjectId ? { source, subject_id: subjectId } : source, {
       onSuccess: (res) => setActiveJobId(res.id),
       onError: () => setActiveSource(null),
     });
@@ -250,6 +257,12 @@ export function SourcesCard() {
                     )}
                   </div>
 
+                  {c.source === "moodle" && programmeSubjects.length > 0 && (
+                    <label className="field"><span>Matière Moodle à synchroniser</span><select className="select" value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
+                      <option value="">Toutes les matières pertinentes</option>
+                      {programmeSubjects.map((item) => <option key={item.key} value={item.key}>{item.title}</option>)}
+                    </select></label>
+                  )}
                   {!isLocal && (
                     <div className="row">
                       {!connected ? (
@@ -337,6 +350,11 @@ export function SourcesCard() {
                     </div>
                   )}
 
+                  {!isLocal && c.consent.read && (c.validation_required || c.status === "REAUTH_REQUIRED") && (
+                    <p className="small muted">{c.validation_required
+                      ? "Cliquez sur Vérifier pour tester la session enregistrée. Si elle a expiré, renouez la connexion."
+                      : "Cliquez sur Reconnecter et terminez la connexion dans la fenêtre ouverte sur ce poste, y compris le MFA demandé. Revenez ensuite ici et cliquez sur Vérifier."}</p>
+                  )}
                   {fb && (
                     <div className={`status status--${fb.tone} small`} role="status">
                       {fb.text}
@@ -353,7 +371,7 @@ export function SourcesCard() {
           )}
 
           {action.isPending && (
-            <p className="xsmall muted">Une fenêtre de connexion ENSAI / Google peut s'ouvrir sur ce poste.</p>
+            <p className="xsmall muted">Si une fenêtre ENSAI CAS ou Google s’ouvre sur ce poste, terminez la connexion et le MFA dans cette fenêtre.</p>
           )}
 
           {job.data && (

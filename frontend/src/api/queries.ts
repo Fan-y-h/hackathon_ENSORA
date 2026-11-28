@@ -189,6 +189,14 @@ function invalidateGrades(qc: QueryClient) {
 
 export const useProfile = () => useQuery({ queryKey: keys.profile, queryFn: () => api.get<Profile>("/profile") });
 
+export const useRuntimeMode = () =>
+  useQuery({
+    queryKey: ["runtime-mode"],
+    queryFn: () => api.get<{ mode: "real" | "demo" }>("/runtime-mode"),
+    retry: false,
+    staleTime: Infinity,
+  });
+
 export function useUpdateProfile() {
   const qc = useQueryClient();
   return useMutation({

@@ -139,3 +139,51 @@ def test_e2e_profile_task_planner_notes_and_reload_persistence(browser_context):
     page.close()
     assert not page_errors, f"Uncaught page errors: {page_errors}"
     assert not console_errors, f"Console errors: {console_errors}"
+
+
+@pytest.mark.skipif(
+    os.environ.get("ENSORA_E2E_FRESH_REAL") != "1",
+    reason="Run only against a new throwaway REAL database",
+)
+def test_e2e_first_use_and_task_edit_on_empty_real_database(browser_context):
+    from playwright.sync_api import expect
+
+    page = browser_context.new_page()
+    console_errors, page_errors, failed_requests = _attach_error_collectors(page)
+    page.goto(FRONTEND_URL)
+    expect(page).to_have_url(f"{FRONTEND_URL}/onboarding")
+    expect(page.get_by_role("heading", name="Configurer mon espace ENSAI")).to_be_visible()
+    expect(page.get_by_text("Démonstration · Données synthétiques")).to_have_count(0)
+    page.get_by_label("Nom affiché").fill("Profil Test Isolé")
+    page.get_by_label("Année d’études").select_option("3A")
+    page.get_by_label("Filière").fill("ID")
+    page.get_by_label("Statut étudiant").select_option("engineer")
+    page.get_by_label("Année universitaire").fill("2026-2027")
+    page.get_by_role("button", name="Ajouter un créneau").click()
+    page.get_by_label("Objectif académique personnel (facultatif)").fill("Réviser régulièrement")
+    page.get_by_role("button", name="Enregistrer et configurer les sources").click()
+    expect(page.get_by_role("heading", name="Sources & Synchronisation")).to_be_visible()
+    expect(page.get_by_text("Lecture non autorisée").first).to_be_visible()
+    page.get_by_role("link", name="Ouvrir le tableau de bord").click()
+    expect(page).to_have_url(f"{FRONTEND_URL}/")
+
+    page.goto(f"{FRONTEND_URL}/profile")
+    expect(page.get_by_label("Nom affiché")).to_have_value("Profil Test Isolé")
+    expect(page.get_by_label("Année universitaire")).to_have_value("2026-2027")
+    page.goto(f"{FRONTEND_URL}/tasks")
+    page.get_by_label("Intitulé").fill("Révision personnelle")
+    page.get_by_label("Description").fill("Premier exercice")
+    page.get_by_role("button", name="Ajouter", exact=True).click()
+    expect(page.get_by_text("Révision personnelle", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Modifier", exact=True).click()
+    edit = page.get_by_role("article").filter(has_text="Révision personnelle")
+    edit.get_by_label("Description").fill("Deuxième exercice")
+    edit.get_by_label("Durée estimée (min)").fill("75")
+    edit.get_by_role("button", name="Enregistrer", exact=True).click()
+    expect(page.get_by_text("Deuxième exercice", exact=True)).to_be_visible()
+    page.reload()
+    expect(page.get_by_text("Deuxième exercice", exact=True)).to_be_visible()
+    assert not page_errors, page_errors
+    assert not console_errors, console_errors
+    assert not failed_requests, failed_requests
+    page.close()

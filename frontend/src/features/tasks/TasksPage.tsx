@@ -6,7 +6,7 @@ import type { Task } from "../../api/types";
 import { useSubjects } from "../../app/subjects";
 import { Icon } from "../../components/Icon";
 import { Card, EmptyState, PageHeader, QueryState, SubjectBadge } from "../../components/ui";
-import { countdownLabel, formatDuration, formatLongDate, dayKey } from "../../lib/time";
+import { countdownLabel, formatDuration, formatLongDate, dayKey, formatTimeInput, localDateTimeToIso } from "../../lib/time";
 import "./tasks.css";
 
 const COLUMNS: { status: Task["status"]; label: string }[] = [
@@ -70,7 +70,7 @@ export function TasksPage() {
           </QueryState>
         </div>
         <aside className="split__side">
-          <NewTask />
+          <TaskForm />
         </aside>
       </div>
     </div>
@@ -81,6 +81,7 @@ function TaskCard({ task }: { task: Task }) {
   const subjects = useSubjects();
   const update = useUpdateTask();
   const remove = useDeleteTask();
+  const [editing, setEditing] = useState(false);
   const next = task.status === "todo" ? "in_progress" : task.status === "in_progress" ? "done" : "todo";
   const nextLabel = task.status === "todo" ? "Commencer" : task.status === "in_progress" ? "Terminer" : "Rouvrir";
   const error = update.error ?? remove.error;
@@ -97,6 +98,7 @@ function TaskCard({ task }: { task: Task }) {
         {task.deadline_at ? `${countdownLabel(task.deadline_at, new Date(), subjects.timezone)} · ${formatLongDate(dayKey(task.deadline_at, subjects.timezone))}` : "Sans échéance"} · reste{" "}
         {formatDuration(task.remaining_min)} · priorité {task.priority}/5
       </span>
+      {task.description && <p className="small">{task.description}</p>}
       {task.overdue && (
         <span className="xsmall" style={{ color: "var(--critical-text)" }}>
           <Icon name="alert" size={12} /> En retard
@@ -112,6 +114,7 @@ function TaskCard({ task }: { task: Task }) {
         >
           {nextLabel}
         </button>
+        <button className="btn btn--small" type="button" onClick={() => setEditing((value) => !value)}>{editing ? "Fermer l’édition" : "Modifier"}</button>
         <button
           type="button"
           className="btn btn--small btn--ghost btn--danger"
@@ -122,43 +125,59 @@ function TaskCard({ task }: { task: Task }) {
           <Icon name="trash" size={14} />
         </button>
       </div>
+      {editing && <TaskForm task={task} close={() => setEditing(false)} />}
     </article>
   );
 }
 
-function NewTask() {
+function TaskForm({ task, close }: { task?: Task; close?: () => void }) {
   const create = useCreateTask();
   const subjects = useSubjects();
-  const [title, setTitle] = useState("");
-  const [subject, setSubject] = useState("");
-  const [deadline, setDeadline] = useState("");
-  const [estimate, setEstimate] = useState(60);
-  const [priority, setPriority] = useState(3);
+  const update = useUpdateTask();
+  const [title, setTitle] = useState(task?.title ?? "");
+  const [description, setDescription] = useState(task?.description ?? "");
+  const [subject, setSubject] = useState(task?.subject_id ?? "");
+  const [deadline, setDeadline] = useState(task?.deadline_at ? `${dayKey(task.deadline_at, subjects.timezone)}T${formatTimeInput(task.deadline_at, subjects.timezone)}` : "");
+  const [estimate, setEstimate] = useState(task?.estimated_min ?? 60);
+  const [priority, setPriority] = useState(task?.priority ?? 3);
+  const error = task ? update.error : create.error;
 
   return (
-    <Card title="Nouvelle tâche">
+    <Card title={task ? "Modifier la tâche" : "Nouvelle tâche"}>
       <form
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          create.mutate(
-            {
-              title: title.trim(),
-              subject_id: subject || null,
-              deadline_at: deadline ? new Date(deadline).toISOString() : null,
-              estimated_min: estimate,
-              remaining_min: estimate,
-              priority,
-              locked: false,
-              splittable: true,
-            },
-            { onSuccess: () => setTitle("") },
-          );
+          const [day, time] = deadline.split("T");
+          const details = {
+            title: title.trim(),
+            description: description.trim() || null,
+            subject_id: subject || null,
+            deadline_at: deadline ? localDateTimeToIso(day, time, subjects.timezone) : null,
+            estimated_min: estimate,
+            priority,
+          };
+          if (task) {
+            const completed = Math.max(0, (task.estimated_min ?? task.remaining_min ?? 0) - (task.remaining_min ?? 0));
+            update.mutate({ id: task.id, patch: {
+              ...details,
+              expected_revision: task.revision,
+              ...(estimate !== task.estimated_min && task.status !== "done" ? { remaining_min: Math.max(0, estimate - completed) } : {}),
+            } }, { onSuccess: close });
+          } else {
+            create.mutate({ ...details, remaining_min: estimate, locked: false, splittable: true }, {
+              onSuccess: () => { setTitle(""); setDescription(""); },
+            });
+          }
         }}
       >
         <label className="field">
           <span>Intitulé</span>
           <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={300} />
+        </label>
+        <label className="field">
+          <span>Description</span>
+          <textarea className="input" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={2000} />
         </label>
         <label className="field">
           <span>Matière</span>
@@ -172,7 +191,7 @@ function NewTask() {
           </select>
         </label>
         <label className="field">
-          <span>Échéance</span>
+          <span>Échéance ({subjects.timezone})</span>
           <input className="input" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
         </label>
         <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
@@ -185,9 +204,9 @@ function NewTask() {
             <input className="input" type="number" min={1} max={5} value={priority} onChange={(e) => setPriority(Number(e.target.value))} />
           </label>
         </div>
-        {create.error && <div className="status status--critical">{errorMessage(create.error)}</div>}
-        <button type="submit" className="btn btn--primary" disabled={create.isPending || !title.trim()}>
-          <Icon name="plus" /> Ajouter
+        {error && <div className="status status--critical" role="alert">{errorMessage(error)}</div>}
+        <button type="submit" className="btn btn--primary" disabled={create.isPending || update.isPending || !title.trim()}>
+          {task ? "Enregistrer" : <><Icon name="plus" /> Ajouter</>}
         </button>
       </form>
     </Card>

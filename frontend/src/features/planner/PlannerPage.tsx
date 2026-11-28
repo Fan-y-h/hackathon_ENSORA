@@ -23,6 +23,7 @@ import {
 import { BlockDialog } from "./BlockDialog";
 import { buildBlocks, listConflictPairs, ORIGIN_LABEL, warningLabel, type Block, type BlockKind, type SourceOrigin } from "./calendar";
 import { KIND_ICON } from "./CalendarBlock";
+import { SyncButton } from "../sources/SyncButton";
 import { EventFormDialog } from "./EventFormDialog";
 import { PreviewDialog } from "./PreviewDialog";
 import { reasonLabels } from "./reasons";
@@ -129,6 +130,7 @@ export function PlannerPage() {
         title={title}
         actions={
           <>
+            <SyncButton />
             <button type="button" className="btn" onClick={() => setAddingEvent(true)}>
               <Icon name="plus" /> Événement
             </button>
@@ -153,7 +155,7 @@ export function PlannerPage() {
             </nav>
             <button type="button" className="btn btn--primary" onClick={compute} disabled={previewMutation.isPending}>
               <Icon name="refresh" />
-              {previewMutation.isPending ? "Calcul…" : plan.data ? "Replanifier" : "Planifier"}
+              {previewMutation.isPending ? "Calcul…" : plan.data ? "Recalculer" : "Planifier"}
             </button>
           </>
         }

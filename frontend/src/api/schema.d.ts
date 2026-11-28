@@ -853,7 +853,7 @@ export interface paths {
         put?: never;
         /**
          * Import Grades From Sources
-         * @description Sync Pamplemousse curriculum, coefficients, ECTS and official marks into Grade Tracker (idempotent).
+         * @description Import the selected academic year into the local Grade Tracker.
          */
         post: operations["import_grades_from_sources_api_v1_grades_import_from_sources_post"];
         delete?: never;
@@ -1635,7 +1635,7 @@ export interface paths {
         };
         /**
          * Results From Sources
-         * @description UE / subject / coefficient / mark tree synced from Pamplemousse.
+         * @description Read one academic year's authorized Pamplemousse results.
          */
         get: operations["results_from_sources_api_v1_results_get"];
         put?: never;
@@ -1655,6 +1655,23 @@ export interface paths {
         };
         /** Reviews Due */
         get: operations["reviews_due_api_v1_reviews_due_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runtime-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runtime Mode */
+        get: operations["runtime_mode_api_v1_runtime_mode_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1985,6 +2002,8 @@ export interface components {
         };
         /** AcademicImportRequest */
         AcademicImportRequest: {
+            /** Academic Year */
+            academic_year?: string | null;
             /**
              * Dry Run
              * @default false
@@ -4827,8 +4846,12 @@ export interface components {
         ResultsOut: {
             /** Academic Year */
             academic_year: string | null;
+            /** Academic Years */
+            academic_years?: string[];
             /** General Average */
             general_average: number | null;
+            /** General Average Maximum */
+            general_average_maximum?: number | null;
             /** Semesters */
             semesters: components["schemas"]["SemesterOut"][];
             /**
@@ -5062,8 +5085,15 @@ export interface components {
             key: string;
             /** Official Average */
             official_average: number | null;
+            /** Official Average Maximum */
+            official_average_maximum?: number | null;
             /** Title */
             title: string;
+            /**
+             * Unassigned
+             * @default false
+             */
+            unassigned: boolean;
             /** Units */
             units: components["schemas"]["UnitOut"][];
         };
@@ -5411,6 +5441,12 @@ export interface components {
             key: string;
             /** Official Grade */
             official_grade: number | null;
+            /** Official Grade Maximum */
+            official_grade_maximum?: number | null;
+            /** Official Grade Minimum */
+            official_grade_minimum?: number | null;
+            /** Official Grade Status */
+            official_grade_status?: string | null;
             /** Title */
             title: string;
         };
@@ -5748,10 +5784,17 @@ export interface components {
             key: string;
             /** Official Average */
             official_average: number | null;
+            /** Official Average Maximum */
+            official_average_maximum?: number | null;
             /** Subjects */
             subjects: components["schemas"]["SubjectOut"][];
             /** Title */
             title: string;
+            /**
+             * Unassigned
+             * @default false
+             */
+            unassigned: boolean;
         };
         /** UnscheduledOut */
         UnscheduledOut: {
@@ -5833,7 +5876,9 @@ export interface components {
             /** Key */
             key: string;
             /** Maximum */
-            maximum: number;
+            maximum: number | null;
+            /** Minimum */
+            minimum?: number | null;
             /** Status */
             status?: string | null;
             /** Title */
@@ -7764,7 +7809,9 @@ export interface operations {
     };
     import_grades_from_sources_api_v1_grades_import_from_sources_post: {
         parameters: {
-            query?: never;
+            query?: {
+                academic_year?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7778,6 +7825,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GradesImportOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9605,7 +9661,9 @@ export interface operations {
     };
     results_from_sources_api_v1_results_get: {
         parameters: {
-            query?: never;
+            query?: {
+                academic_year?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -9619,6 +9677,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResultsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9651,6 +9718,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runtime_mode_api_v1_runtime_mode_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: "real" | "demo";
+                    };
                 };
             };
         };

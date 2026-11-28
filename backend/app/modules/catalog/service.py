@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.common import Clock
 from app.core.errors import NotFound
+from app.modules.account.models import Profile
 from app.modules.catalog.schemas import (
     SubjectAssessmentOut,
     SubjectConceptOut,
@@ -29,65 +30,90 @@ from app.modules.planner.models import Assessment, Event, StudySession, Task
 from app.modules.workspace.models import Note, Notebook
 
 
-def _read_p1_subjects_and_docs(p1_engine) -> tuple[dict[str, dict[str, Any]], dict[str, list[SubjectDocumentOut]]]:
+def _read_p1_subjects_and_docs(
+    p1_engine, academic_year: str | None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, list[SubjectDocumentOut]], dict[str, str]]:
     if p1_engine is None:
-        return {}, {}
-    try:
-        from backend.app.core.database import connections, documents, records
-    except Exception:
-        return {}, {}
+        return {}, {}, {}
+    from backend.app.core.database import LOCAL_USER, connections, documents, latest_consent_granted, records
 
     subjects: dict[str, dict[str, Any]] = {}
     docs_by_subject: dict[str, list[SubjectDocumentOut]] = defaultdict(list)
+    known_aliases: dict[str, set[str]] = defaultdict(set)
+    consent = (
+        connections.c.user_id == LOCAL_USER,
+        latest_consent_granted(connections.c.id, "read").is_(True),
+    )
 
     with p1_engine.connect() as conn:
-        for source, ext_id, payload in conn.execute(
+        rows = conn.execute(
             select(connections.c.source, records.c.external_id, records.c.payload)
             .join(connections, records.c.connection_id == connections.c.id)
-            .where(records.c.kind == "subject")
-        ):
+            .where(records.c.kind == "subject", *consent)
+            .order_by((connections.c.source != "pamplemousse"), records.c.external_id)
+        )
+        for source, external_id, payload in rows:
             data = payload or {}
+            if academic_year and source == "pamplemousse" and (data.get("provenance") or {}).get("academic_year") != academic_year:
+                continue
             code = data.get("code") or data.get("source_code")
-            sid = (code or ext_id or "").strip()
+            sid = external_id.strip()
             if not sid:
+                continue
+            explicit = [key for key in (data.get("aliases") or []) if key in subjects]
+            if source == "moodle" and len(explicit) == 1:
+                known_aliases[sid].add(explicit[0])
                 continue
             subjects[sid] = {
                 "id": sid,
                 "code": code,
                 "title": str(data.get("title") or sid),
-                "source": str(source or "pamplemousse"),
+                "source": str(source),
             }
+            if code:
+                known_aliases[code.strip().upper()].add(sid)
 
+        aliases = {alias: next(iter(ids)) for alias, ids in known_aliases.items() if len(ids) == 1}
+        provenance = documents.c.metadata_json["provenance"]
+        public = (
+            func.coalesce(documents.c.metadata_json["access_status"].as_string(), "active") == "active",
+            documents.c.active_version_id.is_not(None),
+            (connections.c.source != "ensora_drive")
+            | (func.ensora_drive_folder_allowed(provenance["folder"].as_string()) == 1),
+        )
         for doc_id, active_ver, meta, source in conn.execute(
             select(documents.c.id, documents.c.active_version_id, documents.c.metadata_json, connections.c.source)
             .join(connections, documents.c.connection_id == connections.c.id)
+            .where(*consent, *public)
         ):
-            m = meta or {}
-            match = m.get("match") or {}
-            sid = match.get("subject_id") or m.get("subject_id")
-            if not sid:
+            data = meta or {}
+            match = data.get("match") or {}
+            raw_subject = match.get("subject_id") or data.get("subject_id")
+            if not raw_subject:
                 continue
-            sid = str(sid).strip()
-            classification = m.get("classification") or {}
-            provenance = m.get("provenance") or {}
+            raw_subject = str(raw_subject).strip()
+            sid = aliases.get(raw_subject, aliases.get(raw_subject.upper(), raw_subject))
+            if academic_year and source == "moodle" and sid not in subjects:
+                continue
+            classification = data.get("classification") or {}
             docs_by_subject[sid].append(
                 SubjectDocumentOut(
                     id=str(doc_id),
-                    title=str(m.get("title") or "Document"),
+                    title=str(data.get("title") or "Document"),
                     resource_type=str(classification.get("resource_type") or "other"),
-                    active_version_id=str(active_ver) if active_ver else None,
-                    source=str(provenance.get("source") or source or "local"),
+                    active_version_id=str(active_ver),
+                    source=str(source),
                 )
             )
             if sid not in subjects:
                 subjects[sid] = {
                     "id": sid,
                     "code": sid if len(sid) <= 12 else None,
-                    "title": str(m.get("course_title") or sid),
-                    "source": str(provenance.get("source") or source or "local"),
+                    "title": str(data.get("course_title") or sid),
+                    "source": str(source),
                 }
 
-    return subjects, docs_by_subject
+    return subjects, docs_by_subject, aliases
 
 
 class CatalogService:
@@ -96,13 +122,17 @@ class CatalogService:
         self.clock = clock
         self.p1_engine = p1_engine
 
-    def _collect_subjects(self, user_id: str) -> tuple[dict[str, dict[str, Any]], dict[str, list[SubjectDocumentOut]]]:
-        subjects, docs_by_subject = _read_p1_subjects_and_docs(self.p1_engine)
+    def _collect_subjects(
+        self, user_id: str,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, list[SubjectDocumentOut]], dict[str, str]]:
+        year = self.db.scalar(select(Profile.academic_year).where(Profile.user_id == user_id))
+        subjects, docs_by_subject, aliases = _read_p1_subjects_and_docs(self.p1_engine, year)
 
         def register(sid: str | None, title: str | None = None, source: str = "workspace") -> None:
             if not sid:
                 return
             key = sid.strip()
+            key = aliases.get(key, aliases.get(key.upper(), key))
             if not key:
                 return
             if key not in subjects:
@@ -111,6 +141,8 @@ class CatalogService:
                 subjects[key]["title"] = title
 
         for ev in self.db.scalars(select(Event).where(Event.user_id == user_id, Event.subject_id.is_not(None))):
+            if ev.source in {"pamplemousse", "moodle"} and ev.subject_id not in subjects and (ev.subject_id or "").upper() not in aliases:
+                continue
             register(ev.subject_id, source=ev.source or "agenda")
         for t in self.db.scalars(select(Task).where(Task.user_id == user_id, Task.subject_id.is_not(None))):
             register(t.subject_id, source="tasks")
@@ -129,15 +161,15 @@ class CatalogService:
         for node in self.db.scalars(
             select(AcademicNode)
             .join(AcademicProgram, AcademicProgram.id == AcademicNode.program_id)
-            .where(AcademicProgram.user_id == user_id, AcademicNode.kind == "subject")
+            .where(AcademicProgram.user_id == user_id, AcademicProgram.provenance != "pamplemousse", AcademicNode.kind == "subject")
         ):
             register(node.subject_id or node.key, node.title, source="grades")
 
-        return subjects, docs_by_subject
+        return subjects, docs_by_subject, aliases
 
     def list_subjects(self, user_id: str) -> SubjectListOut:
         now = self.clock.now()
-        subjects, docs_by_subject = self._collect_subjects(user_id)
+        subjects, docs_by_subject, aliases = self._collect_subjects(user_id)
 
         assessments_by_sub: dict[str, list[datetime]] = defaultdict(list)
         for a in self.db.scalars(
@@ -145,9 +177,10 @@ class CatalogService:
                 Assessment.user_id == user_id,
                 Assessment.status == "active",
                 Assessment.subject_id.is_not(None),
+                Assessment.deadline_at.is_not(None),
             )
         ):
-            assessments_by_sub[a.subject_id].append(a.deadline_at)
+            assessments_by_sub[aliases.get(a.subject_id, aliases.get(a.subject_id.upper(), a.subject_id))].append(a.deadline_at)
 
         mastery_by_sub: dict[str, list[float]] = defaultdict(list)
         for m in self.db.scalars(
@@ -157,7 +190,7 @@ class CatalogService:
                 Mastery.score.is_not(None),
             )
         ):
-            mastery_by_sub[m.subject_id].append(float(m.score))
+            mastery_by_sub[aliases.get(m.subject_id, aliases.get(m.subject_id.upper(), m.subject_id))].append(float(m.score))
 
         items: list[SubjectSummaryOut] = []
         for sid, info in sorted(subjects.items(), key=lambda kv: (kv[1]["title"].lower(), kv[0])):
@@ -179,7 +212,9 @@ class CatalogService:
 
     def get_subject(self, user_id: str, subject_id: str) -> SubjectDetailOut:
         now = self.clock.now()
-        subjects, docs_by_subject = self._collect_subjects(user_id)
+        subjects, docs_by_subject, aliases = self._collect_subjects(user_id)
+        subject_id = aliases.get(subject_id, aliases.get(subject_id.upper(), subject_id))
+        identifiers = [subject_id, *(alias for alias, canonical in aliases.items() if canonical == subject_id)]
         info = subjects.get(subject_id)
         if info is None:
             raise NotFound("Subject not found")
@@ -194,7 +229,8 @@ class CatalogService:
             for a, ev in self.db.execute(
                 select(Assessment, Event)
                 .join(Event, Event.id == Assessment.event_id, isouter=True)
-                .where(Assessment.user_id == user_id, Assessment.subject_id == subject_id, Assessment.status == "active")
+                .where(Assessment.user_id == user_id, Assessment.subject_id.in_(identifiers),
+                       Assessment.status == "active", Assessment.deadline_at.is_not(None))
                 .order_by(Assessment.deadline_at, Assessment.id)
             )
         ]
@@ -202,7 +238,7 @@ class CatalogService:
         concept_rows = list(
             self.db.scalars(
                 select(Mastery)
-                .where(Mastery.user_id == user_id, Mastery.subject_id == subject_id)
+                .where(Mastery.user_id == user_id, Mastery.subject_id.in_(identifiers))
                 .order_by(Mastery.concept_id, Mastery.dimension)
             )
         )
@@ -219,12 +255,12 @@ class CatalogService:
             concepts.append(SubjectConceptOut(concept_id=cid, score=avg, status=status, next_due_at=next_due))
 
         quizzes: list[SubjectQuizOut] = []
-        for q in self.db.scalars(select(Quiz).where(Quiz.user_id == user_id, Quiz.subject_id == subject_id).order_by(Quiz.title)):
+        for q in self.db.scalars(select(Quiz).where(Quiz.user_id == user_id, Quiz.subject_id.in_(identifiers)).order_by(Quiz.title)):
             qcount = self.db.scalar(select(func.count()).select_from(Question).where(Question.quiz_id == q.id)) or 0
             quizzes.append(SubjectQuizOut(id=q.id, title=q.title, question_count=qcount))
 
         decks: list[SubjectDeckOut] = []
-        for d in self.db.scalars(select(Deck).where(Deck.user_id == user_id, Deck.subject_id == subject_id).order_by(Deck.title)):
+        for d in self.db.scalars(select(Deck).where(Deck.user_id == user_id, Deck.subject_id.in_(identifiers)).order_by(Deck.title)):
             due = (
                 self.db.scalar(
                     select(func.count())
@@ -239,7 +275,7 @@ class CatalogService:
             decks.append(SubjectDeckOut(id=d.id, title=d.title, due_count=due))
 
         nb_ids = list(
-            self.db.scalars(select(Notebook.id).where(Notebook.user_id == user_id, Notebook.subject_id == subject_id))
+            self.db.scalars(select(Notebook.id).where(Notebook.user_id == user_id, Notebook.subject_id.in_(identifiers)))
         )
         notes = (
             [

@@ -3,7 +3,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { AnalyticsPage } from "../features/analytics/AnalyticsPage";
-import { StudioPage, SubjectsPage, TutorPage } from "../features/ai/StudyTools";
+import { StudioPage, SubjectPage, SubjectsPage, TutorPage } from "../features/ai/StudyTools";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { FocusPage } from "../features/focus/FocusPage";
 import { GradesPage } from "../features/grades/GradesPage";
@@ -13,6 +13,7 @@ import { LibraryPage } from "../features/library/LibraryPage";
 import { NotificationsPage } from "../features/notifications/NotificationsPage";
 import { PlannedPage } from "../features/planned/PlannedPage";
 import { PlannerPage } from "../features/planner/PlannerPage";
+import { OnboardingPage } from "../features/profile/OnboardingPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { TasksPage } from "../features/tasks/TasksPage";
 import { NotesPage } from "../features/workspace/NotesPage";
@@ -49,8 +50,10 @@ const router = createBrowserRouter([
       { path: "grades", element: <GradesPage /> },
       { path: "notifications", element: <NotificationsPage /> },
       { path: "settings", element: <SettingsPage /> },
+      { path: "onboarding", element: <OnboardingPage /> },
       { path: "profile", element: <SettingsPage /> },
       { path: "subjects", element: <SubjectsPage /> },
+      { path: "subjects/:subjectId", element: <SubjectPage /> },
       { path: "library", element: <LibraryPage /> },
       { path: "tutor", element: <TutorPage /> },
       { path: "studio", element: <StudioPage /> },

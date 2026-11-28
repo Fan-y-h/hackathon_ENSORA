@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { ApiError, errorMessage } from "../../api/client";
 import {
@@ -25,7 +26,7 @@ export function SettingsPage() {
   const profile = useProfile();
   return (
     <div className="page">
-      <PageHeader title="Profil & Paramètres" />
+      <PageHeader title="Profil & Paramètres" actions={<Link className="btn" to="/onboarding">Configurer mon espace</Link>} />
       <Card title="Catégorie d'élève">
         <StudentStatusPicker />
       </Card>
@@ -35,6 +36,10 @@ export function SettingsPage() {
         <SourcesCard />
         <AiPreferencesCard />
       </div>
+      {Boolean(profile.data?.goals.length) && <Card title="Objectifs personnels">
+        <ul className="list">{profile.data?.goals.filter((goal) => goal.active).map((goal) => <li key={goal.id}>{goal.label}</li>)}</ul>
+        <Link to="/grades">Gérer les objectifs de note</Link>
+      </Card>}
       <SubjectColors />
       <DataManagementCard />
     </div>

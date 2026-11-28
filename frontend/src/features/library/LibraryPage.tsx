@@ -1,4 +1,6 @@
 import { useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { useCatalogSubjects } from "../../api/queries";
 
 import { errorMessage } from "../../api/client";
 import {
@@ -7,6 +9,7 @@ import {
   SOURCE_LABEL,
   sourcesUnavailable,
   useDocumentChunks,
+  useConfirmDocumentMatch,
   useSourceDocuments,
   useUploadDocument,
   type SourceDocument,
@@ -32,13 +35,28 @@ export function LibraryPage() {
   const input = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [type, setType] = useState("");
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [source, setSource] = useState("");
+  const [limit, setLimit] = useState(30);
+  const subjectFilter = searchParams.get("subject") ?? "";
+  const openId = searchParams.get("document");
+  const changeFilter = (name: string, value: string | null) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(name, value);
+    else next.delete(name);
+    setSearchParams(next);
+  };
 
   const items = useMemo(() => documents.data?.items ?? [], [documents.data]);
   const types = useMemo(() => [...new Set(items.map(typeOf))].sort(), [items]);
-  const shown = items.filter(
-    (d) => (!type || typeOf(d) === type) && d.metadata_json.title.toLowerCase().includes(query.trim().toLowerCase()),
-  );
+  const sources = [...new Set(items.map((doc) => doc.metadata_json.provenance.source))];
+  const courseIds = [...new Set(items.flatMap((doc) => subjectOf(doc) ?? []))];
+  const shown = items.filter((doc) =>
+    (!type || typeOf(doc) === type)
+    && (!source || doc.metadata_json.provenance.source === source)
+    && (!subjectFilter || subjectOf(doc) === subjectFilter)
+    && doc.metadata_json.title.toLowerCase().includes(query.trim().toLowerCase()),
+  ).sort((a, b) => Number(Boolean(subjectOf(b))) - Number(Boolean(subjectOf(a))));
   const open = items.find((d) => d.id === openId) ?? null;
 
   return (
@@ -101,9 +119,17 @@ export function LibraryPage() {
                   </option>
                 ))}
               </select>
+              <select className="select" style={{ width: "auto" }} aria-label="Matière" value={subjectFilter} onChange={(event) => { changeFilter("subject", event.target.value); setLimit(30); }}>
+                <option value="">Toutes les matières</option>
+                {courseIds.map((id) => <option key={id} value={id}>{subjects.name(id)}</option>)}
+              </select>
+              <select className="select" style={{ width: "auto" }} aria-label="Source" value={source} onChange={(event) => { setSource(event.target.value); setLimit(30); }}>
+                <option value="">Toutes les sources</option>
+                {sources.map((id) => <option key={id} value={id}>{SOURCE_LABEL[id]}</option>)}
+              </select>
             </div>
             {shown.length === 0 ? (
-              <EmptyState title={items.length ? "Aucun résultat" : "Bibliothèque vide"} />
+              <EmptyState title={items.length ? "Aucun résultat" : "Bibliothèque vide"}>{!items.length && <Link to="/settings">Connecter une source ou autoriser l’import local</Link>}</EmptyState>
             ) : (
               <div className="table-wrap">
                 <table className="table library">
@@ -116,17 +142,17 @@ export function LibraryPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {shown.map((d) => {
+                    {shown.slice(0, limit).map((d) => {
                       const subject = subjectOf(d);
                       return (
                         <tr key={d.id} aria-selected={d.id === openId}>
                           <td>
-                            <button type="button" className="library__open" onClick={() => setOpenId(d.id === openId ? null : d.id)}>
+                            <button type="button" className="library__open" onClick={() => changeFilter("document", d.id === openId ? null : d.id)}>
                               {d.metadata_json.title}
                             </button>
                           </td>
                           <td>{RESOURCE_TYPE_LABEL[typeOf(d)] ?? typeOf(d)}</td>
-                          <td>{subject ? <SubjectBadge acronym={subjects.acronym(subject)} color={subjects.color(subject)} /> : <span className="muted">—</span>}</td>
+                          <td>{subject ? <SubjectBadge acronym={subjects.acronym(subject)} color={subjects.color(subject)} /> : <span className="muted">Non rattaché</span>}</td>
                           <td className="muted">{SOURCE_LABEL[d.metadata_json.provenance.source] ?? d.metadata_json.provenance.source}</td>
                         </tr>
                       );
@@ -135,8 +161,9 @@ export function LibraryPage() {
                 </table>
               </div>
             )}
+            {shown.length > limit && <button className="btn" type="button" onClick={() => setLimit((value) => value + 30)}>Afficher plus ({shown.length - limit})</button>}
           </Card>
-          <aside className="split__side">{open ? <DocumentPanel doc={open} /> : null}</aside>
+          <aside className="split__side">{open ? <DocumentPanel key={open.id} doc={open} /> : null}</aside>
         </div>
       )}
     </div>
@@ -146,6 +173,10 @@ export function LibraryPage() {
 function DocumentPanel({ doc }: { doc: SourceDocument }) {
   const chunks = useDocumentChunks(doc.id, doc.active_version_id);
   const classification = doc.metadata_json.classification;
+  const catalog = useCatalogSubjects();
+  const assign = useConfirmDocumentMatch();
+  const [subject, setSubject] = useState(subjectOf(doc) ?? "");
+  const versionStatus = chunks.data?.version?.status;
   return (
     <Card title={doc.metadata_json.title}>
       <span className="small muted">
@@ -157,7 +188,17 @@ function DocumentPanel({ doc }: { doc: SourceDocument }) {
           Ouvrir le fichier
         </a>
       )}
-      {chunks.isPending ? (
+      {versionStatus && <p className="small muted">Analyse · {({ ready: "Terminée", partial: "Partielle", failed: "Erreur d’analyse", error: "Erreur d’analyse", unsupported: "Format indisponible" } as Record<string, string>)[versionStatus] ?? versionStatus}</p>}
+      <form className="stack" onSubmit={(event) => { event.preventDefault(); if (subject) assign.mutate({ documentId: doc.id, subjectId: subject }); }}>
+        <label className="field"><span>Matière du document</span><select className="select" value={subject} onChange={(event) => setSubject(event.target.value)}>
+          <option value="">Choisir une matière</option>
+          {catalog.data?.items.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+        </select></label>
+        <button className="btn btn--small" type="submit" disabled={!subject || assign.isPending}>Confirmer le rattachement</button>
+        {assign.error && <p role="alert">{errorMessage(assign.error)}</p>}
+        {assign.isSuccess && <p role="status">Rattachement enregistré.</p>}
+      </form>
+      {!doc.active_version_id ? <p className="muted">Aucun fichier téléchargé.</p> : chunks.isPending ? (
         <Loading lines={3} />
       ) : chunks.error ? (
         <ErrorPanel error={chunks.error} />

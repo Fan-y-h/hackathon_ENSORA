@@ -14,6 +14,7 @@ export interface SourceConnection {
   source: SourceKind;
   status: ConnectionStatus;
   last_success_at: string | null;
+  validation_required?: boolean;
   consent: { read: boolean; automatic_sync: boolean };
 }
 
@@ -328,7 +329,9 @@ export interface ResultsAssessment {
   coefficient: number | null;
   weight: number | null;
   grade: number | null;
-  maximum: number;
+  maximum: number | null;
+  minimum?: number | null;
+  children?: ResultsAssessment[];
 }
 
 export interface ResultsSubject {
@@ -338,13 +341,18 @@ export interface ResultsSubject {
   coefficient: number | null;
   ects: number | null;
   official_grade: number | null;
+  official_grade_maximum?: number | null;
+  official_grade_minimum?: number | null;
   assessments: ResultsAssessment[];
 }
 
 export interface ResultsUnit {
   key: string;
+  coefficient?: number | null;
+  unassigned?: boolean;
   title: string;
   official_average: number | null;
+  official_average_maximum?: number | null;
   subjects: ResultsSubject[];
 }
 
@@ -352,6 +360,7 @@ export interface ResultsSemester {
   key: string;
   title: string;
   official_average: number | null;
+  official_average_maximum?: number | null;
   units: ResultsUnit[];
 }
 
@@ -359,12 +368,14 @@ export interface Results {
   source: string;
   academic_year: string | null;
   general_average: number | null;
+  general_average_maximum?: number | null;
+  academic_years?: string[];
   semesters: ResultsSemester[];
 }
 
 /** UE / subject / coefficient / mark tree synced from Pamplemousse. */
-export const useResults = () =>
-  useQuery({ queryKey: ["results"], queryFn: () => api.get<Results>("/results"), retry: false });
+export const useResults = (academicYear?: string) =>
+  useQuery({ queryKey: ["results", academicYear], queryFn: () => api.get<Results>("/results", { academic_year: academicYear }), retry: false });
 
 /** Subject catalog synced from Pamplemousse: course code -> official name (empty if unavailable). */
 export const useSourceSubjects = () =>
@@ -424,7 +435,7 @@ export const useDocumentVersions = (documentId?: string) =>
 export const useDocumentChunks = (documentId?: string, versionId?: string | null) =>
   useQuery({
     queryKey: sourceKeys.chunks(documentId ?? "", versionId ?? ""),
-    queryFn: () => api.get<Page<DocumentChunk>>(`${S}/documents/${encodeURIComponent(documentId!)}/versions/${encodeURIComponent(versionId!)}/chunks`, { limit: 50 }),
+    queryFn: () => api.get<Page<DocumentChunk> & { version: DocumentVersion }>(`${S}/documents/${encodeURIComponent(documentId!)}/versions/${encodeURIComponent(versionId!)}/chunks`, { limit: 50 }),
     enabled: Boolean(documentId && versionId),
   });
 
@@ -487,7 +498,8 @@ export function useUploadDocument() {
 export function useStartSync() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (source?: SourceKind) => api.post<{ id: string }>(`${S}/sync`, source ? { source } : {}),
+    mutationFn: (scope?: SourceKind | { source: SourceKind; subject_id: string }) =>
+      api.post<{ id: string }>(`${S}/sync`, typeof scope === "string" ? { source: scope } : scope ?? {}),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: sourceKeys.runs });
       void qc.invalidateQueries({ queryKey: sourceKeys.pipeline });
