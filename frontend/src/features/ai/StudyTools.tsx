@@ -3,11 +3,11 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { errorMessage } from "../../api/client";
 import {
-  useArtifacts, useCatalogSubject, useCatalogSubjects, useConversationMessages, useConversations,
+  useAiPreferences, useAiProviders, useArtifacts, useCatalogSubject, useCatalogSubjects, useConversationMessages, useConversations,
   useGenerateArtifact, useTutorAnswer,
 } from "../../api/queries";
 import type { ArtifactType, CitationOut } from "../../api/types";
-import { useResults } from "../../api/sources";
+import { useResults, useSourceDocuments } from "../../api/sources";
 import { Card, PageHeader } from "../../components/ui";
 
 function Citations({ items }: { items: CitationOut[] }) {
@@ -20,7 +20,9 @@ function Citations({ items }: { items: CitationOut[] }) {
             ? <a href={item.content_url} target="_blank" rel="noreferrer">{item.title}</a>
             : item.title}
           {item.locator.page != null && <span> · p. {item.locator.page}</span>}
+          {item.locator.heading && <span> · {item.locator.heading}</span>}
           <blockquote>{item.excerpt}</blockquote>
+          <Link to={`/library?${new URLSearchParams({ document: item.document_id })}`}>Voir dans la bibliothèque</Link>
         </li>
       ))}
     </ul>
@@ -29,42 +31,117 @@ function Citations({ items }: { items: CitationOut[] }) {
 
 export function TutorPage() {
   const [params] = useSearchParams();
-  const subject = params.get("subject");
+  const [subject, setSubject] = useState(params.get("subject") ?? "");
   const [question, setQuestion] = useState("");
-  const [conversation, setConversation] = useState("");
+  const [conversation, setConversation] = useState(params.get("conversation") ?? "");
+  const [documentIds, setDocumentIds] = useState(() => params.getAll("document"));
+  const [model, setModel] = useState("");
+  const [documentQuery, setDocumentQuery] = useState("");
+  const catalog = useCatalogSubjects();
+  const subjectDetail = useCatalogSubject(subject || undefined);
+  const documents = useSourceDocuments(!subject);
+  const providers = useAiProviders();
+  const preferences = useAiPreferences();
   const conversations = useConversations();
   const messages = useConversationMessages(conversation || undefined);
   const answer = useTutorAnswer();
+
+  const choices = subject
+    ? subjectDetail.data?.documents.filter((item) => item.active_version_id).map(({ id, title }) => ({ id, title })) ?? []
+    : documents.data?.items.filter((item) => item.active_version_id).map((item) => ({ id: item.id, title: item.metadata_json.title })) ?? [];
+  const activeDocuments = documentIds.filter((id) => choices.some((doc) => doc.id === id));
+  const displayedDocuments = choices.filter((doc) => doc.title.toLocaleLowerCase("fr").includes(documentQuery.trim().toLocaleLowerCase("fr")) || activeDocuments.includes(doc.id));
+  const models = (providers.data?.items ?? [])
+    .filter((provider) => provider.available && (provider.local || preferences.data?.cloud_data_consent))
+    .flatMap((provider) => provider.models.map((entry) => ({ ...entry, id: JSON.stringify([entry.provider_id, entry.model_id]) })));
+  const selectedModel = models.find((entry) => entry.id === model);
+  const documentSource = subject ? subjectDetail : documents;
   const error = answer.error ?? messages.error ?? conversations.error;
+  const pendingSelection = documentIds.length > 0 && (!documentSource.isSuccess || activeDocuments.length !== documentIds.length);
+  const changingConversation = Boolean(conversation && conversations.isPending);
+
   return (
-    <div className="stack">
+    <div className="page">
       <PageHeader title="AI Tutor" />
       <Card>
-        <label>
-          Conversation
-          <select value={conversation} onChange={(event) => setConversation(event.target.value)}>
-            <option value="">Nouvelle conversation</option>
-            {conversations.data?.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
-          </select>
-        </label>
         <form className="stack" onSubmit={(event) => {
           event.preventDefault();
-          if (!question.trim()) return;
-          answer.mutate({ question: question.trim(), ...(subject ? { subject_id: subject } : {}), conversation_id: conversation || null }, {
+          if (!question.trim() || pendingSelection || changingConversation) return;
+          answer.mutate({
+            question: question.trim(),
+            subject_id: subject || null,
+            conversation_id: conversation || null,
+            document_ids: activeDocuments,
+            ...(selectedModel ? { provider_override: selectedModel.provider_id, model_override: selectedModel.model_id } : {}),
+          }, {
             onSuccess: (result) => {
               setConversation(result.conversation_id);
               setQuestion("");
             },
           });
         }}>
-          <label>Votre question<textarea value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={5000} required /></label>
-          <button className="btn btn--primary" disabled={answer.isPending}>Envoyer</button>
+          <div className="form-grid">
+            <label className="field"><span>Conversation</span>
+              <select className="select" value={conversation} disabled={answer.isPending || conversations.isPending} onChange={(event) => {
+                const id = event.target.value;
+                setConversation(id);
+                setSubject(conversations.data?.find((entry) => entry.id === id)?.subject_id ?? "");
+                setDocumentIds([]);
+                answer.reset();
+              }}>
+                <option value="">Nouvelle conversation</option>
+                {conversations.data?.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+              </select>
+            </label>
+            <label className="field"><span>Matière</span>
+              <select className="select" value={subject} disabled={answer.isPending} onChange={(event) => {
+                setSubject(event.target.value);
+                setConversation("");
+                setDocumentIds([]);
+                setDocumentQuery("");
+                answer.reset();
+              }}>
+                <option value="">Toutes les matières autorisées</option>
+                {subject && !catalog.data?.items.some((item) => item.id === subject) && <option value={subject}>{subjectDetail.data?.title ?? subject}</option>}
+                {catalog.data?.items.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+              </select>
+            </label>
+            <label className="field"><span>Modèle</span>
+              <select className="select" value={selectedModel?.id ?? ""} disabled={answer.isPending} onChange={(event) => setModel(event.target.value)}>
+                <option value="">Sélection automatique</option>
+                {models.map((entry) => <option key={entry.id} value={entry.id}>{entry.model_id} · {entry.provider_id}</option>)}
+              </select>
+            </label>
+          </div>
+          {providers.isSuccess && !models.length && <p className="small muted">Aucun modèle autorisé et disponible. Le Tuteur peut utiliser des extraits locaux si ce repli est activé.</p>}
+          <details open={documentIds.length > 0 || undefined}>
+            <summary>Documents de référence {documentIds.length > 0 && `(${documentIds.length})`}</summary>
+            {documentSource.isPending && <p role="status">Chargement des documents…</p>}
+            {documentSource.error && <p role="alert">{errorMessage(documentSource.error)}</p>}
+            {documentSource.isSuccess && !choices.length && <p>Aucun document disponible dans ce périmètre. <Link to="/library">Ouvrir la bibliothèque</Link></p>}
+            {!!choices.length && <label className="field"><span>Filtrer les documents</span><input className="input" type="search" value={documentQuery} onChange={(event) => setDocumentQuery(event.target.value)} /></label>}
+            {displayedDocuments.slice(0, 50).map((doc) => (
+              <label key={doc.id} className="checkbox">
+                <input type="checkbox" checked={documentIds.includes(doc.id)}
+                  disabled={answer.isPending || (documentIds.length >= 50 && !documentIds.includes(doc.id))}
+                  onChange={(event) => setDocumentIds((current) => event.target.checked ? [...current, doc.id] : current.filter((id) => id !== doc.id))} />
+                {doc.title}
+              </label>
+            ))}
+            {displayedDocuments.length > 50 && <p className="small muted">Affinez le filtre pour afficher les autres documents.</p>}
+            {pendingSelection && documentSource.isSuccess && <p role="alert">Une ressource sélectionnée n’est plus accessible dans ce périmètre.</p>}
+            {!!documentIds.length && <button className="btn btn--small" type="button" disabled={answer.isPending} onClick={() => setDocumentIds([])}>Effacer la sélection</button>}
+          </details>
+          <label className="field"><span>Votre question</span><textarea className="input" value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={5000} required /></label>
+          <button className="btn btn--primary" disabled={answer.isPending || pendingSelection || changingConversation || !question.trim()}>{answer.isPending ? "Réponse en cours…" : "Envoyer"}</button>
         </form>
         {error && <p role="alert">{errorMessage(error)}</p>}
       </Card>
+      {conversation && messages.isPending && <p role="status">Chargement de l’historique…</p>}
       {messages.data?.map((item) => (
         <Card key={item.id} title={item.role === "user" ? "Vous" : "Tuteur"}
-          subtitle={item.is_fallback ? "Réponse extractive locale" : item.model}>
+          subtitle={item.is_fallback ? "Réponse extractive locale" : [item.provider, item.model].filter(Boolean).join(" · ")}>
+          {item.evidence_status === "insufficient" && <p className="small muted">Sources insuffisantes dans le périmètre sélectionné.</p>}
           <p style={{ whiteSpace: "pre-wrap" }}>{item.content_markdown}</p>
           <Citations items={item.citations ?? []} />
         </Card>

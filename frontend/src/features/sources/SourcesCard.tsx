@@ -26,6 +26,7 @@ import {
   type ConnectionStatus,
   type SourceConnection,
   type SourceKind,
+  type SyncSourceReport,
 } from "../../api/sources";
 import { Icon } from "../../components/Icon";
 import { Card, ConfirmDialog, EmptyState, ErrorPanel, Loading } from "../../components/ui";
@@ -110,6 +111,40 @@ function describeSource(
     ERROR: { label: "Erreur de connexion", tone: "critical" },
   };
   return statusMap[conn.status] ?? { label: "État inconnu", tone: "warning" };
+}
+
+const SOURCE_STAGE: Record<string, string> = {
+  listing: "Découverte",
+  processing: "Traitement",
+  complete: "Terminé",
+};
+
+function SourceRunDetails({ report }: { report: SyncSourceReport }) {
+  const counts = [
+    ["documents_discovered", "repérés"],
+    ["documents_excluded", "écartés"],
+    ["documents_downloaded", "téléchargés"],
+    ["documents_parsed", "analysés"],
+    ["documents_persisted", "enregistrés"],
+    ["assignments_discovered", "devoirs repérés"],
+  ] as const;
+  const reasons = [...new Set([report.auth_reason, ...(report.error_codes ?? []), ...(report.warning_codes ?? [])].filter(Boolean))];
+  return (
+    <div className="stack small muted" aria-label="Détail de la synchronisation">
+      <span>
+        {report.stage && (SOURCE_STAGE[report.stage] ?? report.stage)}
+        {!!report.page_number && ` · page ${report.page_number}`}
+        {report.items_remaining_in_page != null && ` · ${report.items_remaining_in_page} restant(s) sur la page`}
+      </span>
+      <span>{[
+        ...counts.flatMap(([key, label]) => report.metrics?.[key] != null ? [`${report.metrics[key]} ${label}`] : []),
+        report.records != null ? `${report.records} enregistrement(s)` : null,
+        report.unchanged != null ? `${report.unchanged} inchangé(s)` : null,
+        report.errors != null ? `${report.errors} erreur(s)` : null,
+      ].filter(Boolean).join(" · ")}</span>
+      {reasons.length > 0 && <span>{reasons.map((code) => REASON[code!] ?? code).join(" · ")}</span>}
+    </div>
+  );
 }
 
 /** Read-only connections to Moodle, Pamplemousse, Drive Ensora, Google Agenda and local files. */
@@ -203,7 +238,7 @@ export function SourcesCard() {
               const isLocal = c.source === "local";
               const connected = c.status === "CONNECTED";
               const isThisSyncing = jobRunning && (activeSource === "all" || activeSource === c.source);
-              const reportForSource = latestReport[c.source];
+              const reportForSource = latestReport[c.source] ?? runs.data?.items.find((run) => run.report?.[c.source])?.report[c.source];
               const badge = describeSource(c, isThisSyncing, reportForSource?.status);
               const fb = rowFeedback[c.id];
               const canToggleAuto = c.consent.automatic_sync || (connected && c.consent.read);
@@ -355,6 +390,7 @@ export function SourcesCard() {
                       ? "Cliquez sur Vérifier pour tester la session enregistrée. Si elle a expiré, renouez la connexion."
                       : "Cliquez sur Reconnecter et terminez la connexion dans la fenêtre ouverte sur ce poste, y compris le MFA demandé. Revenez ensuite ici et cliquez sur Vérifier."}</p>
                   )}
+                  {reportForSource && <SourceRunDetails report={reportForSource} />}
                   {fb && (
                     <div className={`status status--${fb.tone} small`} role="status">
                       {fb.text}

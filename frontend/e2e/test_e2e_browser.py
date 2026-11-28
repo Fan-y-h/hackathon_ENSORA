@@ -187,3 +187,47 @@ def test_e2e_first_use_and_task_edit_on_empty_real_database(browser_context):
     assert not console_errors, console_errors
     assert not failed_requests, failed_requests
     page.close()
+
+
+@pytest.mark.skipif(
+    os.environ.get("ENSORA_E2E_FRESH_DEMO_TUTOR") != "1",
+    reason="Run only against a new throwaway DEMO database",
+)
+def test_e2e_library_to_tutor_preserves_document_scope_and_history(browser_context):
+    from pathlib import Path
+
+    from playwright.sync_api import expect
+
+    page = browser_context.new_page()
+    console_errors, page_errors, failed_requests = _attach_error_collectors(page)
+    sources = f"{FRONTEND_URL}/api/v1/sources"
+    connections = page.request.get(f"{sources}/connections").json()["items"]
+    local_id = next(item["id"] for item in connections if item["source"] == "local")
+    assert page.request.put(f"{sources}/connections/{local_id}/consent", data={"purpose": "read", "granted": True}).ok
+    assert page.request.post(f"{sources}/connections/{local_id}/authorize").ok
+    fixture = Path(__file__).resolve().parents[2] / "data" / "demo" / "sample_econometrie_cours.md"
+    assert page.request.post(
+        f"{sources}/documents/import", multipart={
+            "file": {"name": fixture.name, "mimeType": "text/markdown", "buffer": fixture.read_bytes()},
+        },
+    ).ok
+
+    page.goto(f"{FRONTEND_URL}/library")
+    page.get_by_role("button", name=fixture.name, exact=True).click()
+    page.get_by_role("link", name="Interroger le Tuteur sur ce document").click()
+    expect(page.get_by_role("checkbox", name=fixture.name)).to_be_checked()
+    page.get_by_label("Votre question").fill("Explique les hypothèses du théorème de Gauss-Markov")
+    with page.expect_request("**/api/v1/tutor/answer") as sent:
+        page.get_by_role("button", name="Envoyer").click()
+    assert len(sent.value.post_data_json["document_ids"]) == 1
+    expect(page.get_by_role("heading", name="Tuteur", exact=True)).to_be_visible(timeout=20_000)
+    expect(page.get_by_role("link", name="Voir dans la bibliothèque").first).to_be_visible()
+    page.reload()
+    history = page.get_by_label("Conversation")
+    expect(history.get_by_role("option")).to_have_count(2)
+    history.select_option(index=1)
+    expect(page.get_by_role("heading", name="Tuteur", exact=True)).to_be_visible()
+    assert not page_errors, page_errors
+    assert not console_errors, console_errors
+    assert not failed_requests, failed_requests
+    page.close()

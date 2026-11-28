@@ -107,7 +107,7 @@ export function AppShell() {
       </nav>
       <main id="main" className="shell__main" tabIndex={-1}>
         {mode === "demo" && <p className="exam-banner">MODE DEMO · Démonstration · Données synthétiques</p>}
-        {mode === "real" && pathname === "/onboarding" && <p className="small muted">MODE REAL · Espace étudiant local</p>}
+        {mode === "real" && <p className="small muted">MODE REAL · Espace étudiant local</p>}
         {examActive && (
           <div className="exam-banner" role="status">
             <Icon name="clock" /> Mode examen : notes et corrigés bloqués

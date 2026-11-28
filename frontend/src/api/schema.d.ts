@@ -2152,6 +2152,8 @@ export interface components {
         };
         /** ArtifactGenerateRequest */
         ArtifactGenerateRequest: {
+            /** Chapter Id */
+            chapter_id?: string | null;
             /** Concept Ids */
             concept_ids?: string[];
             /**
@@ -5747,6 +5749,8 @@ export interface components {
         };
         /** TutorAnswerRequest */
         TutorAnswerRequest: {
+            /** Chapter Id */
+            chapter_id?: string | null;
             /** Conversation Id */
             conversation_id?: string | null;
             /** Document Ids */

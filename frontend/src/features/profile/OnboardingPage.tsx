@@ -43,6 +43,14 @@ function OnboardingForm({ profile }: { profile: Profile }) {
 
   if (showSources) return (
     <>
+      {!profile.onboarding_complete ? null : <Card title="Connecter mes plateformes">
+        <ol>
+          <li>Autorisez la lecture de Pamplemousse, connectez-vous dans la fenêtre ENSAI et cliquez sur Vérifier, puis Synchroniser.</li>
+          <li>Après la récupération du programme, connectez Moodle et choisissez une matière à synchroniser.</li>
+          <li>Connectez Drive Ensora et Google Agenda si vous souhaitez les ajouter à votre espace.</li>
+        </ol>
+        <p className="small muted">Vous pourrez reprendre ces étapes dans Paramètres.</p>
+      </Card>}
       <SourcesCard />
       <div className="row">
         <button className="btn" type="button" onClick={() => setShowSources(false)}>Modifier mon profil</button>

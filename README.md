@@ -2,6 +2,10 @@
 
 Ensora+ runs as a local, single-student workspace. Real mode uses the student's authorized institutional sources. Demo mode owns separate databases, a separate source configuration and a separate RAG index.
 
+## Open or launch ENSORA+
+
+`bash scripts/run_local.sh real` checks the runtime mode through Vite before opening the real instance in Chrome. Use `bash scripts/run_local.sh demo` for the separate synthetic fallback. The real launcher uses the existing validation copy on this machine. Set `ENSORA_REAL_DIR` to reuse a different copy prepared below.
+
 ## Real mode
 
 From the repository root, prepare a private copy of both existing stores. Stop any writer to the source stores while copying their document blobs. The command without `--copy-to` is a read-only provenance audit. It prints counts, never profile or document values.

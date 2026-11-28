@@ -45,7 +45,7 @@ function buildProxy(target: string, tokenFile: string): Record<string, ProxyOpti
 }
 
 export default defineConfig(({ mode }) => {
-  const env = { ...process.env, ...loadEnv(mode, ".", "") } as Record<string, string>;
+  const env = { ...loadEnv(mode, ".", ""), ...process.env } as Record<string, string>;
   const target = env.VITE_API_PROXY_TARGET || "http://127.0.0.1:8000";
   const tokenFile = sourcesTokenFile(env);
   const proxy = buildProxy(target, tokenFile);

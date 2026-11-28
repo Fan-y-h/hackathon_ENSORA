@@ -60,6 +60,15 @@ export type JobStatus = "queued" | "running" | "succeeded" | "partial" | "failed
 
 export interface SyncSourceReport {
   status?: string;
+  stage?: string | null;
+  page_number?: number;
+  items_remaining_in_page?: number | null;
+  auth_reason?: string | null;
+  unchanged?: number;
+  errors?: number;
+  metrics?: Record<string, number>;
+  warning_codes?: string[];
+  error_codes?: string[];
   documents?: number;
   records?: number;
   error?: string;
@@ -408,9 +417,10 @@ export const useSourceSubjectRecords = () =>
     retry: false,
   });
 
-export const useSourceDocuments = () =>
+export const useSourceDocuments = (enabled = true) =>
   useQuery({
     queryKey: sourceKeys.documents,
+    enabled,
     // Follow the cursor: a Moodle sync alone brings several hundred documents.
     queryFn: async () => {
       const items: SourceDocument[] = [];

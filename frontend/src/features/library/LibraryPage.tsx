@@ -198,6 +198,7 @@ function DocumentPanel({ doc }: { doc: SourceDocument }) {
         {assign.error && <p role="alert">{errorMessage(assign.error)}</p>}
         {assign.isSuccess && <p role="status">Rattachement enregistré.</p>}
       </form>
+      {doc.active_version_id && <Link className="btn btn--small" to={`/tutor?${new URLSearchParams({ document: doc.id })}`}>Interroger le Tuteur sur ce document</Link>}
       {!doc.active_version_id ? <p className="muted">Aucun fichier téléchargé.</p> : chunks.isPending ? (
         <Loading lines={3} />
       ) : chunks.error ? (
