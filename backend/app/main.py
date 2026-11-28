@@ -27,7 +27,9 @@ from app.core.common import Clock, SystemClock
 from app.core.config import load_settings
 from app.core.db import Database
 from app.core.errors import install_error_handlers
+from app.core.exam_guard import require_not_exam_mode
 from app.modules.account.router import router as account_router
+from app.modules.ai.router import router as ai_router
 from app.modules.analytics.router import router as analytics_router
 from app.modules.catalog.router import router as catalog_router
 from app.modules.grades.router import router as grades_router
@@ -57,7 +59,12 @@ def _build_sources_app(p1_settings, p1_components):
     except Exception:  # pragma: no cover - depends on optional runtime packages
         logger.exception("P1 sources API unavailable")
         return None
-    return create_sources_app(p1_settings, p1_components, prefix="", managed_runtime=True)
+    sources_app = create_sources_app(
+        p1_settings, p1_components, prefix="", managed_runtime=True,
+        document_guard=require_not_exam_mode,
+    )
+    install_error_handlers(sources_app)
+    return sources_app
 
 
 def create_app(
@@ -98,6 +105,10 @@ def create_app(
         try:
             yield
         finally:
+            ai_runtime = getattr(app_.state, "ai_runtime", None)
+            if ai_runtime is not None:
+                ai_runtime.close()
+                del app_.state.ai_runtime
             if importer is not None:
                 importer.stop()
             if runtime is not None:
@@ -137,6 +148,7 @@ def create_app(
         return {"status": "ok" if db_ok else "degraded", "database": db_ok, "sources": sources_ready}
 
     api.include_router(account_router)
+    api.include_router(ai_router)
     api.include_router(catalog_router)
     api.include_router(planner_router)
     api.include_router(source_bridge_router)
@@ -148,6 +160,8 @@ def create_app(
     api.include_router(notifications_router)
     app.include_router(api)
     if sources_app is not None:
+        sources_app.state.db = app.state.db
+        sources_app.state.clock = app.state.clock
         app.mount(SOURCES_PREFIX, sources_app)
     return app
 

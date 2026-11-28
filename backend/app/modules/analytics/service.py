@@ -54,7 +54,7 @@ class ReadinessScoreOut(BaseModel):
     estimate: float | None = None
     low: float | None = None
     high: float | None = None
-    coverage: float = 0.0
+    coverage: float | None = None
     concepts: int = 0
     known: int = 0
 

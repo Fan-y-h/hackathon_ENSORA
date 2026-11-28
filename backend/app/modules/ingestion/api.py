@@ -54,7 +54,10 @@ class ResumeSelection(Contract):
     source: SourceKind | None = None
 
 
-def create_app(settings=None, components=None, *, prefix: str = "/api/v1", managed_runtime: bool = False):
+def create_app(
+    settings=None, components=None, *, prefix: str = "/api/v1",
+    managed_runtime: bool = False, document_guard=None,
+):
     @asynccontextmanager
     async def lifespan(application):
         with Runtime(settings or Settings.load(), components) as runtime:
@@ -122,6 +125,7 @@ def create_app(settings=None, components=None, *, prefix: str = "/api/v1", manag
         return {"status": "ready", "database": "ready"}
 
     api = APIRouter(prefix=prefix, dependencies=[Depends(authorize)])
+    document_dependencies = [Depends(document_guard)] if document_guard is not None else []
 
     def page(db, query, id_column, limit, cursor, order=None):
         if order is None:
@@ -345,7 +349,7 @@ def create_app(settings=None, components=None, *, prefix: str = "/api/v1", manag
                 & documents.c.active_version_id.is_not(None)
                 & in_approved_drive_scope)
 
-    @api.get("/documents")
+    @api.get("/documents", dependencies=document_dependencies)
     def list_documents(request: Request, limit: Limit = 50, cursor: str | None = None,
                        subject_id: str | None = None):
         ctx = runtime(request)
@@ -356,7 +360,7 @@ def create_app(settings=None, components=None, *, prefix: str = "/api/v1", manag
         with ctx.engine.connect() as db:
             return page(db, query, documents.c.id, limit, cursor, literal_column("documents.rowid"))
 
-    @api.post("/documents/import", status_code=201)
+    @api.post("/documents/import", status_code=201, dependencies=document_dependencies)
     def import_document(request: Request, file: UploadFile = File(...),
                         external_id: Annotated[str | None, Form(min_length=1, max_length=256)] = None):
         ctx = runtime(request)
@@ -378,13 +382,13 @@ def create_app(settings=None, components=None, *, prefix: str = "/api/v1", manag
                 raise HTTPException(422, "Document could not be processed") from None
         return {"result": result, "external_id": identity}
 
-    @api.get("/documents/exam-correction-candidates")
+    @api.get("/documents/exam-correction-candidates", dependencies=document_dependencies)
     def exam_correction_candidates(request: Request):
         matcher = runtime(request).pipeline.matcher
         candidates = getattr(matcher, "exam_correction_candidates", None)
         return {"items": [entry.to_dict() for entry in candidates()] if candidates else []}
 
-    @api.put("/documents/{document_id}/match")
+    @api.put("/documents/{document_id}/match", dependencies=document_dependencies)
     def confirm_document_match(request: Request, document_id: str, body: DocumentMatchInput):
         ctx = runtime(request)
         allowed = public_documents(ctx)
@@ -443,7 +447,7 @@ def create_app(settings=None, components=None, *, prefix: str = "/api/v1", manag
                 "teaching_unit_id": teaching_unit_id, "chapter_id": effective_chapter_id,
                 "confirmed": True}
 
-    @api.get("/documents/{document_id}")
+    @api.get("/documents/{document_id}", dependencies=document_dependencies)
     def document(request: Request, document_id: str):
         ctx = runtime(request)
         with ctx.engine.connect() as db:
@@ -453,7 +457,7 @@ def create_app(settings=None, components=None, *, prefix: str = "/api/v1", manag
                 raise HTTPException(404, "Unknown document")
             return dict(item)
 
-    @api.get("/documents/{document_id}/versions")
+    @api.get("/documents/{document_id}/versions", dependencies=document_dependencies)
     def document_versions(request: Request, document_id: str, limit: Limit = 50, cursor: str | None = None):
         document(request, document_id)
         with runtime(request).engine.connect() as db:
@@ -469,7 +473,7 @@ def create_app(settings=None, components=None, *, prefix: str = "/api/v1", manag
                 raise HTTPException(404, "Unknown document version")
             return dict(row)
 
-    @api.get("/documents/{document_id}/versions/{version_id}/content")
+    @api.get("/documents/{document_id}/versions/{version_id}/content", dependencies=document_dependencies)
     def content(request: Request, document_id: str, version_id: str):
         item = document_version(request, document_id, version_id)
         path = runtime(request).settings.local_data_dir / "blobs" / item["sha256"]
@@ -482,7 +486,7 @@ def create_app(settings=None, components=None, *, prefix: str = "/api/v1", manag
         return FileResponse(path, media_type=media_type, filename=title,
                             headers={"X-Content-Type-Options": "nosniff"})
 
-    @api.get("/documents/{document_id}/versions/{version_id}/chunks")
+    @api.get("/documents/{document_id}/versions/{version_id}/chunks", dependencies=document_dependencies)
     def parsed_chunks(request: Request, document_id: str, version_id: str):
         item = document_version(request, document_id, version_id)
         with runtime(request).engine.connect() as db:
@@ -490,7 +494,7 @@ def create_app(settings=None, components=None, *, prefix: str = "/api/v1", manag
                                 .where(chunks.c.version_id == version_id).order_by(chunks.c.ordinal)).mappings()
             return {"version": item, "items": [dict(row) for row in result]}
 
-    @api.get("/documents/{document_id}/versions/{version_id}/concept-candidates")
+    @api.get("/documents/{document_id}/versions/{version_id}/concept-candidates", dependencies=document_dependencies)
     def concept_candidates(request: Request, document_id: str, version_id: str):
         from backend.app.modules.ingestion.codex_bridge import extract_concept_candidates, extract_prerequisite_hints
 

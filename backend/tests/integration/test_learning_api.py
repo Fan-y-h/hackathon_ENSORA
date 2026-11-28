@@ -153,3 +153,75 @@ def test_learning_isolation(client, as_bob):
     assert client.get(f"{API}/decks/{deck['id']}/cards", headers=as_bob).status_code == 404
     a = client.post(f"{API}/quizzes/{quiz['id']}/attempts", json={}).json()
     assert client.post(f"{API}/attempts/{a['id']}/submit", headers=as_bob).status_code == 404
+
+
+def test_learning_numeric_comma_dedupe_and_invalid_responses(client):
+    # French decimal comma in numeric answer key must score cleanly without 500 crash
+    q = client.post(
+        f"{API}/quizzes",
+        json={
+            "title": "Calcul numérique",
+            "subject_id": "stat",
+            "questions": [
+                {
+                    "type": "numeric",
+                    "prompt": "1/3 ≈ ?",
+                    "answer": {"value": "0,333", "tolerance": "0,01"},
+                    "concept_ids": ["c-comma"],
+                },
+                {
+                    "type": "single_choice",
+                    "prompt": "Choix ?",
+                    "options": [{"id": "a", "text": "A"}, {"id": "b", "text": "B"}],
+                    "answer": "a",
+                    "concept_ids": ["c-choice"],
+                },
+            ],
+        },
+    ).json()
+    q_num, q_sc = q["questions"][0]["id"], q["questions"][1]["id"]
+    a = client.post(f"{API}/quizzes/{q['id']}/attempts", json={}).json()
+
+    # Invalid response shapes rejected with 422
+    assert client.patch(
+        f"{API}/attempts/{a['id']}/responses",
+        json={"responses": [{"question_id": q_sc, "response": "nonexistent"}]},
+    ).status_code == 422
+    assert client.patch(
+        f"{API}/attempts/{a['id']}/responses",
+        json={"responses": [{"question_id": q_num, "response": "pas-un-nombre"}]},
+    ).status_code == 422
+
+    # Duplicate question_id in one PATCH deduplicates safely (last wins)
+    r = client.patch(
+        f"{API}/attempts/{a['id']}/responses",
+        json={
+            "responses": [
+                {"question_id": q_sc, "response": "b"},
+                {"question_id": q_sc, "response": "a"},
+                {"question_id": q_num, "response": "0,334"},
+            ]
+        },
+    )
+    assert r.status_code == 200
+    res = client.post(f"{API}/attempts/{a['id']}/submit").json()
+    assert res["score"] == 2.0 and res["max_score"] == 2.0
+
+    # Blank fill_blank answer keys & whitespace-only flashcards rejected
+    assert client.post(
+        f"{API}/quizzes",
+        json={"title": "Bad", "questions": [{"type": "fill_blank", "prompt": "x", "answer": ["   "]}]},
+    ).status_code == 422
+    deck = client.post(f"{API}/decks", json={"title": "Deck", "subject_id": "stat"}).json()
+    assert client.post(
+        f"{API}/decks/{deck['id']}/cards", json={"front": "   ", "back": "ok"}
+    ).status_code == 422
+
+    # Due flashcard study needs carry concept_ids and real forgetting risk
+    client.post(
+        f"{API}/decks/{deck['id']}/cards",
+        json={"front": "Gauss-Markov", "back": "BLUE", "concept_id": "c-gm"},
+    )
+    needs = client.get(f"{API}/study-needs", params={"horizon_days": 7}).json()
+    fc_need = next(n for n in needs if n["kind"] == "flashcards")
+    assert fc_need["concept_ids"] == ["c-gm"]

@@ -1,6 +1,331 @@
 {
   "components": {
     "schemas": {
+      "AIPreferencesOut": {
+        "properties": {
+          "allow_extractive_fallback": {
+            "default": true,
+            "title": "Allow Extractive Fallback",
+            "type": "boolean"
+          },
+          "cloud_data_consent": {
+            "default": false,
+            "title": "Cloud Data Consent",
+            "type": "boolean"
+          },
+          "daily_token_budget": {
+            "default": 100000,
+            "maximum": 10000000.0,
+            "minimum": 0.0,
+            "title": "Daily Token Budget",
+            "type": "integer"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "preferred_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Model"
+          },
+          "preferred_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Provider"
+          },
+          "tokens_used_today": {
+            "default": 0,
+            "title": "Tokens Used Today",
+            "type": "integer"
+          }
+        },
+        "title": "AIPreferencesOut",
+        "type": "object"
+      },
+      "AIPreferencesPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_extractive_fallback": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Extractive Fallback"
+          },
+          "cloud_data_consent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Data Consent"
+          },
+          "daily_token_budget": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Token Budget"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "preferred_model": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Model"
+          },
+          "preferred_provider": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Provider"
+          }
+        },
+        "title": "AIPreferencesPatch",
+        "type": "object"
+      },
+      "AIProviderModelOut": {
+        "properties": {
+          "context_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Tokens"
+          },
+          "local": {
+            "default": true,
+            "title": "Local",
+            "type": "boolean"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "provider_id": {
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "structured_output": {
+            "default": false,
+            "title": "Structured Output",
+            "type": "boolean"
+          },
+          "vision": {
+            "default": false,
+            "title": "Vision",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider_id",
+          "model_id"
+        ],
+        "title": "AIProviderModelOut",
+        "type": "object"
+      },
+      "AIProviderStatusOut": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "local": {
+            "title": "Local",
+            "type": "boolean"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/AIProviderModelOut"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "provider_id": {
+            "title": "Provider Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_id",
+          "kind",
+          "local",
+          "configured",
+          "available"
+        ],
+        "title": "AIProviderStatusOut",
+        "type": "object"
+      },
+      "AIProvidersOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AIProviderStatusOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "title": "AIProvidersOut",
+        "type": "object"
+      },
+      "AcademicImportOut": {
+        "properties": {
+          "conflicts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "grades_imported": {
+            "title": "Grades Imported",
+            "type": "integer"
+          },
+          "nodes_imported": {
+            "title": "Nodes Imported",
+            "type": "integer"
+          },
+          "program_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Program Id"
+          },
+          "program_title": {
+            "title": "Program Title",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "program_id",
+          "program_title",
+          "dry_run",
+          "nodes_imported",
+          "grades_imported",
+          "conflicts",
+          "revision"
+        ],
+        "title": "AcademicImportOut",
+        "type": "object"
+      },
+      "AcademicImportRequest": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "program": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManualGradeImport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "enum": [
+              "pamplemousse",
+              "manual_json"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "AcademicImportRequest",
+        "type": "object"
+      },
       "AcceptRequest": {
         "additionalProperties": false,
         "properties": {
@@ -375,6 +700,385 @@
         "title": "AnnotationOut",
         "type": "object"
       },
+      "ArtifactGenerateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "concept_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Concept Ids",
+            "type": "array"
+          },
+          "detail_level": {
+            "default": "detailed",
+            "enum": [
+              "concise",
+              "standard",
+              "detailed"
+            ],
+            "title": "Detail Level",
+            "type": "string"
+          },
+          "difficulty": {
+            "default": "intermediate",
+            "enum": [
+              "beginner",
+              "intermediate",
+              "advanced"
+            ],
+            "title": "Difficulty",
+            "type": "string"
+          },
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Document Ids",
+            "type": "array"
+          },
+          "duration_min": {
+            "default": 20,
+            "maximum": 240.0,
+            "minimum": 5.0,
+            "title": "Duration Min",
+            "type": "integer"
+          },
+          "force_regenerate": {
+            "default": false,
+            "title": "Force Regenerate",
+            "type": "boolean"
+          },
+          "item_count": {
+            "anyOf": [
+              {
+                "maximum": 30.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Count"
+          },
+          "locale": {
+            "default": "fr",
+            "enum": [
+              "fr",
+              "en"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "model_override": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Override"
+          },
+          "objective": {
+            "default": "understand",
+            "maxLength": 64,
+            "title": "Objective",
+            "type": "string"
+          },
+          "persist_to_learning": {
+            "default": true,
+            "title": "Persist To Learning",
+            "type": "boolean"
+          },
+          "provider_override": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Override"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          },
+          "type": {
+            "enum": [
+              "revision_sheet",
+              "course_summary",
+              "flashcards",
+              "quiz",
+              "exercise",
+              "exercises",
+              "mind_map",
+              "concept_extraction",
+              "study_recommendation"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "user_instructions": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Instructions"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "ArtifactGenerateRequest",
+        "type": "object"
+      },
+      "ArtifactOut": {
+        "properties": {
+          "cache_hit": {
+            "default": false,
+            "title": "Cache Hit",
+            "type": "boolean"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/CitationOut"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "content_markdown": {
+            "title": "Content Markdown",
+            "type": "string"
+          },
+          "coverage_ratio": {
+            "default": 0.0,
+            "title": "Coverage Ratio",
+            "type": "number"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_status": {
+            "enum": [
+              "grounded",
+              "partial",
+              "insufficient"
+            ],
+            "title": "Evidence Status",
+            "type": "string"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_fallback": {
+            "default": false,
+            "title": "Is Fallback",
+            "type": "boolean"
+          },
+          "linked_deck_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Deck Id"
+          },
+          "linked_quiz_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Quiz Id"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "omitted_sections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Omitted Sections",
+            "type": "array"
+          },
+          "parent_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Artifact Id"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "stale": {
+            "default": false,
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "stale_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stale Reasons",
+            "type": "array"
+          },
+          "structured_payload": {
+            "additionalProperties": true,
+            "title": "Structured Payload",
+            "type": "object"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "user_edited": {
+            "default": false,
+            "title": "User Edited",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "title",
+          "version",
+          "provider",
+          "model",
+          "evidence_status",
+          "content_markdown",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ArtifactOut",
+        "type": "object"
+      },
+      "ArtifactPatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content_markdown": {
+            "anyOf": [
+              {
+                "maxLength": 200000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Markdown"
+          },
+          "structured_payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structured Payload"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ArtifactPatchRequest",
+        "type": "object"
+      },
       "AssessmentPatch": {
         "additionalProperties": false,
         "properties": {
@@ -708,6 +1412,14 @@
               "$ref": "#/components/schemas/BusyOut"
             },
             "title": "Busy",
+            "type": "array"
+          },
+          "conflicts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventConflictOut"
+            },
+            "title": "Conflicts",
             "type": "array"
           },
           "days": {
@@ -1127,6 +1839,118 @@
         "title": "Citation",
         "type": "object"
       },
+      "CitationOut": {
+        "properties": {
+          "academic_year": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Academic Year"
+          },
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "citation_id": {
+            "title": "Citation Id",
+            "type": "string"
+          },
+          "content_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Url"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "locator": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Locator",
+            "type": "object"
+          },
+          "resource_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Type"
+          },
+          "revoked": {
+            "default": false,
+            "title": "Revoked",
+            "type": "boolean"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version_id": {
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "citation_id",
+          "document_id",
+          "version_id",
+          "chunk_id",
+          "title",
+          "excerpt"
+        ],
+        "title": "CitationOut",
+        "type": "object"
+      },
       "CommentAnalysisOut": {
         "properties": {
           "ai_used": {
@@ -1176,6 +2000,190 @@
           "text"
         ],
         "title": "CommentAnalysisRequest",
+        "type": "object"
+      },
+      "ConversationCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "subject_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ConversationCreate",
+        "type": "object"
+      },
+      "ConversationMessageOut": {
+        "properties": {
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/CitationOut"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "content_markdown": {
+            "title": "Content Markdown",
+            "type": "string"
+          },
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "grounded",
+                  "partial",
+                  "insufficient"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Status"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "generation_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Mode"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_fallback": {
+            "default": false,
+            "title": "Is Fallback",
+            "type": "boolean"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "role",
+          "content_markdown",
+          "created_at"
+        ],
+        "title": "ConversationMessageOut",
+        "type": "object"
+      },
+      "ConversationOut": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "message_count": {
+            "default": 0,
+            "title": "Message Count",
+            "type": "integer"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ConversationOut",
         "type": "object"
       },
       "CorrectedPaperOut": {
@@ -1692,6 +2700,82 @@
         "title": "DiffMove",
         "type": "object"
       },
+      "DocumentIndexStateOut": {
+        "properties": {
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "index_state": {
+            "title": "Index State",
+            "type": "string"
+          },
+          "indexed_chunks": {
+            "title": "Indexed Chunks",
+            "type": "integer"
+          },
+          "p1_chunks": {
+            "title": "P1 Chunks",
+            "type": "integer"
+          },
+          "parse_status": {
+            "title": "Parse Status",
+            "type": "string"
+          },
+          "resource_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Type"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "required": [
+          "document_id",
+          "title",
+          "source",
+          "parse_status",
+          "p1_chunks",
+          "indexed_chunks",
+          "index_state"
+        ],
+        "title": "DocumentIndexStateOut",
+        "type": "object"
+      },
       "ErrorCreate": {
         "additionalProperties": false,
         "properties": {
@@ -2015,6 +3099,41 @@
           "decision"
         ],
         "title": "EventConfirm",
+        "type": "object"
+      },
+      "EventConflictOut": {
+        "properties": {
+          "end_at": {
+            "format": "date-time",
+            "title": "End At",
+            "type": "string"
+          },
+          "event_id_a": {
+            "title": "Event Id A",
+            "type": "string"
+          },
+          "event_id_b": {
+            "title": "Event Id B",
+            "type": "string"
+          },
+          "minutes": {
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "start_at": {
+            "format": "date-time",
+            "title": "Start At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_at",
+          "end_at",
+          "minutes",
+          "event_id_a",
+          "event_id_b"
+        ],
+        "title": "EventConflictOut",
         "type": "object"
       },
       "EventCreate": {
@@ -3500,6 +4619,64 @@
         "title": "GoalIn",
         "type": "object"
       },
+      "GradesImportOut": {
+        "properties": {
+          "academic_year": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Academic Year"
+          },
+          "created_nodes": {
+            "title": "Created Nodes",
+            "type": "integer"
+          },
+          "created_records": {
+            "title": "Created Records",
+            "type": "integer"
+          },
+          "preserved_manual_nodes": {
+            "title": "Preserved Manual Nodes",
+            "type": "integer"
+          },
+          "program_id": {
+            "title": "Program Id",
+            "type": "string"
+          },
+          "unknown_coefficient_nodes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unknown Coefficient Nodes",
+            "type": "array"
+          },
+          "updated_nodes": {
+            "title": "Updated Nodes",
+            "type": "integer"
+          },
+          "updated_records": {
+            "title": "Updated Records",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "program_id",
+          "academic_year",
+          "created_nodes",
+          "updated_nodes",
+          "preserved_manual_nodes",
+          "created_records",
+          "updated_records",
+          "unknown_coefficient_nodes"
+        ],
+        "title": "GradesImportOut",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3815,6 +4992,84 @@
         "title": "LogErrorsRequest",
         "type": "object"
       },
+      "ManualGradeImport": {
+        "additionalProperties": false,
+        "properties": {
+          "academic_year": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-\\d{4}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Academic Year"
+          },
+          "cohort": {
+            "anyOf": [
+              {
+                "enum": [
+                  "1A",
+                  "2A",
+                  "3A"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cohort"
+          },
+          "marks": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "title": "Marks",
+            "type": "object"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeIn"
+            },
+            "maxItems": 2000,
+            "title": "Nodes",
+            "type": "array"
+          },
+          "specialization": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Specialization"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "ManualGradeImport",
+        "type": "object"
+      },
       "MasteryCellOut": {
         "properties": {
           "confidence": {
@@ -4089,6 +5344,22 @@
       "NodeIn": {
         "additionalProperties": false,
         "properties": {
+          "ects": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ECTS credits, kept separate from academic coefficient",
+            "title": "Ects"
+          },
           "event_id": {
             "anyOf": [
               {
@@ -4178,10 +5449,13 @@
               },
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
               }
             ],
             "default": "1",
-            "description": "Relative to siblings",
+            "description": "Academic coefficient or fraction relative to siblings; null = unknown",
             "title": "Weight"
           },
           "weight_mode": {
@@ -4192,6 +5466,16 @@
               "fraction"
             ],
             "title": "Weight Mode",
+            "type": "string"
+          },
+          "weight_provenance": {
+            "default": "manual",
+            "enum": [
+              "official",
+              "manual",
+              "unknown"
+            ],
+            "title": "Weight Provenance",
             "type": "string"
           }
         },
@@ -4205,6 +5489,17 @@
       },
       "NodeOut": {
         "properties": {
+          "ects": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ects"
+          },
           "event_id": {
             "anyOf": [
               {
@@ -4275,8 +5570,15 @@
             "type": "string"
           },
           "weight": {
-            "title": "Weight",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
           },
           "weight_in_parent": {
             "anyOf": [
@@ -4290,11 +5592,32 @@
             "title": "Weight In Parent"
           },
           "weight_in_root": {
-            "title": "Weight In Root",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight In Root"
           },
           "weight_mode": {
             "title": "Weight Mode",
+            "type": "string"
+          },
+          "weight_provenance": {
+            "default": "manual",
+            "title": "Weight Provenance",
+            "type": "string"
+          },
+          "weight_status": {
+            "default": "known",
+            "enum": [
+              "known",
+              "unknown"
+            ],
+            "title": "Weight Status",
             "type": "string"
           }
         },
@@ -4315,6 +5638,121 @@
           "weight_in_root"
         ],
         "title": "NodeOut",
+        "type": "object"
+      },
+      "NodePatch": {
+        "additionalProperties": false,
+        "description": "Persistent manual update of a single node (e.g. setting an unknown Pamplemousse coefficient).",
+        "properties": {
+          "ects": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ects"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "scale_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scale Max"
+          },
+          "scale_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scale Min"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          },
+          "weight_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "coefficient",
+                  "fraction"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight Mode"
+          }
+        },
+        "title": "NodePatch",
         "type": "object"
       },
       "NodeValidationOut": {
@@ -5437,6 +6875,14 @@
             "title": "Algorithm Version",
             "type": "string"
           },
+          "conflicts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventConflictOut"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
           "diff": {
             "$ref": "#/components/schemas/PlanDiffOut"
           },
@@ -5476,12 +6922,25 @@
             ],
             "title": "Reason"
           },
+          "recommendations": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          },
           "sessions": {
             "items": {
               "$ref": "#/components/schemas/PreviewSessionOut"
             },
             "title": "Sessions",
             "type": "array"
+          },
+          "solver_status": {
+            "default": "GREEDY",
+            "title": "Solver Status",
+            "type": "string"
           },
           "summary": {
             "$ref": "#/components/schemas/PlanSummaryOut"
@@ -5521,6 +6980,11 @@
         "properties": {
           "deferred_min": {
             "title": "Deferred Min",
+            "type": "integer"
+          },
+          "deficit_min": {
+            "default": 0,
+            "title": "Deficit Min",
             "type": "integer"
           },
           "kept_min": {
@@ -7005,6 +8469,40 @@
         "title": "QuizOut",
         "type": "object"
       },
+      "RagStatusOut": {
+        "properties": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentIndexStateOut"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "index_stats": {
+            "additionalProperties": true,
+            "title": "Index Stats",
+            "type": "object"
+          },
+          "p1_connected": {
+            "title": "P1 Connected",
+            "type": "boolean"
+          },
+          "summary": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Summary",
+            "type": "object"
+          }
+        },
+        "required": [
+          "p1_connected",
+          "summary",
+          "index_stats"
+        ],
+        "title": "RagStatusOut",
+        "type": "object"
+      },
       "ReadinessAssessmentOut": {
         "properties": {
           "assessment_id": {
@@ -7103,9 +8601,15 @@
             "type": "integer"
           },
           "coverage": {
-            "default": 0.0,
-            "title": "Coverage",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
           },
           "estimate": {
             "anyOf": [
@@ -7152,11 +8656,22 @@
       "RecordCreate": {
         "additionalProperties": false,
         "properties": {
+          "grade_status": {
+            "default": "graded",
+            "enum": [
+              "graded",
+              "absent_unjustified",
+              "dispensed"
+            ],
+            "title": "Grade Status",
+            "type": "string"
+          },
           "kind": {
             "default": "actual",
             "enum": [
               "actual",
-              "estimated"
+              "estimated",
+              "retake"
             ],
             "title": "Kind",
             "type": "string"
@@ -7186,18 +8701,28 @@
                 "type": "string"
               }
             ],
+            "default": "0",
             "title": "Value"
           }
         },
         "required": [
-          "node_id",
-          "value"
+          "node_id"
         ],
         "title": "RecordCreate",
         "type": "object"
       },
       "RecordOut": {
         "properties": {
+          "grade_status": {
+            "default": "graded",
+            "enum": [
+              "graded",
+              "absent_unjustified",
+              "dispensed"
+            ],
+            "title": "Grade Status",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -7205,7 +8730,8 @@
           "kind": {
             "enum": [
               "actual",
-              "estimated"
+              "estimated",
+              "retake"
             ],
             "title": "Kind",
             "type": "string"
@@ -7280,6 +8806,22 @@
             ],
             "title": "Expected Revision"
           },
+          "grade_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "graded",
+                  "absent_unjustified",
+                  "dispensed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade Status"
+          },
           "value": {
             "anyOf": [
               {
@@ -7287,14 +8829,14 @@
               },
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
               }
             ],
             "title": "Value"
           }
         },
-        "required": [
-          "value"
-        ],
         "title": "RecordPatch",
         "type": "object"
       },
@@ -7339,6 +8881,56 @@
           }
         },
         "title": "Reflection",
+        "type": "object"
+      },
+      "ReindexOut": {
+        "properties": {
+          "chunks_indexed": {
+            "title": "Chunks Indexed",
+            "type": "integer"
+          },
+          "documents_indexed": {
+            "title": "Documents Indexed",
+            "type": "integer"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "embedding_kind": {
+            "default": "feature_hash",
+            "title": "Embedding Kind",
+            "type": "string"
+          },
+          "embedding_model": {
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "removed_documents": {
+            "default": 0,
+            "title": "Removed Documents",
+            "type": "integer"
+          },
+          "skipped_unchanged": {
+            "default": 0,
+            "title": "Skipped Unchanged",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "documents_indexed",
+          "chunks_indexed",
+          "embedding_model",
+          "duration_ms"
+        ],
+        "title": "ReindexOut",
         "type": "object"
       },
       "ReplanRequest": {
@@ -8095,8 +9687,155 @@
         "title": "ScenarioPatch",
         "type": "object"
       },
+      "SearchHitOut": {
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "citation_id": {
+            "title": "Citation Id",
+            "type": "string"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "locator": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Locator",
+            "type": "object"
+          },
+          "resource_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Type"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version_id": {
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "document_id",
+          "version_id",
+          "title",
+          "score",
+          "excerpt",
+          "citation_id"
+        ],
+        "title": "SearchHitOut",
+        "type": "object"
+      },
+      "SearchResponseOut": {
+        "properties": {
+          "evidence_status": {
+            "enum": [
+              "grounded",
+              "partial",
+              "insufficient"
+            ],
+            "title": "Evidence Status",
+            "type": "string"
+          },
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/SearchHitOut"
+            },
+            "title": "Hits",
+            "type": "array"
+          },
+          "index_stale": {
+            "default": false,
+            "title": "Index Stale",
+            "type": "boolean"
+          },
+          "indexed_chunks": {
+            "title": "Indexed Chunks",
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "hybrid",
+              "lexical",
+              "semantic"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "query",
+          "mode",
+          "indexed_chunks",
+          "evidence_status"
+        ],
+        "title": "SearchResponseOut",
+        "type": "object"
+      },
       "SemesterOut": {
         "properties": {
+          "coefficient": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coefficient"
+          },
           "key": {
             "title": "Key",
             "type": "string"
@@ -9429,6 +11168,19 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "unknown_weight_keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Unknown Weight Keys",
+            "type": "array"
+          },
+          "weight_complete": {
+            "default": true,
+            "title": "Weight Complete",
+            "type": "boolean"
           }
         },
         "required": [
@@ -9991,8 +11743,240 @@
         "title": "TrendsOut",
         "type": "object"
       },
+      "TutorAnswerOut": {
+        "properties": {
+          "abstained": {
+            "default": false,
+            "title": "Abstained",
+            "type": "boolean"
+          },
+          "answer_markdown": {
+            "title": "Answer Markdown",
+            "type": "string"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/CitationOut"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "evidence_status": {
+            "enum": [
+              "grounded",
+              "partial",
+              "insufficient"
+            ],
+            "title": "Evidence Status",
+            "type": "string"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "follow_up_questions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Follow Up Questions",
+            "type": "array"
+          },
+          "generation_mode": {
+            "enum": [
+              "llm",
+              "extractive_fallback",
+              "abstention",
+              "policy_guard"
+            ],
+            "title": "Generation Mode",
+            "type": "string"
+          },
+          "is_fallback": {
+            "default": false,
+            "title": "Is Fallback",
+            "type": "boolean"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "prompt_injection_detected": {
+            "default": false,
+            "title": "Prompt Injection Detected",
+            "type": "boolean"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/UsageOut"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "message_id",
+          "answer_markdown",
+          "evidence_status",
+          "provider",
+          "model",
+          "generation_mode"
+        ],
+        "title": "TutorAnswerOut",
+        "type": "object"
+      },
+      "TutorAnswerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Document Ids",
+            "type": "array"
+          },
+          "locale": {
+            "default": "fr",
+            "enum": [
+              "fr",
+              "en"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "mode": {
+            "default": "explain",
+            "enum": [
+              "explain",
+              "derivation",
+              "code_explain",
+              "correction",
+              "socratic",
+              "exam_prep",
+              "memorize"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model_override": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Override"
+          },
+          "provider_override": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Override"
+          },
+          "question": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "TutorAnswerRequest",
+        "type": "object"
+      },
       "UnitOut": {
         "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "coefficient": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coefficient"
+          },
+          "ects": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ects"
+          },
           "key": {
             "title": "Key",
             "type": "string"
@@ -10031,6 +12015,11 @@
       },
       "UnscheduledOut": {
         "properties": {
+          "explanation": {
+            "default": "",
+            "title": "Explanation",
+            "type": "string"
+          },
           "need_id": {
             "title": "Need Id",
             "type": "string"
@@ -10055,6 +12044,33 @@
           "reason"
         ],
         "title": "UnscheduledOut",
+        "type": "object"
+      },
+      "UsageOut": {
+        "properties": {
+          "estimated_cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Cost Usd"
+          },
+          "tokens_in": {
+            "default": 0,
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "default": 0,
+            "title": "Tokens Out",
+            "type": "integer"
+          }
+        },
+        "title": "UsageOut",
         "type": "object"
       },
       "ValidationError": {
@@ -10172,6 +12188,13 @@
       },
       "app__modules__grades__source_results__AssessmentOut": {
         "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/app__modules__grades__source_results__AssessmentOut"
+            },
+            "title": "Children",
+            "type": "array"
+          },
           "coefficient": {
             "anyOf": [
               {
@@ -10201,6 +12224,17 @@
           "maximum": {
             "title": "Maximum",
             "type": "number"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
           },
           "title": {
             "title": "Title",
@@ -10549,6 +12583,108 @@
         ]
       }
     },
+    "/api/v1/ai/preferences": {
+      "get": {
+        "operationId": "get_ai_preferences_api_v1_ai_preferences_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIPreferencesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ai Preferences",
+        "tags": [
+          "ai"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_ai_preferences_api_v1_ai_preferences_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AIPreferencesPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIPreferencesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Ai Preferences",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/ai/providers": {
+      "get": {
+        "operationId": "list_ai_providers_api_v1_ai_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIProvidersOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Ai Providers",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/ai/providers/refresh": {
+      "post": {
+        "operationId": "refresh_ai_providers_api_v1_ai_providers_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIProvidersOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Refresh Ai Providers",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
     "/api/v1/analytics": {
       "get": {
         "operationId": "analytics_api_v1_analytics_get",
@@ -10846,6 +12982,266 @@
         "summary": "Create Annotation",
         "tags": [
           "notes"
+        ]
+      }
+    },
+    "/api/v1/artifacts": {
+      "get": {
+        "operationId": "list_artifacts_api_v1_artifacts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subject_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subject Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactOut"
+                  },
+                  "title": "Response List Artifacts Api V1 Artifacts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Artifacts",
+        "tags": [
+          "studio"
+        ]
+      }
+    },
+    "/api/v1/artifacts/generate": {
+      "post": {
+        "operationId": "generate_artifact_api_v1_artifacts_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Artifact",
+        "tags": [
+          "studio"
+        ]
+      }
+    },
+    "/api/v1/artifacts/{artifact_id}": {
+      "get": {
+        "operationId": "get_artifact_api_v1_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Artifact",
+        "tags": [
+          "studio"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_artifact_api_v1_artifacts__artifact_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Artifact",
+        "tags": [
+          "studio"
+        ]
+      }
+    },
+    "/api/v1/artifacts/{artifact_id}/versions": {
+      "get": {
+        "operationId": "list_artifact_versions_api_v1_artifacts__artifact_id__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ArtifactOut"
+                  },
+                  "title": "Response List Artifact Versions Api V1 Artifacts  Artifact Id  Versions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Artifact Versions",
+        "tags": [
+          "studio"
         ]
       }
     },
@@ -11482,6 +13878,48 @@
         ]
       }
     },
+    "/api/v1/citations/{chunk_id}": {
+      "get": {
+        "operationId": "get_citation_api_v1_citations__chunk_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Citation",
+        "tags": [
+          "rag"
+        ]
+      }
+    },
     "/api/v1/concepts/prerequisites": {
       "get": {
         "operationId": "get_prerequisites_api_v1_concepts_prerequisites_get",
@@ -11535,6 +13973,166 @@
         "summary": "Put Prerequisites",
         "tags": [
           "learning"
+        ]
+      }
+    },
+    "/api/v1/conversations": {
+      "get": {
+        "operationId": "list_conversations_api_v1_conversations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationOut"
+                  },
+                  "title": "Response List Conversations Api V1 Conversations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Conversations",
+        "tags": [
+          "tutor"
+        ]
+      },
+      "post": {
+        "operationId": "create_conversation_api_v1_conversations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Conversation",
+        "tags": [
+          "tutor"
+        ]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/messages": {
+      "get": {
+        "operationId": "list_conversation_messages_api_v1_conversations__conversation_id__messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationMessageOut"
+                  },
+                  "title": "Response List Conversation Messages Api V1 Conversations  Conversation Id  Messages Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Conversation Messages",
+        "tags": [
+          "tutor"
+        ]
+      },
+      "post": {
+        "operationId": "post_conversation_message_api_v1_conversations__conversation_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TutorAnswerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TutorAnswerOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Conversation Message",
+        "tags": [
+          "tutor"
         ]
       }
     },
@@ -12622,6 +15220,122 @@
           }
         },
         "summary": "Grades Forecast",
+        "tags": [
+          "grades"
+        ]
+      }
+    },
+    "/api/v1/grades/import": {
+      "post": {
+        "description": "Validate or apply an academic import in a single transaction.",
+        "operationId": "import_grades_api_v1_grades_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcademicImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcademicImportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Grades",
+        "tags": [
+          "grades"
+        ]
+      }
+    },
+    "/api/v1/grades/import-from-sources": {
+      "post": {
+        "description": "Sync Pamplemousse curriculum, coefficients, ECTS and official marks into Grade Tracker (idempotent).",
+        "operationId": "import_grades_from_sources_api_v1_grades_import_from_sources_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradesImportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Import Grades From Sources",
+        "tags": [
+          "grades"
+        ]
+      }
+    },
+    "/api/v1/grades/nodes/{node_id}": {
+      "patch": {
+        "operationId": "patch_node_api_v1_grades_nodes__node_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Node",
         "tags": [
           "grades"
         ]
@@ -13922,6 +16636,49 @@
         ]
       }
     },
+    "/api/v1/learning/signals": {
+      "get": {
+        "operationId": "get_learning_signals_api_v1_learning_signals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "horizon_days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "maximum": 31,
+              "minimum": 1,
+              "title": "Horizon Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Learning Signals",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
     "/api/v1/mastery": {
       "get": {
         "operationId": "mastery_api_v1_mastery_get",
@@ -14953,6 +17710,72 @@
         ]
       }
     },
+    "/api/v1/rag/reindex": {
+      "post": {
+        "operationId": "reindex_rag_api_v1_rag_reindex_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReindexOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Reindex Rag",
+        "tags": [
+          "rag"
+        ]
+      }
+    },
+    "/api/v1/rag/status": {
+      "get": {
+        "operationId": "get_rag_status_api_v1_rag_status_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagStatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Rag Status",
+        "tags": [
+          "rag"
+        ]
+      }
+    },
     "/api/v1/results": {
       "get": {
         "description": "UE / subject / coefficient / mark tree synced from Pamplemousse.",
@@ -15037,6 +17860,129 @@
         "summary": "Reviews Due",
         "tags": [
           "learning"
+        ]
+      }
+    },
+    "/api/v1/search": {
+      "get": {
+        "operationId": "rag_search_api_v1_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "default": "hybrid",
+              "enum": [
+                "hybrid",
+                "lexical",
+                "semantic"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subject_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subject Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "document_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 50,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Document Ids"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 8,
+              "maximum": 30,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponseOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rag Search",
+        "tags": [
+          "rag"
         ]
       }
     },
@@ -15651,6 +18597,47 @@
         "summary": "Create Subtasks",
         "tags": [
           "tasks"
+        ]
+      }
+    },
+    "/api/v1/tutor/answer": {
+      "post": {
+        "operationId": "tutor_answer_api_v1_tutor_answer_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TutorAnswerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TutorAnswerOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tutor Answer",
+        "tags": [
+          "tutor"
         ]
       }
     }

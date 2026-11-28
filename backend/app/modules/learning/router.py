@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.common import Clock, get_clock
 from app.core.db import get_db
+from app.core.exam_guard import require_not_exam_mode
 from app.core.identity import get_current_user_id
 from app.modules.learning.schemas import (
     AttemptCreate,
@@ -56,27 +57,27 @@ def create_deck(body: DeckCreate, svc: Svc, user_id: User):
     return svc.create_deck(user_id, body)
 
 
-@router.get("/decks/{deck_id}/cards", response_model=list[CardOut])
+@router.get("/decks/{deck_id}/cards", response_model=list[CardOut], dependencies=[Depends(require_not_exam_mode)])
 def list_cards(deck_id: str, svc: Svc, user_id: User):
     return svc.list_cards(user_id, deck_id)
 
 
-@router.post("/decks/{deck_id}/cards", response_model=CardOut, status_code=201)
+@router.post("/decks/{deck_id}/cards", response_model=CardOut, status_code=201, dependencies=[Depends(require_not_exam_mode)])
 def create_card(deck_id: str, body: CardCreate, svc: Svc, user_id: User):
     return svc.create_card(user_id, deck_id, body)
 
 
-@router.patch("/cards/{card_id}", response_model=CardOut)
+@router.patch("/cards/{card_id}", response_model=CardOut, dependencies=[Depends(require_not_exam_mode)])
 def patch_card(card_id: str, body: CardPatch, svc: Svc, user_id: User):
     return svc.patch_card(user_id, card_id, body)
 
 
-@router.get("/reviews/due", response_model=list[CardOut])
+@router.get("/reviews/due", response_model=list[CardOut], dependencies=[Depends(require_not_exam_mode)])
 def reviews_due(svc: Svc, user_id: User, deck_id: str | None = None, limit: int = Query(50, ge=1, le=200)):
     return svc.reviews_due(user_id, deck_id, limit)
 
 
-@router.post("/cards/{card_id}/review", response_model=ReviewResult)
+@router.post("/cards/{card_id}/review", response_model=ReviewResult, dependencies=[Depends(require_not_exam_mode)])
 def review_card(
     card_id: str,
     body: ReviewRequest,
@@ -122,17 +123,17 @@ def submit(attempt_id: str, svc: Svc, user_id: User):
     return svc.submit(user_id, attempt_id)
 
 
-@router.get("/attempts/{attempt_id}/result", response_model=AttemptResult)
+@router.get("/attempts/{attempt_id}/result", response_model=AttemptResult, dependencies=[Depends(require_not_exam_mode)])
 def result(attempt_id: str, svc: Svc, user_id: User):
     return svc.result(user_id, attempt_id)
 
 
-@router.post("/attempts/{attempt_id}/items/{question_id}/grade", response_model=AttemptResult)
+@router.post("/attempts/{attempt_id}/items/{question_id}/grade", response_model=AttemptResult, dependencies=[Depends(require_not_exam_mode)])
 def grade_item(attempt_id: str, question_id: str, body: ItemGrade, svc: Svc, user_id: User):
     return svc.grade_item(user_id, attempt_id, question_id, body)
 
 
-@router.post("/attempts/{attempt_id}/errors", response_model=AttemptResult)
+@router.post("/attempts/{attempt_id}/errors", response_model=AttemptResult, dependencies=[Depends(require_not_exam_mode)])
 def log_errors(attempt_id: str, body: LogErrorsRequest, svc: Svc, user_id: User):
     return svc.log_errors(user_id, attempt_id, body.question_ids)
 

@@ -142,8 +142,12 @@ def validate_answer_key(qtype: str, answer: Any, option_ids: list[str]) -> str |
         if not isinstance(answer, bool):
             return "true_false answer must be a boolean"
     elif qtype == "fill_blank":
-        if not isinstance(answer, list) or not answer or not all(isinstance(a, str) for a in answer):
-            return "fill_blank answer must be a non-empty list of accepted strings"
+        if (
+            not isinstance(answer, list)
+            or not answer
+            or not all(isinstance(a, str) and a.strip() for a in answer)
+        ):
+            return "fill_blank answer must be a non-empty list of non-blank accepted strings"
     elif qtype == "numeric":
         if not isinstance(answer, dict) or _to_decimal(answer.get("value")) is None:
             return "numeric answer must be {value, tolerance}"
@@ -157,6 +161,34 @@ def validate_answer_key(qtype: str, answer: Any, option_ids: list[str]) -> str |
         return f"unknown question type {qtype!r}"
     if qtype in ("single_choice", "multiple_choice") and len(option_ids) < 2:
         return "choice questions need at least two options"
+    return None
+
+
+def validate_response_payload(qtype: str, response: Any, option_ids: list[str]) -> str | None:
+    """Validate a student's submitted response shape against the question type."""
+    if response is None:
+        return None
+    if qtype == "single_choice":
+        if not isinstance(response, str) or response not in option_ids:
+            return "single_choice response must be a valid option id"
+    elif qtype == "multiple_choice":
+        if (
+            not isinstance(response, list)
+            or any(not isinstance(r, str) or r not in option_ids for r in response)
+        ):
+            return "multiple_choice response must be a list of valid option ids"
+    elif qtype == "true_false":
+        if not isinstance(response, bool):
+            return "true_false response must be a boolean"
+    elif qtype == "fill_blank":
+        if not isinstance(response, str):
+            return "fill_blank response must be a string"
+    elif qtype == "numeric":
+        if _to_decimal(response) is None:
+            return "numeric response must be a valid number"
+    elif qtype == "open":
+        if not isinstance(response, str):
+            return "open response must be a string"
     return None
 
 
@@ -183,10 +215,10 @@ def score_item(qtype: str, answer: Any, response: Any, partial_credit: bool = Fa
         return 1.0 if normalize_text(response) in {normalize_text(a) for a in answer} else 0.0
     if qtype == "numeric":
         value = _to_decimal(response)
-        if value is None:
+        target = _to_decimal(answer.get("value")) if isinstance(answer, dict) else None
+        tol = _to_decimal(answer.get("tolerance", 0)) if isinstance(answer, dict) else None
+        if value is None or target is None or tol is None:
             return 0.0
-        target = Decimal(str(answer["value"]))
-        tol = Decimal(str(answer.get("tolerance", 0)))
         return 1.0 if abs(value - target) <= tol else 0.0
     if qtype == "open":
         return None

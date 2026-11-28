@@ -146,11 +146,15 @@ class LearningService:
         return [self._card_out(c) for c in cards]
 
     def create_card(self, user_id: str, deck_id: str, body: CardCreate) -> CardOut:
+        front = body.front.strip()
+        back = body.back.strip()
+        if not front or not back:
+            raise ValidationFailed("front and back must be non-empty")
         if body.concept_id:
             get_catalog(self.db).check_concepts(user_id, [body.concept_id])
         self._owned(Deck, deck_id, user_id)
         c = Flashcard(
-            deck_id=deck_id, user_id=user_id, front=body.front, back=body.back, concept_id=body.concept_id
+            deck_id=deck_id, user_id=user_id, front=front, back=back, concept_id=body.concept_id
         )
         self.db.add(c)
         self.db.flush()
@@ -161,12 +165,16 @@ class LearningService:
         check_revision(c.revision, body.expected_revision)
         fields = body.model_fields_set - {"expected_revision"}
         for name in fields & {"front", "back"}:
-            if getattr(body, name) is None:
-                raise ValidationFailed(f"{name} cannot be null")
+            val = getattr(body, name)
+            if val is None or not str(val).strip():
+                raise ValidationFailed(f"{name} cannot be null or blank")
         changed = False
         for name in fields:
-            if getattr(c, name) != getattr(body, name):
-                setattr(c, name, getattr(body, name))
+            val = getattr(body, name)
+            if name in ("front", "back") and isinstance(val, str):
+                val = val.strip()
+            if getattr(c, name) != val:
+                setattr(c, name, val)
                 changed = True
         if changed:
             c.revision += 1
@@ -305,6 +313,9 @@ class LearningService:
         )
 
     def create_quiz(self, user_id: str, body: QuizCreate) -> QuizOut:
+        title = body.title.strip()
+        if not title:
+            raise ValidationFailed("Quiz title must be non-empty")
         catalog = get_catalog(self.db)
         catalog.check_subject(user_id, body.subject_id)
         catalog.check_concepts(user_id, [c for q in body.questions for c in q.concept_ids])
@@ -312,7 +323,11 @@ class LearningService:
             raise ValidationFailed("exam quizzes require time_limit_min")
         errors = []
         for i, q in enumerate(body.questions):
+            if not q.prompt.strip():
+                errors.append({"question": i, "message": "prompt must be non-empty"})
             option_ids = [o.id for o in q.options]
+            if any(not o.id.strip() or not o.text.strip() for o in q.options):
+                errors.append({"question": i, "message": "option id and text must be non-empty"})
             if len(set(option_ids)) != len(option_ids):
                 errors.append({"question": i, "message": "duplicate option ids"})
             if q.type not in ("single_choice", "multiple_choice") and q.options:
@@ -325,7 +340,7 @@ class LearningService:
         quiz = Quiz(
             user_id=user_id,
             subject_id=body.subject_id,
-            title=body.title,
+            title=title,
             type=body.type,
             time_limit_min=body.time_limit_min,
             origin=body.origin,
@@ -338,10 +353,10 @@ class LearningService:
                     quiz_id=quiz.id,
                     ordinal=i,
                     type=q.type,
-                    prompt=q.prompt,
-                    options=[o.model_dump() for o in q.options],
+                    prompt=q.prompt.strip(),
+                    options=[{"id": o.id.strip(), "text": o.text.strip()} for o in q.options],
                     private_answer=q.answer,
-                    explanation=q.explanation,
+                    explanation=q.explanation.strip() if q.explanation else None,
                     points=q.points,
                     concept_ids=list(dict.fromkeys(q.concept_ids)),
                     dimension=q.dimension,
@@ -363,6 +378,8 @@ class LearningService:
 
     # =================================================================== attempts ====
     def start_attempt(self, user_id: str, quiz_id: str, mode: str, session_id: str | None) -> AttemptOut:
+        if self.exam_mode(user_id).active:
+            raise Forbidden("Finish the active exam first", code="exam_mode_active")
         quiz = self._owned(Quiz, quiz_id, user_id)
         if quiz.type == "exam" and mode != "exam":
             raise ValidationFailed("exam quizzes can only be attempted in exam mode")
@@ -411,25 +428,42 @@ class LearningService:
         a = self._load_attempt(user_id, attempt_id)
         if a.status != "active":
             raise Conflict(f"Attempt is {a.status}", code=f"attempt_{a.status}")
-        valid = {q.id for q in self._questions(a.quiz_id)}
-        unknown = [r.question_id for r in body.responses if r.question_id not in valid]
+        questions_by_id = {q.id: q for q in self._questions(a.quiz_id)}
+        unknown = [r.question_id for r in body.responses if r.question_id not in questions_by_id]
         if unknown:
             raise ValidationFailed("Unknown question ids", details=unknown)
         if a.mode == "exam" and any(r.assisted for r in body.responses):
             raise ValidationFailed("Assistance is not allowed in exam mode")
-        now = self.clock.now()
+        # Deduplicate repeated question_ids within the same PATCH (last entry wins)
+        deduped = {}
         for r in body.responses:
+            deduped[r.question_id] = r
+        invalid_responses = []
+        for qid, r in deduped.items():
+            q = questions_by_id[qid]
+            opt_ids = [o["id"] for o in (q.options or []) if isinstance(o, dict) and "id" in o]
+            msg = domain.validate_response_payload(q.type, r.response, opt_ids)
+            if msg:
+                invalid_responses.append({"question_id": qid, "message": msg})
+        if invalid_responses:
+            raise ValidationFailed("Invalid response payloads", details=invalid_responses)
+        now = self.clock.now()
+        for qid, r in deduped.items():
             item = self.db.scalar(
-                select(AttemptItem).where(AttemptItem.attempt_id == a.id, AttemptItem.question_id == r.question_id)
+                select(AttemptItem).where(AttemptItem.attempt_id == a.id, AttemptItem.question_id == qid)
             )
             if item is None:
-                item = AttemptItem(attempt_id=a.id, question_id=r.question_id)
+                item = AttemptItem(attempt_id=a.id, question_id=qid)
                 self.db.add(item)
-            item.response, item.assisted, item.updated_at = r.response, r.assisted, now
+            response_val = list(dict.fromkeys(r.response)) if (questions_by_id[qid].type == "multiple_choice" and isinstance(r.response, list)) else r.response
+            item.response, item.assisted, item.updated_at = response_val, r.assisted, now
         self.db.flush()
         return self._attempt_out(a)
 
     def submit(self, user_id: str, attempt_id: str) -> AttemptResult:
+        exam = self.exam_mode(user_id)
+        if exam.active and exam.attempt_id != attempt_id:
+            raise Forbidden("Finish the active exam first", code="exam_mode_active")
         a = self._load_attempt(user_id, attempt_id)
         if a.status == "active":
             updates = self._finalize(a, "submitted")
@@ -849,30 +883,54 @@ class LearningService:
                         priority_factors={"gap": gap, "forgetting": 0.0},
                     )
                 )
-        # Flashcards due within the horizon, grouped by deck.
-        rows = self.db.execute(
-            select(Deck.id, Deck.subject_id, func.count(Flashcard.id), func.min(Flashcard.due_at))
-            .join(Flashcard, Flashcard.deck_id == Deck.id)
-            .where(Deck.user_id == user_id, or_(Flashcard.due_at.is_(None), Flashcard.due_at <= horizon_end))
-            .group_by(Deck.id, Deck.subject_id)
-            .order_by(Deck.id)
+        # Flashcards due within the horizon, grouped by deck with concept coverage & forgetting risk.
+        due_cards = list(
+            self.db.execute(
+                select(Deck.id, Deck.subject_id, Flashcard)
+                .join(Flashcard, Flashcard.deck_id == Deck.id)
+                .where(Deck.user_id == user_id, or_(Flashcard.due_at.is_(None), Flashcard.due_at <= horizon_end))
+                .order_by(Deck.id, Flashcard.id)
+            )
         )
-        for deck_id, subject_id, count, first_due in rows:
+        by_deck: dict[tuple[str, str | None], list[Flashcard]] = defaultdict(list)
+        for deck_id, subject_id, card in due_cards:
+            by_deck[(deck_id, subject_id)].append(card)
+        for (deck_id, subject_id), cards in sorted(by_deck.items(), key=lambda kv: kv[0][0]):
+            due_dates = [c.due_at for c in cards if c.due_at is not None]
+            first_due = min(due_dates) if due_dates else None
             earliest = max(now, first_due) if first_due else now
+            deck_concepts = tuple(sorted({c.concept_id for c in cards if c.concept_id}))
+            risks: list[float] = []
+            gaps: list[float] = []
+            for c in cards:
+                if c.last_reviewed_at is not None:
+                    elapsed = max(0.0, (now - c.last_reviewed_at).total_seconds() / 86400)
+                    if c.fsrs_stability is not None and c.fsrs_stability > 0:
+                        risks.append(max(0.0, min(1.0, 1.0 - fsrs.retrievability(elapsed, c.fsrs_stability))))
+                    else:
+                        risks.append(domain.forgetting_risk(elapsed, max(1, c.interval_days)))
+                else:
+                    risks.append(0.5)
+                if c.last_rating in domain.RATING_SCORE:
+                    gaps.append(1.0 - domain.RATING_SCORE[c.last_rating])
+                else:
+                    gaps.append(0.5)
+            mean_risk = round(sum(risks) / len(risks), 4) if risks else 0.5
+            mean_gap = round(sum(gaps) / len(gaps), 4) if gaps else 0.5
             needs.append(
                 StudyNeed(
                     need_id=f"cards:{deck_id}:{earliest.date().isoformat()}",
                     kind="flashcards",
                     activity_type="flashcards",
                     subject_id=subject_id,
-                    concept_ids=(),
+                    concept_ids=deck_concepts,
                     dimension="memory",
-                    estimated_min=min(45, max(10, math.ceil(count * 1.5))),
+                    estimated_min=min(45, max(10, math.ceil(len(cards) * 1.5))),
                     earliest_at=earliest,
                     due_at=self._window_end(user_id, earliest, REVIEW_WINDOW_DAYS),
-                    reason="CARDS_DUE",
-                    success_criteria=f"Réviser {count} carte(s) dues",
-                    priority_factors={"gap": 0.5, "forgetting": 0.5},
+                    reason="CARDS_OVERDUE" if (first_due is not None and first_due < now) else "CARDS_DUE",
+                    success_criteria=f"Réviser {len(cards)} carte(s) dues",
+                    priority_factors={"gap": mean_gap, "forgetting": mean_risk},
                 )
             )
         return needs
@@ -1007,3 +1065,152 @@ def learning_revision(db: Session, user_id: str) -> str:
     cards = db.scalar(select(func.count()).select_from(Flashcard).where(Flashcard.user_id == user_id)) or 0
     reviews = db.scalar(select(func.count()).select_from(CardReview).where(CardReview.user_id == user_id)) or 0
     return f"{ev}-{cards}-{reviews}-{edges}"
+
+
+def learning_signals_for_planner(
+    db: Session,
+    clock: Clock,
+    user_id: str,
+    *,
+    horizon_days: int = 7,
+) -> dict:
+    """Deterministic academic intelligence signals for Smart Planner and UI (zero LLM calls).
+
+    Exposes mastery by subject, weakest concepts, overdue/due spaced-repetition reviews,
+    FSRS retrievability alerts, structured study needs, calibration quality, and exam state.
+    """
+    now = clock.now()
+    svc = LearningService(db, clock)
+    horizon_end = now + timedelta(days=horizon_days)
+
+    mastery_rows = list(
+        db.scalars(select(Mastery).where(Mastery.user_id == user_id).order_by(Mastery.concept_id, Mastery.dimension))
+    )
+    by_subject: dict[str, dict] = {}
+    weakest: list[dict] = []
+    for m in mastery_rows:
+        status = domain.mastery_status(m.score, m.n_effective, m.next_due_at, now)
+        overdue = m.next_due_at is not None and m.next_due_at < now
+        subj_key = m.subject_id or "__unassigned__"
+        bucket = by_subject.setdefault(
+            subj_key,
+            {
+                "subject_id": m.subject_id,
+                "scores": [],
+                "concepts": set(),
+                "weak_count": 0,
+                "learning_count": 0,
+                "consolidate_count": 0,
+                "acquired_count": 0,
+                "overdue_reviews": 0,
+            },
+        )
+        bucket["concepts"].add(m.concept_id)
+        if m.score is not None:
+            bucket["scores"].append(m.score)
+        if status == "weak":
+            bucket["weak_count"] += 1
+        elif status == "learning":
+            bucket["learning_count"] += 1
+        elif status == "consolidate":
+            bucket["consolidate_count"] += 1
+        elif status == "acquired":
+            bucket["acquired_count"] += 1
+        if overdue:
+            bucket["overdue_reviews"] += 1
+        if status in ("learning", "weak", "consolidate") or overdue:
+            weakest.append(
+                {
+                    "concept_id": m.concept_id,
+                    "subject_id": m.subject_id,
+                    "dimension": m.dimension,
+                    "score": None if m.score is None else round(m.score, 4),
+                    "status": status,
+                    "confidence": round(domain.confidence(m.n_effective), 4),
+                    "next_due_at": m.next_due_at.isoformat() if m.next_due_at else None,
+                    "overdue": overdue,
+                }
+            )
+    weakest.sort(key=lambda x: (not x["overdue"], x["score"] if x["score"] is not None else -1.0, x["concept_id"]))
+
+    mastery_summary = [
+        {
+            "subject_id": b["subject_id"],
+            "concept_count": len(b["concepts"]),
+            "mean_score": round(sum(b["scores"]) / len(b["scores"]), 4) if b["scores"] else None,
+            "weak_count": b["weak_count"],
+            "learning_count": b["learning_count"],
+            "consolidate_count": b["consolidate_count"],
+            "acquired_count": b["acquired_count"],
+            "overdue_reviews": b["overdue_reviews"],
+        }
+        for _, b in sorted(by_subject.items(), key=lambda kv: kv[0])
+    ]
+
+    # Due flashcards & FSRS low-retrievability alerts
+    due_cards = list(
+        db.execute(
+            select(Deck.id, Deck.title, Deck.subject_id, Flashcard)
+            .join(Flashcard, Flashcard.deck_id == Deck.id)
+            .where(Deck.user_id == user_id, or_(Flashcard.due_at.is_(None), Flashcard.due_at <= horizon_end))
+            .order_by(Deck.id, Flashcard.id)
+        )
+    )
+    fsrs_alerts: list[dict] = []
+    deck_map: dict[str, dict] = {}
+    for deck_id, deck_title, subj_id, card in due_cards:
+        d = deck_map.setdefault(
+            deck_id,
+            {"deck_id": deck_id, "title": deck_title, "subject_id": subj_id, "due_count": 0, "concept_ids": set()},
+        )
+        d["due_count"] += 1
+        if card.concept_id:
+            d["concept_ids"].add(card.concept_id)
+        if card.fsrs_stability is not None and card.last_reviewed_at is not None:
+            elapsed = max(0.0, (now - card.last_reviewed_at).total_seconds() / 86400)
+            r_now = fsrs.retrievability(elapsed, card.fsrs_stability)
+            if r_now < 0.85:
+                fsrs_alerts.append(
+                    {
+                        "card_id": card.id,
+                        "deck_id": deck_id,
+                        "concept_id": card.concept_id,
+                        "retrievability": round(r_now, 4),
+                        "stability_days": round(card.fsrs_stability, 2),
+                        "due_at": card.due_at.isoformat() if card.due_at else None,
+                    }
+                )
+    fsrs_alerts.sort(key=lambda x: (x["retrievability"], x["card_id"]))
+
+    cal = svc.calibration_report(user_id)
+    needs = [n.model_dump(mode="json") for n in svc.study_needs_out(user_id, horizon_days)]
+
+    return {
+        "ai_used": False,
+        "generated_at": now.isoformat().replace("+00:00", "Z"),
+        "horizon_days": horizon_days,
+        "exam_mode_active": svc.exam_mode(user_id).active,
+        "mastery_by_subject": mastery_summary,
+        "weakest_concepts": weakest[:20],
+        "due_flashcards": {
+            "total_due": len(due_cards),
+            "decks": [
+                {
+                    "deck_id": v["deck_id"],
+                    "title": v["title"],
+                    "subject_id": v["subject_id"],
+                    "due_count": v["due_count"],
+                    "concept_ids": sorted(v["concept_ids"]),
+                }
+                for v in deck_map.values()
+            ],
+        },
+        "fsrs_alerts": fsrs_alerts[:20],
+        "study_needs": needs,
+        "calibration": {
+            "samples": cal.samples,
+            "sufficient": cal.sufficient,
+            "brier": cal.brier,
+            "brier_skill": cal.brier_skill,
+        },
+    }
