@@ -289,7 +289,7 @@ def test_sync_incremental_dedup_version_failure_and_reauth(settings):
             assert db.scalar(select(func.count()).select_from(documents)) == 1
             assert db.scalar(select(func.count()).select_from(versions)) == 2
             assert db.scalar(select(func.count()).select_from(chunks)) == 2
-            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0004_p1_acceptance"
+            assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0005_p1_read_indexes"
             assert db.scalar(text("PRAGMA foreign_keys")) == 1
         assert len(list((settings.local_data_dir / "blobs").iterdir())) == 2
         assert runtime.auth.authorize(source).status == ConnectionStatus.CONNECTED
@@ -734,7 +734,7 @@ def test_rev011_upgrade_existing_database_and_standalone_config(tmp_path):
     command.upgrade(config, "head")
     with engine.connect() as db:
         assert db.scalar(text("SELECT id FROM users")) == "synthetic"
-        assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0004_p1_acceptance"
+        assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0005_p1_read_indexes"
     assert "ix_records_parent" in {index["name"] for index in inspect(engine).get_indexes("source_records")}
     engine.dispose()
 

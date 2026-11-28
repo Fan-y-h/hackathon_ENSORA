@@ -1,30 +1,40 @@
-"""Start Ensora+ using the existing virtual environment."""
+"""Start the unified Ensora+ local server (planner/learning/grades + P1 sources)."""
 import argparse
 import logging
+from pathlib import Path
 import sys
 
 from bootstrap import configure, install_missing, use_project_python
 
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND = ROOT / "backend"
+
 
 def main():
     arguments = argparse.ArgumentParser(description=__doc__)
-    arguments.add_argument("--port", type=int, default=8765)
+    arguments.add_argument("--port", type=int, default=8000)
+    arguments.add_argument("--host", default="127.0.0.1")
     arguments.add_argument("--skip-onboarding", action="store_true")
+    arguments.add_argument("--no-sources", action="store_true", help="Run without mounting the P1 sources runtime")
     options = arguments.parse_args()
     install_missing()
     settings = configure()
 
+    for path in (str(BACKEND), str(ROOT)):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+
     from sqlalchemy import select
     import uvicorn
+    from app.main import create_app
     from backend.app.contracts.authentication import ConnectionStatus
     from backend.app.core.auth import INSTITUTIONAL_SOURCES
     from backend.app.core.database import LOCAL_USER, users
     from backend.app.core.runtime import Runtime, RuntimeBusy
-    from backend.app.modules.ingestion.api import create_app
     from onboarding import run_onboarding
 
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
-    if not options.skip_onboarding and sys.stdin.isatty():
+    if not options.no_sources and not options.skip_onboarding and sys.stdin.isatty():
         try:
             with Runtime(settings) as runtime:
                 with runtime.engine.connect() as db:
@@ -39,9 +49,9 @@ def main():
                                   f"python3 scripts/onboarding.py --source {source.value} --reauthorize.")
         except RuntimeBusy as exc:
             raise SystemExit(str(exc)) from None
-    app = create_app(settings)
-    print(f"Local API documentation at http://127.0.0.1:{options.port}/docs")
-    uvicorn.run(app, host="127.0.0.1", port=options.port, access_log=False, log_level="info")
+    app = create_app(enable_sources=not options.no_sources, p1_settings=settings)
+    print(f"Ensora+ unified API at http://{options.host}:{options.port}/docs")
+    uvicorn.run(app, host=options.host, port=options.port, access_log=False, log_level="info")
 
 
 if __name__ == "__main__":

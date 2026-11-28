@@ -2,6 +2,8 @@
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from threading import Event, Lock
+from time import monotonic
+from typing import Callable
 
 from sqlalchemy import insert, select, update
 
@@ -18,6 +20,28 @@ from .etl import count
 
 logger = logging.getLogger(__name__)
 CHECKPOINT_CURSORS_KEY = "_checkpoint_cursors"
+
+
+class _ProgressThrottle:
+    """Coalesce frequent progress writes while retaining stage/page visibility."""
+
+    def __init__(self, interval_seconds: float = 2.0,
+                 clock: Callable[[], float] = monotonic) -> None:
+        self.interval_seconds = interval_seconds
+        self.clock = clock
+        self._last: dict[str, tuple[float, tuple]] = {}
+
+    def should_flush(self, report: SourceSyncReport, *, force: bool = False) -> bool:
+        source = report.source
+        state = (report.status, report.stage, report.page_number)
+        previous = self._last.get(source)
+        current = self.clock()
+        terminal = report.status != "running"
+        if (force or terminal or previous is None or previous[1] != state
+                or current - previous[0] >= self.interval_seconds):
+            self._last[source] = (current, state)
+            return True
+        return False
 
 
 class ResumeUnavailable(ValueError):
@@ -149,6 +173,7 @@ class SyncEngine:
         reports = {}
         checkpoint_cursors = dict(initial_cursors or {})
         lock = Lock()
+        progress_throttle = _ProgressThrottle()
 
         def saved_report():
             result = dict(reports)
@@ -156,10 +181,11 @@ class SyncEngine:
                 result[CHECKPOINT_CURSORS_KEY] = dict(checkpoint_cursors)
             return result
 
-        def progress(report):
+        def progress(report, *, force=False):
             with lock:
                 reports[report.source] = report.model_dump(mode="json")
-                self._update(job, report=saved_report())
+                if progress_throttle.should_flush(report, force=force):
+                    self._update(job, report=saved_report())
 
         def checkpoint(source, cursor):
             with lock:
@@ -340,7 +366,8 @@ class SyncEngine:
             report.errors += len(page.error_codes)
             report.error_codes = sorted(set(report.error_codes + page.error_codes))
             report.warning_codes = sorted(set(report.warning_codes + page.warning_codes))
-            if scope.discovery_only and page.complete and "courses_discovered" not in report.metrics:
+            if (source == SourceKind.MOODLE and scope.discovery_only and page.complete
+                    and "courses_discovered" not in report.metrics):
                 report.warning_codes = sorted(set(report.warning_codes + ["discovery_coverage_unknown"]))
             for record in page.items:
                 if cancelled.is_set() or not authorized():
@@ -466,6 +493,7 @@ class SyncEngine:
                 # All source facts on this page are durable before its opaque continuation
                 # cursor becomes the recovery point for an interrupted/retried job.
                 checkpoint(source, page.next_cursor)
+            progress(report, force=True)
             report.stage = "listing"
             report.items_remaining_in_page = 0
             cursor = page.next_cursor

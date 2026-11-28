@@ -492,7 +492,7 @@ def create_app(settings=None, components=None, *, prefix: str = "/api/v1", manag
 
     @api.get("/documents/{document_id}/versions/{version_id}/concept-candidates")
     def concept_candidates(request: Request, document_id: str, version_id: str):
-        from .modules.ingestion.codex_bridge import extract_concept_candidates, extract_prerequisite_hints
+        from backend.app.modules.ingestion.codex_bridge import extract_concept_candidates, extract_prerequisite_hints
 
         source = document(request, document_id)["metadata_json"]
         record = Document.model_validate({key: value for key, value in source.items()

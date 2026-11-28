@@ -86,12 +86,16 @@ class Runtime:
                     db.execute(insert(connections).values(id=self.connection_ids[source], user_id=LOCAL_USER,
                                                           source=source, status=ConnectionStatus.NOT_CONFIGURED))
         self.consent = ConsentManager(self.engine, self.connection_ids)
+        bundled_adapter_factory = (
+            self.components is None
+            and self.settings.adapter_factory == "backend.app.modules.ingestion.codex_bridge:build_components"
+        )
         selected = self.components or self._load_components()
+        self.components = selected
         self.auth = AuthenticationManager(
             self.engine, self.connection_ids, self.consent, selected.adapters,
             shared_ensai_session=self.settings.ensai_shared_session,
-            require_institutional_evidence=self.components is None and self.settings.adapter_factory ==
-            "backend.app.modules.ingestion.codex_bridge:build_components",
+            require_institutional_evidence=bundled_adapter_factory,
         )
         self.pipeline = Pipeline(self.engine, root / "blobs", self.settings.max_document_bytes,
                                  selected.parser, selected.classifier, selected.matcher)

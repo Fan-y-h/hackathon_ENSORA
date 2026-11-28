@@ -4,8 +4,8 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import JSON, Boolean, Column, ForeignKey, Index, Integer, MetaData, String, Table, UniqueConstraint
-from sqlalchemy import create_engine, event
+from sqlalchemy import JSON, Boolean, Column, ForeignKey, Index, Integer, MetaData, String, Table, UniqueConstraint, func
+from sqlalchemy import create_engine, event, literal_column, select
 from sqlalchemy.engine import URL
 
 from .calendar import interval_time
@@ -59,6 +59,12 @@ Index("ix_records_kind_connection", records.c.kind, records.c.connection_id)
 Index("ix_records_parent", records.c.parent_id)
 Index("ix_runs_user_started", runs.c.user_id, runs.c.started_at, runs.c.id)
 Index("ix_runs_user_status", runs.c.user_id, runs.c.status)
+Index("ix_documents_active_version", documents.c.active_version_id)
+Index("ix_documents_conn_active_version", documents.c.connection_id, documents.c.active_version_id)
+Index("ix_documents_conn_subject", documents.c.connection_id,
+      func.json_extract(documents.c.metadata_json, '$."subject_id"'))
+Index("ix_source_record_history_recorded", record_history.c.record_id, record_history.c.recorded_at)
+Index("ix_availability_user", availability.c.user_id)
 
 LOCAL_USER = "e0aa03f9-37fc-455b-97bb-648a35868d19"
 
@@ -79,6 +85,17 @@ def open_database(path: Path):
         conn.execute("PRAGMA journal_mode=WAL")
 
     return engine
+
+
+def latest_consent_granted(connection_id, purpose: str):
+    """Return the latest append-only consent value for a connection and purpose."""
+    return (
+        select(consents.c.granted)
+        .where(consents.c.connection_id == connection_id, consents.c.purpose == purpose)
+        .order_by(literal_column("consents.rowid").desc())
+        .limit(1)
+        .scalar_subquery()
+    )
 
 
 def migrate(engine):

@@ -250,7 +250,10 @@ class Pipeline:
             if retry_parse:
                 version_fields = {"status": status, "parser_version": parsed.parser_version if parsed else None,
                                   "filename": record.title,
-                                  "source_metadata": incoming | {"parser_warning_codes": warning_codes}}
+                                  "source_metadata": incoming | {
+                                      "classification": metadata.get("classification"),
+                                      "parser_warning_codes": warning_codes,
+                                  }}
                 if version is None:
                     db.execute(insert(versions).values(
                         id=version_id, document_id=document_id, sha256=digest, mime_type=record.mime_type,
