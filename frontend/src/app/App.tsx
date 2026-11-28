@@ -8,6 +8,7 @@ import { FocusPage } from "../features/focus/FocusPage";
 import { GradesPage } from "../features/grades/GradesPage";
 import { FlashcardsPage } from "../features/learning/FlashcardsPage";
 import { QuizPage } from "../features/learning/QuizPage";
+import { LibraryPage } from "../features/library/LibraryPage";
 import { NotificationsPage } from "../features/notifications/NotificationsPage";
 import { PlannedPage } from "../features/planned/PlannedPage";
 import { PlannerPage } from "../features/planner/PlannerPage";
@@ -49,7 +50,7 @@ const router = createBrowserRouter([
       { path: "settings", element: <SettingsPage /> },
       { path: "profile", element: <SettingsPage /> },
       { path: "subjects", element: <PlannedPage module="subjects" /> },
-      { path: "library", element: <PlannedPage module="library" /> },
+      { path: "library", element: <LibraryPage /> },
       { path: "tutor", element: <PlannedPage module="tutor" /> },
       { path: "studio", element: <PlannedPage module="studio" /> },
       { path: "exams", element: <PlannedPage module="exams" /> },

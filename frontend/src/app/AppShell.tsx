@@ -18,7 +18,7 @@ export const NAV: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/", label: "Dashboard" },
       { to: "/subjects", label: "Mes matières", planned: true },
-      { to: "/library", label: "Bibliothèque", planned: true },
+      { to: "/library", label: "Bibliothèque" },
       { to: "/planner", label: "Smart Planner" },
       { to: "/tasks", label: "Mes tâches" },
     ],

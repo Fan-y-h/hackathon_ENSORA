@@ -19,6 +19,7 @@ import { addDays, countdownLabel, dayKey, dayRange, formatClock, formatDuration,
 import { buildBlocks, KIND_LABEL } from "../planner/calendar";
 import { KIND_ICON } from "../planner/CalendarBlock";
 import { currentStreak } from "../analytics/metrics";
+import { SyncButton } from "../sources/SyncButton";
 import "./dashboard.css";
 import { StudentStatusPicker, useStudentStatusLabel } from "../profile/StudentStatusPicker";
 
@@ -69,6 +70,7 @@ export function DashboardPage() {
         title={`Bonjour${firstName ? ` ${firstName}` : ""}`}
         actions={
           <>
+            <SyncButton />
             {nextSession ? (
               <Link className="btn btn--primary" to={`/focus?session=${nextSession.session!.id}`}>
                 <Icon name="play" /> Démarrer · {formatClock(nextSession.startAt, tz)}

@@ -1,0 +1,6 @@
+.library__open { background: none; border: 0; padding: 0; cursor: pointer; text-align: left; font-weight: 600; color: var(--text-title); }
+.library__open:hover { text-decoration: underline; }
+.library tr[aria-selected="true"] td { background: var(--surface-sunken); }
+.library__chunks { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.sources-row { display: grid; grid-template-columns: minmax(120px, 1fr) auto auto auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--grid); font-size: 14px; }
+.sources-row:first-child { border-top: 0; }

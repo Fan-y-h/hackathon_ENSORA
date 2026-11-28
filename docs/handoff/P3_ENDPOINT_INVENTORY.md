@@ -80,9 +80,10 @@ path parameters normalized to `{}`. Full schemas: [`p3_openapi.json`](p3_openapi
 | `DELETE` | `/tasks/{}` |
 | `PATCH` | `/tasks/{}` |
 
-## Implemented but NOT in the contract — needs C1 review (36)
+## Implemented but NOT in the contract — needs C1 review (37)
 | Method | Path |
 |---|---|
+| `POST` | `/agenda/import-from-sources` |
 | `GET` | `/analytics/heatmap` |
 | `GET` | `/analytics/mastery-map` |
 | `GET` | `/analytics/readiness` |

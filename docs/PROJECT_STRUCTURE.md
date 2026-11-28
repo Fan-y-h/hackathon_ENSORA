@@ -49,7 +49,7 @@ hackathon_ENSORA/
 └── compose.yaml                  # optional local stack
 ```
 
-Each backend module uses `router.py`, `schemas.py`, `service.py`, `domain.py`, `repository.py` as needed; do not create empty abstraction layers mechanically. Tests mirror module boundaries. Runtime `data/` (except demo), secrets, DB, indices, blobs, caches and worktrees stay ignored. `contracts/openapi.json`, `main.py`, migrations, lockfiles and shared docs are integration-owned. See [AGENT_TEAM](AGENT_TEAM.md). This archive intentionally contains documentation only.
+Each backend module uses `router.py`, `schemas.py`, `service.py`, `domain.py`, `repository.py` as needed; do not create empty abstraction layers mechanically. Tests mirror module boundaries. Runtime `data/` (except demo), secrets, DB, indices, blobs, caches and worktrees stay ignored. `contracts/openapi.json`, `main.py`, migrations, lockfiles and shared docs are integration-owned. See [AGENT_TEAM](AGENT_TEAM.md). The P1 backend and CLI are now present on the shared feature branch.
 
 ## Academic module target additions (proposed, not scaffolded)
 ```text

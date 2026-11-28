@@ -65,13 +65,16 @@ tests/          Vitest unit tests
 - **Accessibility.** Text ≥ 4.5:1, marks ≥ 3:1; every block shows an icon or shape + a word +
   the subject acronym, so nothing relies on colour alone. "Unknown" mastery is hatched,
   never shown as 0. Keyboard focus is visible; dialogs close on Escape.
-- **No fake data.** Modules without a backend yet (subjects catalog, library, AI tutor,
-  studio, exam trainer) are shown as "à venir" and display no simulated content.
+- **No fake data.** Modules without a backend yet (subjects catalog, AI tutor, studio, exam
+  trainer) are shown under "Bientôt" and display no simulated content.
 
 ## Not yet covered
 
 - Subject names come from agenda titles (`subject_id` only) until the catalog API (C1) exists.
-- Source sync button is disabled until the ingestion module exists.
+- Sources (P1): Bibliothèque (documents, import, passages), Profil › Sources (consent, connect,
+  verify) and the Synchroniser button (sync job → agenda bridge) call `/api/v1/sources/*`. The dev
+  proxy adds the P1 bearer token read from `ENSORA_P1_TOKEN_FILE` (default
+  `~/.local/share/ensora-plus/api-token`); it never reaches the browser bundle.
 - Grades: read-only summary; simulator/objectives screens still to build on the existing API.
 - No Playwright E2E yet (docs/TESTING.md); unit tests cover the client, time, calendar layout,
   metrics, subject colours and the focus clock.

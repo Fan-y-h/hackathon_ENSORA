@@ -2309,7 +2309,8 @@
               "ics",
               "pamplemousse",
               "moodle",
-              "google_calendar"
+              "google_calendar",
+              "import"
             ],
             "title": "Source",
             "type": "string"
@@ -3513,6 +3514,34 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ImportResult": {
+        "properties": {
+          "agenda_revision": {
+            "title": "Agenda Revision",
+            "type": "integer"
+          },
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "unchanged": {
+            "title": "Unchanged",
+            "type": "integer"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created",
+          "updated",
+          "unchanged",
+          "agenda_revision"
+        ],
+        "title": "ImportResult",
         "type": "object"
       },
       "ItemGrade": {
@@ -8266,6 +8295,54 @@
         "title": "SimulateRequest",
         "type": "object"
       },
+      "SourceImportResult": {
+        "properties": {
+          "agenda_source": {
+            "title": "Agenda Source",
+            "type": "string"
+          },
+          "read": {
+            "title": "Read",
+            "type": "integer"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ImportResult"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "agenda_source",
+          "read",
+          "skipped",
+          "result"
+        ],
+        "title": "SourceImportResult",
+        "type": "object"
+      },
+      "SourcesImportOut": {
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceImportResult"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "title": "SourcesImportOut",
+        "type": "object"
+      },
       "StudentStatusOptionOut": {
         "properties": {
           "label": {
@@ -9253,7 +9330,7 @@
   },
   "info": {
     "title": "Ensora+ API",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -9308,6 +9385,28 @@
         "summary": "Export Account",
         "tags": [
           "profile"
+        ]
+      }
+    },
+    "/api/v1/agenda/import-from-sources": {
+      "post": {
+        "description": "Copy every P1 calendar event into the agenda (idempotent; safe to call after each sync).",
+        "operationId": "import_from_sources_api_v1_agenda_import_from_sources_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesImportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Import From Sources",
+        "tags": [
+          "agenda"
         ]
       }
     },

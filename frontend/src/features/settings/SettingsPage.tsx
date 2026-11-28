@@ -8,6 +8,7 @@ import { useSubjects } from "../../app/subjects";
 import { Icon } from "../../components/Icon";
 import { Card, PageHeader, QueryState, SubjectBadge } from "../../components/ui";
 import { StudentStatusPicker } from "../profile/StudentStatusPicker";
+import { SourcesCard } from "../sources/SourcesCard";
 import { colorByKey, confusableWith, resolveSubjectColor, STANDARD_PALETTE } from "../../lib/subjects";
 import "./settings.css";
 
@@ -22,6 +23,7 @@ export function SettingsPage() {
       <div className="grid-auto" style={{ ["--min" as string]: "380px" }}>
         <QueryState query={profile}>{(p) => <ProfileForm profile={p} />}</QueryState>
         <DisplayCard />
+        <SourcesCard />
       </div>
       <SubjectColors />
     </div>

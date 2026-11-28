@@ -17,7 +17,7 @@
 | Reliability | Local persistence, smoke tests, no keys/private course content in Git, clear setup README and demo instructions |
 
 ## P1 — after P0 green
-Authorized live Moodle/Drive/Pamplemousse connector(s), incremental sync controls, Google Calendar/personal Drive, more formats, stronger concept extraction and entity resolution, additional tutor modes, task project decomposition/Kanban, Smart Notes/Error Notebook, Focus Room, exam mode and mock generation, richer analytics and notifications, CP-SAT and FSRS, additional provider adapters. If connector access is unavailable, prioritize authorized imports and document the limitation rather than fake success.
+Authorized live Moodle/Drive/Pamplemousse connector(s), incremental sync controls, personal Google Calendar, more formats, stronger concept extraction and entity resolution, additional tutor modes, task project decomposition/Kanban, Smart Notes/Error Notebook, Focus Room, exam mode and mock generation, richer analytics and notifications, CP-SAT and FSRS, additional provider adapters. If connector access is unavailable, prioritize authorized imports and document the limitation rather than fake success.
 
 ## P2 — full-product extensions
 Podcasts, rendered videos, parameterized animations, interactive mind maps, infographics, richer personalized exercises/corrections, additional provider routing and quotas, community sharing/moderation/server, institutional auth, advanced knowledge tracing, mobile-friendly enhancements. All remain scoped requirements or earlier suggested extensions; no silent removal.

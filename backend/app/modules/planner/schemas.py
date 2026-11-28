@@ -12,7 +12,7 @@ from app.modules.planner.domain import MAX_EVENT_DURATION
 
 EventType = Literal["class", "td", "tp", "exam", "presentation", "deadline", "personal", "other"]
 EventStatus = Literal["confirmed", "tentative", "cancelled"]
-EventSource = Literal["manual", "fixture", "ics", "pamplemousse", "moodle", "google_calendar"]
+EventSource = Literal["manual", "fixture", "ics", "pamplemousse", "moodle", "google_calendar", "import"]
 AssessmentFormat = Literal["written", "oral", "practical", "project", "online", "mixed", "other"]
 Difficulty = Literal["easy", "medium", "hard"]
 ScopeStatus = Literal["unconfirmed", "confirmed"]

@@ -5,7 +5,7 @@ All R identifiers below are **REQUIREMENT** unless explicitly marked. P0/P1/P2 i
 | ID | Full product requirement | Source / detail |
 |---|---|---|
 | R01 | Personal account, first name/email, academic year, 1A/2A/3A, specialization, subjects, goals, availability, preferences; editable profile, self-assessment and optional diagnostic quiz. | S1 profile/adaptive; S2 §3 |
-| R02 | Connect Moodle, Ensora Drive, Pamplemousse, Google Calendar, personal Drive and local folders using authorized access; disconnect, view status, select scope. | S1 sources/sync |
+| R02 | Connect Moodle, Ensora Drive, Pamplemousse, personal Google Calendar, local folders and structured academic imports using authorized access; disconnect, view status, select scope. | S1 sources/sync |
 | R03 | Initial, incremental, startup, manual, selective and regular synchronization; show last refresh and changes; no reprocessing unchanged data. | S1 sync |
 | R04 | Download authorized courses, TD, TP, PDF, slides, notebooks, assignments, instructions, deadlines, announcements; archive historical exams, answers, revision sheets and tutoring resources. | S1 sync |
 | R05 | Normalize and classify by cohort, specialization, subject, chapter, academic year and resource type; reconcile aliases across sources; match exam/solution; confirm ambiguity. | S1/S2 ETL |
@@ -43,7 +43,7 @@ All R identifiers below are **REQUIREMENT** unless explicitly marked. P0/P1/P2 i
 Every feature must handle empty/loading/error states, persist authoritative state, validate input, prevent cross-profile leakage and provide a reproducible test. External integration cannot be claimed working without a successful authorized test. No source material is redistributed merely because it is accessible. Source deletions are tombstoned and cached access evaluated; revoke access when required. See [TESTING](TESTING.md) and [BACKLOG](BACKLOG.md) for measurable checks.
 
 ## Explicitly not decided
-Provider credentials, API availability, institutional permission, exact mastery/scheduling algorithms, event duration and jury rubric, Community moderation model. Personal Drive metadata is unspecified in S1; treat it as an opt-in selected-folder connector analogous to local personal resources. These are not reasons to remove requirements.
+Provider credentials, API availability, institutional permission, exact mastery/scheduling algorithms, event duration and jury rubric, Community moderation model. Personal Google Drive is outside the supported source scope.
 
 ## S4 extension — Grade Tracker & Academic Optimizer [REQUIREMENT]
 | ID | Requirement | Source |

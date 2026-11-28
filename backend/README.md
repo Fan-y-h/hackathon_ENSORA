@@ -19,6 +19,31 @@ backend/.venv/Scripts/python.exe -m uvicorn app.main:create_app --factory --app-
 OpenAPI UI: <http://127.0.0.1:8000/docs>. Tests: `cd backend; .venv/Scripts/python.exe -m pytest`.
 Runtime DB in `data/runtime/` (git-ignored; override with `DATA_DIR` / `DATABASE_URL`).
 
+### One server, two parts (integration of `feat/p1-data-engineering`)
+
+The same process now also serves the P1 data-engineering API (source connections, sync jobs,
+documents, academic records), mounted under **`/api/v1/sources/...`** from
+`backend/app/modules/ingestion/api.py` (its former `backend/app/main.py`, routes unchanged).
+
+| Part | Routes | Storage | Auth |
+|---|---|---|---|
+| Planner, learning, grades… | `/api/v1/*` | `data/runtime/ensora.db` | local single user |
+| P1 sources | `/api/v1/sources/*` | `~/.local/share/ensora-plus/ensora.sqlite3` (`LOCAL_DATA_DIR`) | `Authorization: Bearer <api-token>` (file regenerated at each start; the Vite dev proxy adds it) |
+| Bridge | `POST /api/v1/agenda/import-from-sources` | P1 events → agenda | — |
+
+* The bridge copies P1 calendar events (Pamplemousse, Google Calendar, imports) into the agenda,
+  idempotently: cancelled events skipped, tentative ones flagged for confirmation, P1-only types
+  folded (`project`→`deadline`, `sport`→`personal`). Imported exams become assessments.
+* `GET /api/v1/health` reports `"sources": true|false`. If the P1 runtime cannot start, the
+  planner keeps working and `/api/v1/sources/*` answers 503.
+* Tests and any `create_app(database_url=...)` call run **without** sources unless
+  `enable_sources=True` (they never touch the real P1 store, browser profile or keyring).
+* The standalone P1 launcher still works: `python scripts/start.py` (port 8765).
+* Windows: `app/core/portable.py` replaces `fcntl`/`O_NOFOLLOW` (P1 was Linux-only) and blob
+  writes close the temp file before renaming. Remaining P1 tests failing on Windows assert Unix
+  file modes (`0o600`), symlink creation (needs admin) or local-import directory descriptors:
+  they fail identically on the original branch with only the portability fix.
+
 > Windows note: if Smart App Control blocks SQLAlchemy's compiled extension
 > ("DLL load failed … stratégie de contrôle d'application"), `app/__init__.py` sets
 > `DISABLE_SQLALCHEMY_CEXT_RUNTIME=1` so the pure-Python implementation is used.

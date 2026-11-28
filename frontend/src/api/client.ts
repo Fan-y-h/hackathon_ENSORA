@@ -51,6 +51,8 @@ type Query = Record<string, string | number | boolean | null | undefined>;
 export interface RequestOptions {
   query?: Query;
   body?: unknown;
+  /** Multipart upload (documents): sent as-is, the browser sets the boundary header. */
+  form?: FormData;
   headers?: Record<string, string>;
   signal?: AbortSignal;
   /** Sends an `Idempotency-Key` header (reviews, submissions). */
@@ -80,7 +82,7 @@ function isEnvelope(value: unknown): value is ErrorEnvelope {
 
 export async function request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json", ...options.headers };
-  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  if (options.body !== undefined && !options.form) headers["Content-Type"] = "application/json";
   if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
 
   let response: Response;
@@ -88,7 +90,7 @@ export async function request<T>(method: string, path: string, options: RequestO
     response = await fetch(buildUrl(path, options.query), {
       method,
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: options.form ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
       credentials: "include",
       signal: options.signal,
     });
@@ -125,6 +127,7 @@ export const api = {
     request<T>("POST", path, { ...options, body: body ?? {} }),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, { body }),
   put: <T>(path: string, body: unknown) => request<T>("PUT", path, { body }),
+  upload: <T>(path: string, form: FormData) => request<T>("POST", path, { form }),
   delete: <T>(path: string, query?: Query) => request<T>("DELETE", path, { query }),
 };
 
