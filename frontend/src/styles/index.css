@@ -1,0 +1,302 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. Palette from docs/FRONTEND_UX_UI.md:
+ * neutral white/slate surfaces, deep navy text, teal accent,
+ * amber warning, red error, green success.
+ * Spacing follows the 4/8px Tailwind scale; radii stay between 8 and 12px.
+ */
+:root {
+  --canvas: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef2f5;
+  --line: #dce2e8;
+  --ink: #13233a;
+  --muted: #5b6b7d;
+  --accent: #0a6c6b;
+  --accent-ink: #ffffff;
+  --accent-soft: #ddf2f1;
+  --warning: #9c4506;
+  --warning-soft: #fdf0dc;
+  --danger: #a51f15;
+  --danger-soft: #fbe4e1;
+  --danger-ink: #ffffff;
+  --success: #126b34;
+  --success-soft: #dff3e5;
+  --sidebar: #0f1e2e;
+  --sidebar-ink: #c9d4df;
+  --sidebar-muted: #7d8e9e;
+  --sidebar-active: #1b3246;
+  color-scheme: light;
+}
+
+/*
+ * Dark theme. Follows the system setting unless the student picked a theme
+ * (data-theme on <html>, see src/app/theme.ts). Both blocks must stay identical.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #0d1520;
+    --surface: #142030;
+    --surface-2: #1a293b;
+    --line: #26384c;
+    --ink: #e4ebf2;
+    --muted: #96a6b6;
+    --accent: #3cc2bf;
+    --accent-ink: #062221;
+    --accent-soft: #123a3a;
+    --warning: #f0a94a;
+    --warning-soft: #3a2a12;
+    --danger: #f2877c;
+    --danger-soft: #3d1d1a;
+    --danger-ink: #2a0b08;
+    --success: #5acb7f;
+    --success-soft: #163020;
+    --sidebar: #09111a;
+    --sidebar-ink: #c9d4df;
+    --sidebar-muted: #6e7f8e;
+    --sidebar-active: #152738;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --canvas: #0d1520;
+  --surface: #142030;
+  --surface-2: #1a293b;
+  --line: #26384c;
+  --ink: #e4ebf2;
+  --muted: #96a6b6;
+  --accent: #3cc2bf;
+  --accent-ink: #062221;
+  --accent-soft: #123a3a;
+  --warning: #f0a94a;
+  --warning-soft: #3a2a12;
+  --danger: #f2877c;
+  --danger-soft: #3d1d1a;
+  --danger-ink: #2a0b08;
+  --success: #5acb7f;
+  --success-soft: #163020;
+  --sidebar: #09111a;
+  --sidebar-ink: #c9d4df;
+  --sidebar-muted: #6e7f8e;
+  --sidebar-active: #152738;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* Expose the tokens as Tailwind colors: bg-surface, text-ink, border-line, ... */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-ink: var(--danger-ink);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-ink: var(--sidebar-ink);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-active: var(--sidebar-active);
+}
+
+/* System fonts only: the demo must work offline (no external font download). */
+@theme {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Shared keyboard focus style: class "focus-ring" on any interactive element. */
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+body {
+  background-color: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Calendar (FullCalendar) themed with our tokens, so it follows light/dark mode.
+ * ------------------------------------------------------------------------- */
+.ensora-calendar {
+  --fc-border-color: var(--line);
+  --fc-page-bg-color: var(--surface);
+  --fc-neutral-bg-color: var(--surface-2);
+  --fc-list-event-hover-bg-color: var(--surface-2);
+  --fc-today-bg-color: color-mix(in srgb, var(--accent) 7%, transparent);
+  --fc-now-indicator-color: var(--danger);
+  --fc-button-text-color: var(--ink);
+  --fc-button-bg-color: var(--surface);
+  --fc-button-border-color: var(--line);
+  --fc-button-hover-bg-color: var(--surface-2);
+  --fc-button-hover-border-color: var(--line);
+  --fc-button-active-bg-color: var(--accent);
+  --fc-button-active-border-color: var(--accent);
+  font-size: 0.875rem;
+}
+.ensora-calendar .fc .fc-toolbar {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.ensora-calendar .fc .fc-toolbar-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.ensora-calendar .fc .fc-button {
+  font-size: 0.8125rem;
+  padding: 0.3rem 0.65rem;
+  box-shadow: none;
+}
+.ensora-calendar .fc .fc-button-primary:not(:disabled).fc-button-active {
+  color: var(--accent-ink);
+}
+.ensora-calendar .fc .fc-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ensora-calendar .fc .fc-col-header-cell-cushion,
+.ensora-calendar .fc .fc-daygrid-day-number,
+.ensora-calendar .fc .fc-list-day-text,
+.ensora-calendar .fc .fc-list-day-side-text {
+  color: var(--ink);
+  text-decoration: none;
+  text-transform: capitalize;
+}
+.ensora-calendar .fc .fc-timegrid-slot-label,
+.ensora-calendar .fc .fc-timegrid-axis {
+  color: var(--muted);
+}
+.ensora-calendar .fc-event {
+  cursor: pointer;
+}
+@media (max-width: 640px) {
+  .ensora-calendar .fc .fc-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* Event colors by type. The type is always written too (badge, legend, screen reader text). */
+.ev-class { --ev-bg: var(--surface-2); --ev-ink: var(--ink); --ev-line: var(--muted); }
+.ev-td, .ev-tp { --ev-bg: var(--accent-soft); --ev-ink: var(--ink); --ev-line: var(--accent); }
+.ev-exam, .ev-presentation { --ev-bg: var(--danger-soft); --ev-ink: var(--ink); --ev-line: var(--danger); }
+.ev-deadline { --ev-bg: var(--warning-soft); --ev-ink: var(--ink); --ev-line: var(--warning); }
+.ev-personal, .ev-other { --ev-bg: var(--surface); --ev-ink: var(--muted); --ev-line: var(--line); }
+.ev-planner { --ev-bg: var(--surface); --ev-ink: var(--ink); --ev-line: var(--accent); }
+.ensora-calendar .fc-event.ev-planner { border-style: dashed; border-left-style: solid; }
+
+.ensora-calendar .fc-event[class*="ev-"] {
+  background: var(--ev-bg);
+  color: var(--ev-ink);
+  border: 1px solid var(--ev-line);
+  border-left-width: 3px;
+}
+/* FullCalendar sets its own (white) text color inside events: use the theme ink instead. */
+.ensora-calendar .fc-event[class*="ev-"] .fc-event-main,
+.ensora-calendar .fc-event[class*="ev-"] .fc-event-title,
+.ensora-calendar .fc-event[class*="ev-"] .fc-event-time {
+  color: var(--ev-ink);
+}
+.ensora-calendar .fc-event.ev-personal {
+  background: repeating-linear-gradient(135deg, var(--surface), var(--surface) 6px, var(--surface-2) 6px, var(--surface-2) 12px);
+}
+.ensora-calendar .fc-event.ev-pending {
+  border-style: dashed;
+  border-color: var(--warning);
+}
+.ensora-calendar .fc-list-event .fc-list-event-dot {
+  border-color: var(--ev-line);
+}
+.ensora-calendar .fc-list-event[class*="ev-"] {
+  background: transparent;
+  border: none;
+}
+.ev-swatch {
+  display: inline-block;
+  background: var(--ev-bg);
+  border: 1px solid var(--ev-line);
+  border-left-width: 3px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Rendered Markdown (tutor answers, revision sheets, notes).
+ * ------------------------------------------------------------------------- */
+.ensora-prose {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.ensora-prose > * + * { margin-top: 0.75em; }
+.ensora-prose h1 { font-size: 1.35rem; font-weight: 700; }
+.ensora-prose h2 { font-size: 1.15rem; font-weight: 650; margin-top: 1.25em; }
+.ensora-prose h3 { font-size: 1rem; font-weight: 600; margin-top: 1em; }
+.ensora-prose ul { list-style: disc; padding-left: 1.25rem; }
+.ensora-prose ol { list-style: decimal; padding-left: 1.25rem; }
+.ensora-prose li + li { margin-top: 0.25em; }
+.ensora-prose blockquote { border-left: 3px solid var(--accent); padding-left: 0.75rem; color: var(--muted); }
+.ensora-prose code { background: var(--surface-2); border-radius: 4px; padding: 0.1em 0.35em; font-size: 0.875em; }
+.ensora-prose pre { background: var(--surface-2); border-radius: 8px; padding: 0.75rem; overflow-x: auto; }
+.ensora-prose pre code { background: none; padding: 0; }
+.ensora-prose hr { border-color: var(--line); }
+.ensora-prose table { border-collapse: collapse; }
+.ensora-prose th, .ensora-prose td { border: 1px solid var(--line); padding: 0.25rem 0.5rem; }
+.ensora-prose .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.25rem 0; }
+
+/* ---------------------------------------------------------------------------
+ * Chart tokens. Mastery is ordered, so it uses ONE hue, light -> dark
+ * (sequential ramp); "not assessed" is a neutral hatched fill, never a hue.
+ * Identity never relies on color alone: legend, labels and a table view exist.
+ * ------------------------------------------------------------------------- */
+:root {
+  --chart-bar: #0e7c7b;
+  --chart-seq-1: #a9dcd8;
+  --chart-seq-2: #3fa29d;
+  --chart-seq-3: #0b5957;
+  --chart-grid: #e6eaee;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --chart-bar: #3cc2bf;
+    --chart-seq-1: #1d4f4e;
+    --chart-seq-2: #2c8f8b;
+    --chart-seq-3: #78d9d4;
+    --chart-grid: #22344a;
+  }
+}
+:root[data-theme="dark"] {
+  --chart-bar: #3cc2bf;
+  --chart-seq-1: #1d4f4e;
+  --chart-seq-2: #2c8f8b;
+  --chart-seq-3: #78d9d4;
+  --chart-grid: #22344a;
+}
+.chart-unknown {
+  background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 3px, var(--line) 3px, var(--line) 5px);
+}
