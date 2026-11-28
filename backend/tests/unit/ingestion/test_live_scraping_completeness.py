@@ -3423,3 +3423,28 @@ def test_drive_profile_scope_keeps_historical_annales_for_unique_current_subject
     assert page.items[0].subject_id == "subject:calcul"
     assert page.items[0].provenance.academic_year == "2021-2022"
     assert page.observations["resources_excluded"] == 1
+
+
+def test_moodle_modern_section_links_require_confirmed_course_context(tmp_path: Path) -> None:
+    cfg = SourcesRuntimeConfig.load(config_dir=tmp_path, environ={})
+    connector = MoodleConnector(cfg, rate_limiter=RateLimiter(0.0))
+    scope = {
+        "dashboard_html": '<a href="/course/view.php?id=40">Selected course</a>',
+        "course_html_by_id": {"40": """
+            <a href="/course/section.php?id=101">Selected course section</a>
+            <a href="/course/section.php?id=102">Other course section</a>
+            <a href="https://other.example/course/section.php?id=103">External section</a>
+        """},
+        "section_html_by_course": {"40": {
+            "101": """<body class="path-course course-40 format-topics">
+                <a href="/mod/resource/view.php?id=501">Useful handout</a></body>""",
+            "102": """<body class="path-course course-41 format-topics">
+                <a href="/mod/resource/view.php?id=502">Unrelated handout</a></body>""",
+        }},
+    }
+    page = connector.list_changes(scope)
+    assert len(page.items) == 1
+    assert page.items[0].title == "Useful handout"
+    assert connector.last_stats["sections_discovered"] == 2
+    assert connector.last_stats["sections_traversed"] == 2
+    assert connector.last_stats["resources_excluded"] == 1

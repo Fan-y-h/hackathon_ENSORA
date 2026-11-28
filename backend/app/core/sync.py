@@ -330,7 +330,10 @@ class SyncEngine:
             with self.engine.connect() as db:
                 matched_moodle_courses.update(
                     key for key, payload in db.execute(query)
-                    if scope.subject_id in (payload or {}).get("aliases", [])
+                    if scope.subject_id in (
+                        key, key.removeprefix("moodle:course:"),
+                        (payload or {}).get("code"), *((payload or {}).get("aliases") or ()),
+                    )
                 )
         report.stage = "listing"
         progress(report)
@@ -382,7 +385,11 @@ class SyncEngine:
             if scope.subject_id and source == SourceKind.MOODLE:
                 matched_moodle_courses.update(
                     item.provenance.external_id for item in page.items
-                    if isinstance(item, Subject) and scope.subject_id in item.aliases
+                    if isinstance(item, Subject) and scope.subject_id in (
+                        item.provenance.external_id,
+                        item.provenance.external_id.removeprefix("moodle:course:"),
+                        item.code, *item.aliases,
+                    )
                 )
             for record in page.items:
                 if cancelled.is_set() or not authorized():

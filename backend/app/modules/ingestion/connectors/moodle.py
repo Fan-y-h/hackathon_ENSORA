@@ -637,7 +637,7 @@ class _MoodleCourseListHTMLParser(HTMLParser):
 
 
 class _MoodleSectionTabsParser(HTMLParser):
-    """Discover tab-based and sectioned course URLs (`/course/view.php?id=<cid>&section=<N>`)."""
+    """Discover authorized Moodle course tabs and section pages."""
 
     def __init__(self, base_url: str, course_id: str) -> None:
         super().__init__(convert_charrefs=True)
@@ -646,10 +646,11 @@ class _MoodleSectionTabsParser(HTMLParser):
         self._in_anchor = False
         self._cur_url: str | None = None
         self._cur_sec: str | None = None
+        self._cur_key: tuple[str, str] | None = None
         self._cur_available = True
         self._cur_fallback_title: str = ""
         self._buf: list[str] = []
-        self._tabs: dict[str, MoodleSectionTab] = {}
+        self._tabs: dict[tuple[str, str], MoodleSectionTab] = {}
         self._disabled_parent_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -678,17 +679,22 @@ class _MoodleSectionTabsParser(HTMLParser):
         if not is_same_origin(full_url, self._base_url):
             return
         parsed = urlparse(full_url)
-        if "/course/view.php" not in parsed.path.lower():
-            return
         qs = parse_qs(parsed.query)
         cid = (qs.get("id") or [None])[0]
-        sec = (qs.get("section") or [None])[0]
-        if cid != self._course_id or sec is None or not sec.isdigit():
+        if parsed.path.lower().endswith("/course/section.php") and cid and cid.isdigit():
+            sec = cid  # Moodle 4.4+ uses a site-wide section ID.
+            query = f"id={sec}"
+        elif parsed.path.lower().endswith("/course/view.php"):
+            sec = (qs.get("section") or [None])[0]
+            if cid != self._course_id or sec is None or not sec.isdigit():
+                return
+            query = f"id={cid}&section={sec}"
+        else:
             return
-        canonical_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?id={cid}&section={sec}"
         self._in_anchor = True
-        self._cur_url = canonical_url
+        self._cur_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", query, ""))
         self._cur_sec = sec
+        self._cur_key = (parsed.path, sec)
         self._cur_available = not (is_disabled or self._disabled_parent_depth > 0)
         self._cur_fallback_title = (attr_map.get("title") or attr_map.get("aria-label") or "").strip()
         self._buf = []
@@ -699,11 +705,11 @@ class _MoodleSectionTabsParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         low = tag.lower()
-        if low == "a" and self._in_anchor and self._cur_sec is not None and self._cur_url is not None:
+        if low == "a" and self._in_anchor and self._cur_sec and self._cur_url and self._cur_key:
             label = " ".join("".join(self._buf).split()).strip() or self._cur_fallback_title or f"Section {self._cur_sec}"
-            existing = self._tabs.get(self._cur_sec)
+            existing = self._tabs.get(self._cur_key)
             if existing is None or (not existing.available and self._cur_available):
-                self._tabs[self._cur_sec] = MoodleSectionTab(
+                self._tabs[self._cur_key] = MoodleSectionTab(
                     course_id=self._course_id,
                     section_num=self._cur_sec,
                     title=label,
@@ -713,6 +719,7 @@ class _MoodleSectionTabsParser(HTMLParser):
             self._in_anchor = False
             self._cur_url = None
             self._cur_sec = None
+            self._cur_key = None
             self._buf = []
         if self._disabled_parent_depth > 0:
             self._disabled_parent_depth -= 1
@@ -731,6 +738,15 @@ def discover_course_section_tabs(
     parser = _MoodleSectionTabsParser(base_url, course_id)
     parser.feed(html)
     return parser.tabs
+
+
+def _modern_section_belongs_to_course(html: str, course_id: str) -> bool:
+    """A site-wide section link alone gives no evidence that it belongs to this course."""
+    body_tag = re.search(r"<body\b[^>]*>", html, re.IGNORECASE)
+    if not body_tag:
+        return False
+    classes = re.search(r"""\sclass\s*=\s*(["'])(.*?)\1""", body_tag.group(), re.DOTALL)
+    return bool(classes and f"course-{course_id}" in classes.group(2).split())
 
 
 class _MoodleCoursePageHTMLParser(HTMLParser):
@@ -2240,9 +2256,9 @@ class MoodleConnector(SourceConnector):
                 stats["sections_discovered"] = stats.get("sections_discovered", 0) + max(1, len(tabs))
                 stats["sections_traversed"] = stats.get("sections_traversed", 0) + 1  # initial course page
 
-            visited_sections: set[str] = set()
-            parsed_root_sec = (parse_qs(urlparse(course.url).query).get("section") or ["0"])[0]
-            visited_sections.add(parsed_root_sec)
+            root_url = urlparse(course.url)
+            parsed_root_sec = (parse_qs(root_url.query).get("section") or ["0"])[0]
+            visited_sections = {(root_url.path, parsed_root_sec)}
 
             sections_fetched = 0
             for tab in tabs:
@@ -2253,11 +2269,13 @@ class MoodleConnector(SourceConnector):
                         )
                         stats["resources_excluded"] = stats.get("resources_excluded", 0) + 1
                     continue
-                if tab.section_num in visited_sections:
+                tab_path = urlparse(tab.url).path
+                tab_key = (tab_path, tab.section_num)
+                if tab_key in visited_sections:
                     continue
                 if sections_fetched >= max_sections:
                     break
-                visited_sections.add(tab.section_num)
+                visited_sections.add(tab_key)
 
                 sec_html: str | None = None
                 if section_html_by_num is not None:
@@ -2279,6 +2297,12 @@ class MoodleConnector(SourceConnector):
                 if sec_html is None:
                     continue
                 sections_fetched += 1
+                if tab_path.lower().endswith("/course/section.php") and not _modern_section_belongs_to_course(
+                    sec_html, course.course_id,
+                ):
+                    if stats is not None:
+                        stats["resources_excluded"] = stats.get("resources_excluded", 0) + 1
+                    continue
                 if stats is not None:
                     stats["sections_traversed"] = stats.get("sections_traversed", 0) + 1
 

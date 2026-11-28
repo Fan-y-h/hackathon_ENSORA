@@ -218,3 +218,30 @@ def test_moodle_assessment_reaches_agenda_and_tasks_on_resync(client):
     assert updated["id"] == task["id"] and updated["title"] == "My task"
     assert updated["remaining_min"] == 45
     assert updated["deadline_at"].startswith("2026-12-10T14:00")
+
+
+def test_numeric_moodle_scope_persists_course_before_its_assignment(client):
+    from threading import Event
+    from types import SimpleNamespace
+
+    from backend.app.contracts.sources import Assessment, ChangePage, Provenance, SourceKind, Subject, SyncScope
+    from backend.app.contracts.sync import SourceSyncReport
+
+    runtime = client.app.state.sources_app.state.runtime
+    source = SourceKind.MOODLE
+    runtime.consent.record(source, "read", True)
+    course = Subject(title="Fixture course", code="505", provenance=Provenance(
+        source=source, external_id="moodle:course:505",
+    ))
+    assignment = Assessment(
+        title="Fixture assignment", parent_key=course.provenance.external_id,
+        assessment_kind="assignment", deadline_at="2026-12-09T14:00:00Z",
+        provenance=Provenance(source=source, external_id="moodle:assignment:1"),
+    )
+    connector = SimpleNamespace(list_changes=lambda *_: ChangePage(items=[course, assignment], complete=True))
+    report = SourceSyncReport(source=source)
+    runtime.sync._pages(connector, source, SyncScope(source=source, subject_id="505"),
+                        Event(), report, lambda *_: None, False)
+    assert report.errors == 0 and report.records == 2
+    assert client.post("/api/v1/agenda/import-from-sources").is_success
+    assert len(client.get("/api/v1/tasks").json()["items"]) == 1
