@@ -172,3 +172,17 @@ class SourceConnector(ABC):
     @abstractmethod
     def disconnect(self) -> AuthStatus:
         """Revoke or clear local authorization state for this source."""
+
+
+# Read-only default policy reference for Codex scheduler coordination.
+# Connectors NEVER hardcode, read, or enforce sync intervals internally; Codex owns
+# user-configurable per-source frequencies, disable toggles, and immediate manual syncs.
+RECOMMENDED_SYNC_POLICY_SECONDS: dict[str, int | None] = {
+    "ensora_drive": 7 * 24 * 3600,          # 7 days (incremental drvmod: watermark + streaming BFS)
+    "moodle": 7 * 24 * 3600,                # 7 days (incremental known_versions skip + cookie HTTP)
+    "pamplemousse:timetable": 6 * 3600,     # 6 hours (sections="timetable": iCalendar / p=121 EDT only)
+    "pamplemousse:grades": 24 * 3600,       # 24 hours (sections="grades": p=1052 Notes only)
+    "pamplemousse:catalog": 7 * 24 * 3600,  # 7 days (sections="catalog": p=107 Inscriptions/coefs only)
+    "google_calendar": 30 * 60,             # 30 minutes (incremental syncToken + 410 recovery)
+    "local": None,                          # on change (metadata-only scan_fingerprint + hash skip)
+}

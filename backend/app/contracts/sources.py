@@ -256,12 +256,18 @@ class SyncScope(Contract):
     folder_id: Key | None = None
     full: bool = False
     discovery_only: bool = False
+    retry_failed: bool = False
     academic_year: Key | None = None
+    pamplemousse_scope: Literal["timetable", "grades", "catalog"] | None = None
     window_start: AwareDatetime | None = None
     window_end: AwareDatetime | None = None
 
     @model_validator(mode="after")
     def check_window(self):
+        if self.pamplemousse_scope is not None and self.source != SourceKind.PAMPLEMOUSSE:
+            raise ValueError("Pamplemousse scope requires the Pamplemousse source")
+        if self.retry_failed and self.source is None:
+            raise ValueError("Retrying failed resources requires selecting one source")
         if self.academic_year and self.source not in (SourceKind.MOODLE, SourceKind.PAMPLEMOUSSE):
             raise ValueError("Academic-year scope requires Moodle or Pamplemousse")
         if self.window_start is None and self.window_end is None:

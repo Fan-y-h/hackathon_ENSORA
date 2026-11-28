@@ -14,8 +14,9 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func, insert, literal_column, select, tuple_, union_all, update
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .contracts.sources import Contract, Document, ParsedContent, PersonalAvailability, Provenance, SourceKind, SourceRecord, SyncScope
+from .contracts.sources import Contract, Document, Key, ParsedContent, PersonalAvailability, Provenance, SourceKind, SourceRecord, SyncScope
 from .contracts.users import Preferences, Profile
+from .contracts.sync import SyncScheduleSettings
 from .core.database import LOCAL_USER, academic_overrides, availability, chunks, connections, documents, new_id, records, runs, users, versions
 from .core.runtime import Runtime
 from .core.sync import ResumeUnavailable
@@ -33,6 +34,11 @@ class SourceSelection(Contract):
 
 class AcademicOverride(Contract):
     fields: dict[str, object]
+
+
+class DocumentMatchInput(Contract):
+    subject_id: Key
+    chapter_id: Key | None = None
 
 
 class ResumeSelection(Contract):
@@ -134,6 +140,9 @@ def create_app(settings=None, components=None):
             next_cursor = last["id"] if order is None else f"{last['_order']}|{last['id']}"
         for row in result:
             row.pop("_order", None)
+            report = row.get("report")
+            if isinstance(report, dict):
+                report.pop("_checkpoint_cursors", None)
         return {"items": result, "next_cursor": next_cursor}
 
     Limit = Annotated[int, Query(ge=1, le=200)]
@@ -164,8 +173,23 @@ def create_app(settings=None, components=None):
 
     @api.patch("/settings")
     def settings_update(request: Request, body: Preferences):
+        current = Preferences.model_validate(account(request, users.c.preferences) or {})
+        if "sync_schedule" not in body.model_fields_set:
+            body = body.model_copy(update={"sync_schedule": current.sync_schedule})
         set_account(request, preferences=body.model_dump(mode="json"))
         return body
+
+    @api.get("/sync/schedule")
+    def sync_schedule_status(request: Request):
+        return runtime(request).schedule_status().model_dump(mode="json")
+
+    @api.patch("/sync/schedule")
+    def sync_schedule_update(request: Request, body: SyncScheduleSettings):
+        return runtime(request).update_schedule(body).model_dump(mode="json")
+
+    @api.post("/sync/schedule/reset")
+    def sync_schedule_reset(request: Request):
+        return runtime(request).update_schedule(SyncScheduleSettings()).model_dump(mode="json")
 
     @api.get("/profile")
     def get_profile(request: Request):
@@ -260,7 +284,13 @@ def create_app(settings=None, components=None):
                                                runs.c.user_id == LOCAL_USER)).mappings().one_or_none()
             if row is None:
                 raise HTTPException(404, "Unknown job")
-            return dict(row)
+            result = dict(row)
+            report = result.get("report")
+            if isinstance(report, dict):
+                report = dict(report)
+                report.pop("_checkpoint_cursors", None)
+                result["report"] = report
+            return result
 
     @api.post("/jobs/{job_id}/resume", status_code=202)
     def resume_sync(request: Request, job_id: str, body: ResumeSelection = ResumeSelection()):
@@ -290,7 +320,17 @@ def create_app(settings=None, components=None):
 
     def active_document():
         access = documents.c.metadata_json["access_status"].as_string()
-        return func.coalesce(access, "active") == "active"
+        drive_connection_id = select(connections.c.id).where(
+            connections.c.user_id == LOCAL_USER,
+            connections.c.source == SourceKind.ENSORA_DRIVE,
+        ).scalar_subquery()
+        in_approved_drive_scope = ((documents.c.connection_id != drive_connection_id)
+                                   | (func.ensora_drive_folder_allowed(
+                                       documents.c.metadata_json["provenance"]["folder"].as_string()
+                                   ) == 1))
+        return ((func.coalesce(access, "active") == "active")
+                & documents.c.active_version_id.is_not(None)
+                & in_approved_drive_scope)
 
     @api.get("/documents")
     def list_documents(request: Request, limit: Limit = 50, cursor: str | None = None,
@@ -330,6 +370,65 @@ def create_app(settings=None, components=None):
         matcher = runtime(request).pipeline.matcher
         candidates = getattr(matcher, "exam_correction_candidates", None)
         return {"items": [entry.to_dict() for entry in candidates()] if candidates else []}
+
+    @api.put("/documents/{document_id}/match")
+    def confirm_document_match(request: Request, document_id: str, body: DocumentMatchInput):
+        ctx = runtime(request)
+        allowed = public_documents(ctx)
+        if not allowed:
+            raise HTTPException(403, "Read consent is required for document matching")
+        with ctx.engine.begin() as db:
+            document_row = db.execute(select(documents.c.connection_id, documents.c.active_version_id,
+                                             documents.c.metadata_json).where(
+                documents.c.id == document_id, documents.c.connection_id.in_(allowed),
+                active_document(),
+            )).mappings().one_or_none()
+            if document_row is None:
+                raise HTTPException(404, "Unknown active document")
+
+            subjects = db.execute(select(records.c.id, records.c.external_id, records.c.connection_id,
+                                         records.c.parent_id).where(
+                records.c.kind == "subject", records.c.external_id == body.subject_id,
+                records.c.connection_id.in_(allowed),
+            )).mappings().all()
+            if len(subjects) != 1:
+                raise HTTPException(422, "Subject must resolve to exactly one read-consented catalog record")
+            subject = subjects[0]
+            parents = db.execute(select(records.c.external_id).where(
+                records.c.id == subject["parent_id"], records.c.kind == "teaching_unit",
+                records.c.connection_id == subject["connection_id"],
+            )).all() if subject["parent_id"] else []
+            teaching_unit_id = parents[0][0] if len(parents) == 1 else None
+
+            metadata = document_row["metadata_json"] or {}
+            override = dict(metadata.get("user_override") or {})
+            changed_subject = metadata.get("subject_id") != body.subject_id
+            effective_chapter_id = (body.chapter_id if "chapter_id" in body.model_fields_set else
+                                    None if changed_subject else metadata.get("chapter_id"))
+            if changed_subject:
+                override.pop("teaching_unit_id", None)
+                override.pop("chapter_id", None)
+            override["subject_id"] = body.subject_id
+            updated = {**metadata, "user_override": override, "subject_id": body.subject_id,
+                       "match": {"subject_id": body.subject_id, "teaching_unit_id": teaching_unit_id,
+                                 "chapter_id": effective_chapter_id,
+                                 "confidence": 1.0, "confirmed": True}}
+            if teaching_unit_id:
+                override["teaching_unit_id"] = teaching_unit_id
+                updated["teaching_unit_id"] = teaching_unit_id
+            else:
+                override.pop("teaching_unit_id", None)
+                updated.pop("teaching_unit_id", None)
+            if "chapter_id" in body.model_fields_set:
+                override["chapter_id"] = body.chapter_id
+            if effective_chapter_id is None:
+                updated.pop("chapter_id", None)
+            else:
+                updated["chapter_id"] = effective_chapter_id
+            db.execute(update(documents).where(documents.c.id == document_id).values(metadata_json=updated))
+        return {"document_id": document_id, "subject_id": body.subject_id,
+                "teaching_unit_id": teaching_unit_id, "chapter_id": effective_chapter_id,
+                "confirmed": True}
 
     @api.get("/documents/{document_id}")
     def document(request: Request, document_id: str):
@@ -471,10 +570,14 @@ def create_app(settings=None, components=None):
             if not ctx.consent.allowed(source, "read"):
                 raise HTTPException(403, "Academic import consent required")
             result = ctx.pipeline.import_academics(ctx.connection_ids[source], items, dry_run)
+        reconciliation = None
+        if not dry_run and any(item["status"] != "error" for item in result):
+            reconciliation = ctx.reconcile_academic_documents(source)
         status = 422 if not result or all(item["status"] == "error" for item in result) else (
             200 if dry_run or any(item["status"] == "error" for item in result) else 201
         )
-        return JSONResponse(status_code=status, content={"results": result, "dry_run": dry_run})
+        return JSONResponse(status_code=status, content={"results": result, "dry_run": dry_run,
+                                                          "document_reconciliation": reconciliation})
 
     @api.get("/availability")
     def list_availability(request: Request, limit: Limit = 50, cursor: str | None = None):

@@ -13,9 +13,11 @@ from ..contracts.sync import SourceSyncReport
 from .auth import now
 from .calendar import interval_time
 from .database import LOCAL_USER, connections, new_id, runs
+from .drive_scope import drive_document_in_scope
 from .etl import count
 
 logger = logging.getLogger(__name__)
+CHECKPOINT_CURSORS_KEY = "_checkpoint_cursors"
 
 
 class ResumeUnavailable(ValueError):
@@ -23,12 +25,14 @@ class ResumeUnavailable(ValueError):
 
 
 class SyncEngine:
-    def __init__(self, engine, pipeline, auth, connectors, concurrency, validate_local_path=None):
+    def __init__(self, engine, pipeline, auth, connectors, concurrency, validate_local_path=None,
+                 reconcile_academic_documents=None):
         self.engine = engine
         self.pipeline = pipeline
         self.auth = auth
         self.connectors = connectors
         self.validate_local_path = validate_local_path
+        self.reconcile_academic_documents = reconcile_academic_documents
         self.dispatch = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sync-job")
         self.workers = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="sync-source")
         self.active_lock = Lock()
@@ -40,7 +44,7 @@ class SyncEngine:
                 status="interrupted", finished_at=now(),
             ))
 
-    def submit(self, scope, key=None, automatic=False):
+    def submit(self, scope, key=None, automatic=False, initial_cursors=None):
         if scope.source == SourceKind.LOCAL and scope.folder_id and self.validate_local_path:
             path = self.validate_local_path(scope.folder_id)
             scope = scope.model_copy(update={"folder_id": str(path)})
@@ -60,7 +64,7 @@ class SyncEngine:
             db.execute(insert(runs).values(id=job, user_id=LOCAL_USER, status="queued", scope=payload,
                                           report={}, started_at=now(), idempotency_key=key))
             cancelled = self.active[job] = Event()
-        self.dispatch.submit(self._run, job, scope, automatic, cancelled)
+        self.dispatch.submit(self._run, job, scope, automatic, cancelled, dict(initial_cursors or {}))
         return job
 
     def resume(self, job, source=None):
@@ -72,6 +76,7 @@ class SyncEngine:
         if prior is None:
             raise LookupError("Unknown sync job")
         eligible = [SourceKind(name) for name, report in prior.report.items()
+                    if name in SourceKind._value2member_map_
                     if report.get("next_action") == "reauthorize"]
         if source is None and len(eligible) == 1:
             source = eligible[0]
@@ -83,7 +88,46 @@ class SyncEngine:
             if self.auth.status(source) != ConnectionStatus.CONNECTED:
                 raise ResumeUnavailable("Reauthorize the source before resuming")
             scope = SyncScope.model_validate(prior.scope | {"source": source})
-        return self.submit(scope, key=f"reauth-resume:{job}:{source.value}")
+        cursors = prior.report.get(CHECKPOINT_CURSORS_KEY, {})
+        cursor = cursors.get(source.value) if isinstance(cursors, dict) else None
+        return self.submit(scope, key=f"reauth-resume:{job}:{source.value}",
+                           initial_cursors={source.value: cursor} if cursor else None)
+
+    def retry(self, job, source=None):
+        """Replay a failed or interrupted scope idempotently without deleting prior data."""
+        with self.engine.connect() as db:
+            prior = db.execute(select(runs.c.status, runs.c.scope, runs.c.report).where(
+                runs.c.id == job, runs.c.user_id == LOCAL_USER,
+            )).one_or_none()
+        if prior is None:
+            raise LookupError("Unknown sync job")
+        if prior.status not in {"interrupted", "partial", "failed", "cancelled"}:
+            raise ResumeUnavailable("Only interrupted or unsuccessful sync jobs can be retried")
+        original = SyncScope.model_validate(prior.scope)
+        if source is not None and original.source not in (None, source):
+            raise ResumeUnavailable("Selected source is outside the original sync scope")
+        if source is not None:
+            targets = [source]
+            scope = original.model_copy(update={"source": source})
+        elif original.source is not None:
+            targets = [original.source]
+            scope = original
+        else:
+            reported = [SourceKind(name) for name in prior.report if name in SourceKind._value2member_map_]
+            targets = reported or [kind for kind in self.connectors if kind != SourceKind.LOCAL]
+            if not targets:
+                raise ResumeUnavailable("The interrupted job has no retryable source")
+            scope = original
+        for target in targets:
+            if not self.auth.consent.allowed(target, "read"):
+                raise ResumeUnavailable(f"Read consent is required for {target.value}")
+            if self.auth.status(target) != ConnectionStatus.CONNECTED:
+                raise ResumeUnavailable(f"Reauthorize {target.value} before retrying this job")
+        # No idempotency key: each explicit retry is a new, auditable attempt.
+        cursor_map = prior.report.get(CHECKPOINT_CURSORS_KEY, {})
+        cursors = {target.value: cursor_map[target.value] for target in targets
+                   if isinstance(cursor_map, dict) and cursor_map.get(target.value)}
+        return self.submit(scope, initial_cursors=cursors)
 
     def cancel(self, job):
         with self.active_lock:
@@ -101,14 +145,29 @@ class SyncEngine:
         with self.engine.begin() as db:
             db.execute(update(runs).where(runs.c.id == job).values(**values))
 
-    def _run(self, job, scope, automatic, cancelled):
+    def _run(self, job, scope, automatic, cancelled, initial_cursors=None):
         reports = {}
+        checkpoint_cursors = dict(initial_cursors or {})
         lock = Lock()
+
+        def saved_report():
+            result = dict(reports)
+            if checkpoint_cursors:
+                result[CHECKPOINT_CURSORS_KEY] = dict(checkpoint_cursors)
+            return result
 
         def progress(report):
             with lock:
                 reports[report.source] = report.model_dump(mode="json")
-                self._update(job, report=dict(reports))
+                self._update(job, report=saved_report())
+
+        def checkpoint(source, cursor):
+            with lock:
+                if cursor:
+                    checkpoint_cursors[source.value] = cursor
+                else:
+                    checkpoint_cursors.pop(source.value, None)
+                self._update(job, report=saved_report())
 
         try:
             self._update(job, status="running")
@@ -118,7 +177,10 @@ class SyncEngine:
             sources = [source for source in requested
                        if not automatic or (source != SourceKind.LOCAL and
                                             self.auth.consent.allowed(source, "automatic_sync"))]
-            futures = [self.workers.submit(self._source, source, scope, cancelled, progress, automatic) for source in sources]
+            futures = [self.workers.submit(
+                self._source, source, scope, cancelled, progress, automatic,
+                checkpoint_cursors.get(source.value), checkpoint,
+            ) for source in sources]
             for future in futures:
                 future.result()
             succeeded = all(report["status"] == "succeeded" for report in reports.values())
@@ -131,8 +193,8 @@ class SyncEngine:
             with self.active_lock:
                 self.active.pop(job, None)
 
-    def _source(self, source, scope, cancelled, progress, automatic):
-        report = SourceSyncReport(source=source, status="running")
+    def _source(self, source, scope, cancelled, progress, automatic, initial_cursor=None, checkpoint=None):
+        report = SourceSyncReport(source=source, status="running", stage="validating_authentication")
         progress(report)
         try:
             connector = self.connectors.get(source)
@@ -152,7 +214,23 @@ class SyncEngine:
                     if validation.status != ConnectionStatus.CONNECTED:
                         self._report_auth(report, validation)
             if report.status == "running":
-                self._pages(connector, source, scope, cancelled, report, progress, automatic)
+                self._pages(connector, source, scope, cancelled, report, progress, automatic,
+                            initial_cursor, checkpoint)
+            if (source == SourceKind.PAMPLEMOUSSE and report.status in {"succeeded", "partial"}
+                    and self.reconcile_academic_documents is not None):
+                try:
+                    reconciled = self.reconcile_academic_documents(source)
+                    for name, value in reconciled.items():
+                        report.metrics[f"catalog_documents_{name}"] = value
+                    if reconciled.get("errors"):
+                        report.errors += reconciled["errors"]
+                        report.error_codes = sorted(set(report.error_codes + ["catalog_reconciliation_error"]))
+                        report.status = "partial"
+                except Exception as exc:
+                    logger.warning("Catalog reconciliation failed (exception_type=%s)", type(exc).__name__)
+                    report.errors += 1
+                    report.error_codes = sorted(set(report.error_codes + ["catalog_reconciliation_error"]))
+                    report.status = "partial"
         except (ReauthenticationRequired, ServiceAccessDenied) as exc:
             self._report_auth(report, self.auth.failure_result(exc))
         except ProfileBusy:
@@ -168,6 +246,17 @@ class SyncEngine:
     def _report_auth(report, result):
         report.connection_status = result.status
         report.auth_reason = result.reason
+        issue_codes = {
+            ConnectionStatus.REAUTH_REQUIRED: "reauthorization_required",
+            ConnectionStatus.ACCESS_DENIED: "source_access_denied",
+            ConnectionStatus.NOT_CONFIGURED: "source_not_configured",
+            ConnectionStatus.UNAVAILABLE: "source_unavailable",
+            ConnectionStatus.ERROR: "source_validation_error",
+        }
+        code = issue_codes.get(result.status)
+        if code:
+            report.errors += 1
+            report.error_codes = sorted(set(report.error_codes + [code]))
         if result.status == ConnectionStatus.REAUTH_REQUIRED:
             report.status = "authorization_required"
             report.next_action = "reauthorize"
@@ -181,18 +270,22 @@ class SyncEngine:
             report.status = "unavailable" if result.status == ConnectionStatus.UNAVAILABLE else "failed"
             report.next_action = "retry_validation"
 
-    def _pages(self, connector, source, scope, cancelled, report, progress, automatic):
+    def _pages(self, connector, source, scope, cancelled, report, progress, automatic,
+               initial_cursor=None, checkpoint=None):
         connection_id = self.auth.connection_ids[source]
-        selective = bool(scope.subject_id or scope.folder_id or scope.academic_year
+        selective = bool(scope.subject_id or scope.folder_id or scope.academic_year or scope.retry_failed
+                         or scope.pamplemousse_scope
                          or scope.window_start or scope.discovery_only)
         window = (
             interval_time(scope.window_start.isoformat(), None, None),
             interval_time(scope.window_end.isoformat(), None, None),
         ) if scope.window_start else None
         with self.engine.connect() as db:
-            cursor = None if scope.full or selective else db.scalar(select(connections.c.cursor).where(
-                connections.c.id == connection_id,
-            ))
+            cursor = initial_cursor
+            if cursor is None:
+                cursor = None if scope.full or selective else db.scalar(select(connections.c.cursor).where(
+                    connections.c.id == connection_id,
+                ))
         def authorized():
             return self.auth.consent.allowed(source, "read") and (
                 not automatic or self.auth.consent.allowed(source, "automatic_sync")
@@ -203,16 +296,23 @@ class SyncEngine:
         snapshot = None
         snapshot_ids = set()
         completed_courses = set()
+        report.stage = "listing"
+        progress(report)
         report.metrics.update(dict.fromkeys((
             "documents_discovered", "documents_downloaded", "documents_parsed", "documents_partially_parsed",
             "documents_unsupported", "documents_persisted", "documents_excluded", "parsing_failures",
             "chunks_generated", "announcements_discovered", "assignments_discovered",
             "busy_intervals_written", "intervals_updated", "intervals_cancelled",
         ), 0))
+        if scope.retry_failed:
+            report.metrics["failed_resources_retried"] = 0
+            report.metrics["retry_failed_skipped"] = 0
         while not cancelled.is_set() and authorized():
             if cursor in seen or len(seen) >= 10000:
                 raise ValueError("Invalid connector pagination")
             seen.add(cursor)
+            errors_before_page = report.errors
+            warnings_before_page = len(report.warning_codes)
             with self.auth.locks[source]:
                 if not authorized():
                     break
@@ -222,6 +322,10 @@ class SyncEngine:
                     source, self._retry, cancelled, connector.list_changes, scope, cursor,
                 ))
             marker = page.calendar_snapshot
+            report.page_number += 1
+            report.items_remaining_in_page = len(page.items)
+            report.stage = "processing"
+            progress(report)
             window_verified = window is not None and marker is not None and (
                 marker.starts_at == scope.window_start and marker.ends_at == scope.window_end
             )
@@ -241,6 +345,15 @@ class SyncEngine:
             for record in page.items:
                 if cancelled.is_set() or not authorized():
                     break
+                if (source == SourceKind.ENSORA_DRIVE and isinstance(record, Document)
+                        and not drive_document_in_scope(record.model_dump(mode="json"),
+                                                        record.provenance.external_id)):
+                    count(report.metrics, "documents_excluded")
+                    report.warning_codes = sorted(set(report.warning_codes + ["drive_scope_excluded"]))
+                    if report.items_remaining_in_page is not None:
+                        report.items_remaining_in_page = max(0, report.items_remaining_in_page - 1)
+                    progress(report)
+                    continue
                 if snapshot is not None and isinstance(record, CalendarEvent):
                     if not record.provenance.external_id.startswith(snapshot.external_id_prefix):
                         checkpoint_blocked = True
@@ -254,6 +367,11 @@ class SyncEngine:
                         if "academic_year_unknown" not in report.error_codes:
                             report.error_codes.append("academic_year_unknown")
                             report.errors += 1
+                    continue
+                if scope.retry_failed and not isinstance(record, Document):
+                    count(report.metrics, "retry_failed_skipped")
+                    if report.items_remaining_in_page is not None:
+                        report.items_remaining_in_page = max(0, report.items_remaining_in_page - 1)
                     continue
                 if window and snapshot is None:
                     continue
@@ -274,9 +392,18 @@ class SyncEngine:
                     count(report.metrics, "documents_discovered")
                     if record.resource_kind == "announcement":
                         count(report.metrics, "announcements_discovered")
+                    if scope.retry_failed:
+                        if not self.pipeline.download_failed(connection_id, record.provenance.external_id):
+                            count(report.metrics, "retry_failed_skipped")
+                            if report.items_remaining_in_page is not None:
+                                report.items_remaining_in_page = max(0, report.items_remaining_in_page - 1)
+                            progress(report)
+                            continue
+                        count(report.metrics, "failed_resources_retried")
                 if record.kind == "assessment" and (record.format == "assignment" or record.assessment_kind == "assignment"):
                     count(report.metrics, "assignments_discovered")
                 if scope.discovery_only:
+                    report.items_remaining_in_page = max(0, (report.items_remaining_in_page or 0) - 1)
                     continue
                 try:
                     with self.auth.locks[source]:
@@ -294,8 +421,13 @@ class SyncEngine:
                 except Exception:
                     checkpoint_blocked = True
                     report.errors += 1
-                    if "record_failure" not in report.error_codes:
-                        report.error_codes.append("record_failure")
+                    code = "record_failure"
+                    if isinstance(record, Document):
+                        code = self.pipeline.download_error_code(connection_id, record.provenance.external_id) or code
+                    report.error_codes = sorted(set(report.error_codes + [code]))
+                finally:
+                    if report.items_remaining_in_page is not None:
+                        report.items_remaining_in_page = max(0, report.items_remaining_in_page - 1)
                 progress(report)
             if cancelled.is_set() or not authorized():
                 break
@@ -305,7 +437,10 @@ class SyncEngine:
                 report.error_codes.append("calendar_window_unverified")
                 report.errors += 1
             if page.complete and (not selective or snapshot is not None) and not checkpoint_blocked:
-                changes = {} if selective else {"last_success_at": now()}
+                # Freshness is independent from cursor scope: a fully completed
+                # academic-year sync still counts as a successful source refresh.
+                changes = ({"last_success_at": now()}
+                           if not report.errors and scope.pamplemousse_scope is None else {})
                 resume = page.resume_cursor or page.next_cursor
                 if not selective and (resume is not None or scope.full or snapshot is not None):
                     changes["cursor"] = resume
@@ -320,8 +455,19 @@ class SyncEngine:
                         if changes:
                             db.execute(update(connections).where(connections.c.id == connection_id).values(**changes))
             if page.complete:
+                if checkpoint is not None and not report.errors and not report.warning_codes:
+                    checkpoint(source, None)
+                report.stage = "complete"
                 report.status = "partial" if report.errors else "succeeded"
                 return
+            if (checkpoint is not None and page.next_cursor is not None and not checkpoint_blocked
+                    and report.errors == errors_before_page
+                    and len(report.warning_codes) == warnings_before_page):
+                # All source facts on this page are durable before its opaque continuation
+                # cursor becomes the recovery point for an interrupted/retried job.
+                checkpoint(source, page.next_cursor)
+            report.stage = "listing"
+            report.items_remaining_in_page = 0
             cursor = page.next_cursor
         report.status = "cancelled" if cancelled.is_set() else "authorization_required"
 

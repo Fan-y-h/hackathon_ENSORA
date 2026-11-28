@@ -111,7 +111,7 @@ class DownloadSizeLimitError(ValueError):
         self.limit_bytes = limit_bytes
 
 
-_ACADEMIC_YEAR_RE = re.compile(r"\b(20\d{2})\s*[-/–]\s*(20\d{2})\b")
+_ACADEMIC_YEAR_RE = re.compile(r"\b(20\d{2})\s*[-/–]\s*(20\d{2}|\d{2})\b")
 _FORBIDDEN_MOODLE_PATHS: tuple[str, ...] = (
     "/user/",
     "/message/",
@@ -187,7 +187,17 @@ def _extract_academic_year_hint(text: str | None) -> str | None:
         return None
     m = _ACADEMIC_YEAR_RE.search(text)
     if m:
-        return f"{m.group(1)}-{m.group(2)}"
+        y1_str, y2_str = m.group(1), m.group(2)
+        y1 = int(y1_str)
+        if len(y2_str) == 2:
+            y2 = 2000 + int(y2_str)
+            if y2 != y1 + 1:
+                return None
+            return f"{y1}-{y2}"
+        y2 = int(y2_str)
+        if y2 == y1 + 1:
+            return f"{y1}-{y2}"
+        return f"{y1_str}-{y2_str}"
     return None
 
 
@@ -428,13 +438,21 @@ class _MoodleCourseListHTMLParser(HTMLParser):
         if not is_same_origin(full_url, self._base_url):
             return
         parsed = urlparse(full_url)
+        cid: str | None = None
         if "/course/view.php" in parsed.path:
             qs = parse_qs(parsed.query)
             cid = (qs.get("id") or [None])[0]
-            if cid and cid.isdigit():
-                self._current_href = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?id={cid}"
-                self._fallback_title = (attr_map.get("title") or attr_map.get("aria-label") or "").strip() or None
-                self._text_buf = []
+        elif "/user/view.php" in parsed.path:
+            # Moodle /user/profile.php lists ALL enrolled courses under "Profils de cours"
+            # as `/user/view.php?id=<userid>&course=<courseid>` (skip site course id=1).
+            qs = parse_qs(parsed.query)
+            cand = (qs.get("course") or [None])[0]
+            if cand and cand.isdigit() and cand != "1":
+                cid = cand
+        if cid and cid.isdigit():
+            self._current_href = urljoin(self._base_url, f"course/view.php?id={cid}")
+            self._fallback_title = (attr_map.get("title") or attr_map.get("aria-label") or "").strip() or None
+            self._text_buf = []
 
     def handle_data(self, data: str) -> None:
         if self._in_category:
@@ -1095,6 +1113,186 @@ class MoodleConnector(SourceConnector):
 
         return AuthState.ERROR
 
+    def _cookie_session_fetch_html(self, url: str) -> str | None:
+        """Fast authenticated HTML fetch using persisted Moodle cookies (no Chromium launch).
+
+        Returns None when no persisted cookies exist or the session requires Playwright/CAS reauth.
+        Enforces strict same-origin pre-follow redirect validation and login-HTML detection.
+        """
+        cookies = self._load_persisted_moodle_cookies()
+        if not cookies:
+            return None
+
+        session = requests.Session()
+        session.headers.update({"User-Agent": DEFAULT_ENSAI_USER_AGENT})
+        for c in cookies:
+            session.cookies.set(
+                str(c["name"]),
+                str(c["value"]),
+                domain=str(c.get("domain") or "").lstrip(".") or None,
+                path=str(c.get("path") or "/"),
+            )
+
+        current_url = url
+        max_redirects = 6
+        try:
+            for hop in range(max_redirects + 1):
+                if not is_same_origin(current_url, self._config.moodle_base_url):
+                    if is_same_origin(current_url, self._config.cas_login_url):
+                        return None
+                    raise PermissionDeniedError(
+                        f"Refused to navigate outside Moodle origin: {sanitize_url_for_logs(current_url)}"
+                    )
+                resp = session.get(
+                    current_url,
+                    timeout=self._config.request_timeout_sec,
+                    allow_redirects=False,
+                )
+                status = resp.status_code
+                if status in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("Location") or resp.headers.get("location")
+                    if not location:
+                        return None
+                    next_url = urljoin(current_url, str(location))
+                    if is_same_origin(next_url, self._config.cas_login_url):
+                        return None
+                    if not is_same_origin(next_url, self._config.moodle_base_url):
+                        raise PermissionDeniedError(
+                            f"Blocked cross-origin redirect before follow: {sanitize_url_for_logs(next_url)}"
+                        )
+                    if "/login/index.php" in urlparse(next_url).path.lower():
+                        return None
+                    if hop >= max_redirects:
+                        return None
+                    current_url = next_url
+                    continue
+                if status != 200:
+                    return None
+                html_text = resp.text
+                if self._looks_like_login_html(html_text, current_url):
+                    return None
+                return html_text
+            return None
+        except PermissionDeniedError:
+            raise
+        except Exception:
+            return None
+        finally:
+            session.close()
+
+    @staticmethod
+    def _extract_sesskey_from_html(html_text: str) -> str | None:
+        for pat in (
+            r'"sesskey"\s*:\s*"([A-Za-z0-9_-]{6,64})"',
+            r'sesskey=([A-Za-z0-9_-]{6,64})',
+        ):
+            m = re.search(pat, html_text)
+            if m:
+                return m.group(1)
+        return None
+
+    def _discover_courses_cookie_http(self) -> tuple[list[MoodleCourseSummary], list[str]]:
+        """Fast cookie-backed read-only course discovery via /user/profile.php + Moodle AJAX.
+
+        Avoids Playwright /my/courses.php timeouts and retrieves ALL enrolled courses even
+        when block_myoverview has a UI filter active. Returns (courses, sources_used).
+        """
+        cookies = self._load_persisted_moodle_cookies()
+        if not cookies:
+            return [], []
+
+        merged: dict[str, MoodleCourseSummary] = {}
+        sources_used: list[str] = []
+        sesskey: str | None = None
+
+        # 1. Static /user/profile.php lists EVERY enrolled course under "Profils de cours"
+        for rel, tag in (("user/profile.php", "cookie_profile"), ("my/courses.php", "cookie_my_courses")):
+            html = self._cookie_session_fetch_html(urljoin(self._config.moodle_base_url, rel))
+            if not html:
+                continue
+            if not sesskey:
+                sesskey = self._extract_sesskey_from_html(html)
+            found = parse_moodle_dashboard_html(html, self._config.moodle_base_url)
+            if found:
+                sources_used.append(tag)
+                for c in found:
+                    if c.course_id not in merged:
+                        merged[c.course_id] = c
+
+        # 2. Read-only core Moodle AJAX query using the authenticated sesskey & cookies
+        if sesskey:
+            session = requests.Session()
+            session.headers.update(
+                {
+                    "User-Agent": DEFAULT_ENSAI_USER_AGENT,
+                    "Content-Type": "application/json",
+                }
+            )
+            for c in cookies:
+                session.cookies.set(
+                    str(c["name"]),
+                    str(c["value"]),
+                    domain=str(c.get("domain") or "").lstrip(".") or None,
+                    path=str(c.get("path") or "/"),
+                )
+            ajax_url = urljoin(
+                self._config.moodle_base_url,
+                f"lib/ajax/service.php?sesskey={sesskey}&info=core_course_get_enrolled_courses_by_timeline_classification",
+            )
+            try:
+                ajax_found_any = False
+                for classification in ("all", "allincludinghidden", "inprogress", "future", "past"):
+                    payload = [
+                        {
+                            "index": 0,
+                            "methodname": "core_course_get_enrolled_courses_by_timeline_classification",
+                            "args": {
+                                "offset": 0,
+                                "limit": 0,
+                                "classification": classification,
+                                "sort": "fullname",
+                            },
+                        }
+                    ]
+                    resp = session.post(
+                        ajax_url,
+                        json=payload,
+                        timeout=self._config.request_timeout_sec,
+                        allow_redirects=False,
+                    )
+                    if resp.status_code != 200:
+                        continue
+                    data = resp.json()
+                    parsed = parse_moodle_ajax_courses(data, self._config.moodle_base_url)
+                    if parsed:
+                        ajax_found_any = True
+                        for ac in parsed:
+                            if ac.course_id not in merged:
+                                merged[ac.course_id] = ac
+                            else:
+                                prev = merged[ac.course_id]
+                                merged[ac.course_id] = MoodleCourseSummary(
+                                    course_id=ac.course_id,
+                                    title=prev.title or ac.title,
+                                    url=prev.url or ac.url,
+                                    shortname=ac.shortname or prev.shortname,
+                                    subject_hint=prev.subject_hint or ac.subject_hint,
+                                    category=ac.category or prev.category,
+                                    summary=ac.summary or prev.summary,
+                                    academic_year=prev.academic_year or ac.academic_year,
+                                    archived=prev.archived or ac.archived,
+                                )
+                        if classification in ("all", "allincludinghidden"):
+                            break
+                if ajax_found_any:
+                    sources_used.append("cookie_ajax")
+            except Exception:
+                pass
+            finally:
+                session.close()
+
+        return list(merged.values()), sources_used
+
     def _fetch_html_page(
         self,
         url: str,
@@ -1112,6 +1310,10 @@ class MoodleConnector(SourceConnector):
                 lambda: self._page_fetcher(url),
                 max_retries=self._config.max_retries,
             )
+        if self._auth._context_factory is None:
+            fast_html = self._cookie_session_fetch_html(url)
+            if fast_html is not None:
+                return fast_html
         auto_allowed = (
             self._config.ensai_allow_automated_credential_submit
             if allow_auto_reauth is None
@@ -1290,26 +1492,58 @@ class MoodleConnector(SourceConnector):
         allow_auto_reauth: bool | None = None,
         max_pages: int = 10,
     ) -> list[MoodleCourseSummary]:
-        """Discover enrolled Moodle courses on `my/courses.php` handling JS rendering & pagination.
+        """Discover ALL enrolled Moodle courses across cookie-HTTP, AJAX, `my/courses.php`, and `user/profile.php`.
 
-        Strictly read-only: waits for Moodle's dynamic course overview list, optionally steps
-        through pagination controls inside `block_myoverview`, and falls back to `my/` or
-        `user/profile.php` only if `my/courses.php` renders no course links.
+        Strictly read-only: merges course lists across Moodle AJAX (`classification="all"` +
+        fallbacks), `block_myoverview` DOM pagination, and `/user/profile.php` static enrolled
+        course profiles so UI filters or `/my/courses.php` timeouts never truncate discovery to 1 course.
         """
         my_courses_url = urljoin(self._config.moodle_base_url, "my/courses.php")
+        self._last_discovery_diag = {
+            "discovery_sources_used": [],
+            "discovery_incomplete": False,
+            "my_courses_timeout": False,
+        }
         if self._page_fetcher is not None or self._auth._context_factory is not None:
-            # Deterministic/injected page fetcher or fake context path
-            for rel_path in ("my/courses.php", "my/", "user/profile.php"):
+            # Deterministic/injected page fetcher or fake context path:
+            # merge across my/courses.php, user/profile.php, and my/ so a single-link page never truncates.
+            merged_inj: dict[str, MoodleCourseSummary] = {}
+            for rel_path, tag in (
+                ("my/courses.php", "injected_my_courses"),
+                ("user/profile.php", "injected_profile"),
+                ("my/", "injected_my"),
+            ):
                 candidate_url = urljoin(self._config.moodle_base_url, rel_path)
-                page_html = self._fetch_html_page(
-                    candidate_url,
-                    interactive=interactive,
-                    allow_auto_reauth=allow_auto_reauth,
-                )
+                try:
+                    page_html = self._fetch_html_page(
+                        candidate_url,
+                        interactive=interactive,
+                        allow_auto_reauth=allow_auto_reauth,
+                    )
+                except AuthenticationRequiredError:
+                    if merged_inj:
+                        break
+                    raise
+                except Exception:
+                    if rel_path == "my/courses.php":
+                        self._last_discovery_diag["my_courses_timeout"] = True
+                    continue
                 found = parse_moodle_dashboard_html(page_html, self._config.moodle_base_url)
                 if found:
-                    return found
-            return []
+                    self._last_discovery_diag["discovery_sources_used"].append(tag)
+                    for c in found:
+                        if c.course_id not in merged_inj:
+                            merged_inj[c.course_id] = c
+                if len(merged_inj) >= 2 and rel_path == "my/courses.php":
+                    break
+            return list(merged_inj.values())
+
+        # Fast path: cookie-backed /user/profile.php + core Moodle AJAX avoids launching Chromium
+        # AND protects against Playwright navigation timeouts on /my/courses.php.
+        cookie_courses, cookie_sources = self._discover_courses_cookie_http()
+        if cookie_courses and ("cookie_ajax" in cookie_sources or len(cookie_courses) >= 2):
+            self._last_discovery_diag["discovery_sources_used"] = list(cookie_sources)
+            return cookie_courses
 
         auto_allowed = (
             self._config.ensai_allow_automated_credential_submit
@@ -1320,8 +1554,10 @@ class MoodleConnector(SourceConnector):
 
         for attempt in range(2):
             profile_dir = self._auth.profile_dir_for(SourceKind.MOODLE)
-            courses_by_id: dict[str, MoodleCourseSummary] = {}
+            courses_by_id: dict[str, MoodleCourseSummary] = {c.course_id: c for c in cookie_courses}
             ajax_courses_by_id: dict[str, MoodleCourseSummary] = {}
+            sources_used: list[str] = list(cookie_sources)
+            my_courses_timed_out = False
             with self._auth.open_context(SourceKind.MOODLE, headless=True) as context:
                 page = context.pages[0] if context.pages else context.new_page()
 
@@ -1346,16 +1582,22 @@ class MoodleConnector(SourceConnector):
                     except Exception:
                         pass
 
-                probe = self._auth._probe_on_page(
-                    page,
-                    SourceKind.MOODLE,
-                    profile_dir=profile_dir,
-                    allow_myensai_fallback=False,
-                    target_url=my_courses_url,
-                    context=context,
-                    phase="moodle_discover_courses",
-                )
-                if not probe.authenticated:
+                probe = None
+                try:
+                    probe = self._auth._probe_on_page(
+                        page,
+                        SourceKind.MOODLE,
+                        profile_dir=profile_dir,
+                        allow_myensai_fallback=False,
+                        target_url=my_courses_url,
+                        context=context,
+                        phase="moodle_discover_courses",
+                    )
+                except TransientSourceError:
+                    my_courses_timed_out = True
+                    self._last_discovery_diag["my_courses_timeout"] = True
+
+                if probe is not None and not probe.authenticated:
                     if not probe.origin_verified:
                         raise PermissionDeniedError(probe.detail)
                     if attempt == 0 and can_reauth:
@@ -1368,98 +1610,122 @@ class MoodleConnector(SourceConnector):
                             continue
                     raise AuthenticationRequiredError(probe.detail)
 
-                self._auth._save_session_cookies(context, profile_dir)
-                # Wait briefly for Moodle's JS course overview (`block_myoverview`) to populate
-                if hasattr(page, "wait_for_selector"):
-                    try:
-                        page.wait_for_selector('a[href*="/course/view.php?id="]', timeout=8_000)
-                    except Exception:
-                        pass
+                if probe is not None and probe.authenticated:
+                    self._auth._save_session_cookies(context, profile_dir)
+                    # Wait specifically for block_myoverview course cards (not just any sidebar link)
+                    if hasattr(page, "wait_for_selector"):
+                        for wait_sel in (
+                            '.block_myoverview [data-region="course-content"] a[href*="/course/view.php?id="]',
+                            'a[href*="/course/view.php?id="]',
+                        ):
+                            try:
+                                page.wait_for_selector(wait_sel, timeout=8_000)
+                                break
+                            except Exception:
+                                continue
 
-                # Read-only core Moodle AJAX query for ALL enrolled courses (classification="all", limit=0)
-                # using the page's own authenticated sesskey, bypassing UI pagination & grouping filters.
-                if hasattr(page, "evaluate"):
-                    try:
-                        ajax_all = page.evaluate(
-                            """async () => {
-                                const sesskey = (window.M && window.M.cfg && window.M.cfg.sesskey) || null;
-                                if (!sesskey) return null;
-                                const url = `/lib/ajax/service.php?sesskey=${encodeURIComponent(sesskey)}&info=core_course_get_enrolled_courses_by_timeline_classification`;
-                                const resp = await fetch(url, {
-                                    method: 'POST',
-                                    credentials: 'same-origin',
-                                    headers: {'Content-Type': 'application/json'},
-                                    body: JSON.stringify([{
-                                        index: 0,
-                                        methodname: 'core_course_get_enrolled_courses_by_timeline_classification',
-                                        args: {offset: 0, limit: 0, classification: 'all', sort: 'fullname', customfieldname: '', customfieldvalue: ''}
-                                    }])
-                                });
-                                if (!resp.ok) return null;
-                                return await resp.json();
-                            }"""
-                        )
-                        if ajax_all:
-                            for c in parse_moodle_ajax_courses(ajax_all, self._config.moodle_base_url):
-                                ajax_courses_by_id[c.course_id] = c
-                    except Exception:
-                        pass
-
-                # Read-only attempt to switch grouping filter to "All"/"Tout" so active courses aren't hidden
-                if hasattr(page, "locator"):
-                    for trigger_sel, option_sels in (
-                        (
-                            '.block_myoverview [id*="groupingdropdown"], .block_myoverview button[data-toggle="dropdown"]',
-                            (
-                                '.block_myoverview a[data-value="all"]',
-                                '.block_myoverview a[data-value="allincludinghidden"]',
-                                '.block_myoverview a:has-text("Tout")',
-                                '.block_myoverview a:has-text("All")',
-                            ),
-                        ),
-                    ):
+                    # Read-only core Moodle AJAX query for ALL enrolled courses with multi-classification fallback
+                    if hasattr(page, "evaluate"):
                         try:
-                            trig = page.locator(trigger_sel)
-                            if trig.count() > 0 and trig.first.is_visible():
-                                trig.first.click(timeout=2_000)
-                                for opt_sel in option_sels:
-                                    opt = page.locator(opt_sel)
-                                    if opt.count() > 0 and opt.first.is_visible():
-                                        opt.first.click(timeout=2_000)
-                                        self._auth._settle_navigation(page, timeout_ms=4_000)
-                                        break
+                            ajax_batches = page.evaluate(
+                                """async () => {
+                                    let sesskey = (window.M && window.M.cfg && window.M.cfg.sesskey) || null;
+                                    if (!sesskey) {
+                                        const html = document.documentElement ? document.documentElement.innerHTML : '';
+                                        const m = html.match(/"sesskey"\\s*:\\s*"([A-Za-z0-9_-]{6,64})"/) || html.match(/sesskey=([A-Za-z0-9_-]{6,64})/);
+                                        if (m) sesskey = m[1];
+                                    }
+                                    if (!sesskey) return [];
+                                    const out = [];
+                                    for (const cls of ['all', 'allincludinghidden', 'inprogress', 'future', 'past']) {
+                                        const url = `/lib/ajax/service.php?sesskey=${encodeURIComponent(sesskey)}&info=core_course_get_enrolled_courses_by_timeline_classification`;
+                                        const resp = await fetch(url, {
+                                            method: 'POST',
+                                            credentials: 'same-origin',
+                                            headers: {'Content-Type': 'application/json'},
+                                            body: JSON.stringify([{
+                                                index: 0,
+                                                methodname: 'core_course_get_enrolled_courses_by_timeline_classification',
+                                                args: {offset: 0, limit: 0, classification: cls, sort: 'fullname'}
+                                            }])
+                                        });
+                                        if (!resp.ok) continue;
+                                        const data = await resp.json();
+                                        out.push(data);
+                                        const first = Array.isArray(data) ? data[0] : data;
+                                        const count = first && first.data && Array.isArray(first.data.courses) ? first.data.courses.length : 0;
+                                        if ((cls === 'all' || cls === 'allincludinghidden') && count > 0) break;
+                                    }
+                                    return out;
+                                }"""
+                            )
+                            for batch_payload in ajax_batches or []:
+                                for c in parse_moodle_ajax_courses(batch_payload, self._config.moodle_base_url):
+                                    ajax_courses_by_id[c.course_id] = c
+                            if ajax_courses_by_id:
+                                sources_used.append("playwright_ajax")
                         except Exception:
                             pass
 
-                # Paginate read-only through all pages of block_myoverview
-                for _page_idx in range(max_pages):
-                    html = page.content()
-                    batch = parse_moodle_dashboard_html(html, self._config.moodle_base_url)
-                    added = 0
-                    for c in batch:
-                        if c.course_id not in courses_by_id:
-                            courses_by_id[c.course_id] = c
-                            added += 1
-                    next_clicked = False
+                    # Read-only attempt to switch grouping filter to "All"/"Tout"
                     if hasattr(page, "locator"):
-                        for sel in (
-                            '.block_myoverview [data-control="next"]:not(.disabled) a',
-                            '.block_myoverview a[aria-label*="Suivant"]',
-                            '.block_myoverview a[aria-label*="Next"]',
+                        for trigger_sel, option_sels in (
+                            (
+                                '.block_myoverview [id*="groupingdropdown"], .block_myoverview button[data-toggle="dropdown"]',
+                                (
+                                    '.block_myoverview a[data-value="all"]',
+                                    '.block_myoverview a[data-value="allincludinghidden"]',
+                                    '.block_myoverview a:has-text("Tout")',
+                                    '.block_myoverview a:has-text("All")',
+                                ),
+                            ),
                         ):
                             try:
-                                loc = page.locator(sel)
-                                if loc.count() > 0 and loc.first.is_visible():
-                                    loc.first.click(timeout=3_000)
-                                    self._auth._settle_navigation(page, timeout_ms=4_000)
-                                    next_clicked = True
-                                    break
+                                trig = page.locator(trigger_sel)
+                                if trig.count() > 0 and trig.first.is_visible():
+                                    trig.first.click(timeout=2_000)
+                                    for opt_sel in option_sels:
+                                        opt = page.locator(opt_sel)
+                                        if opt.count() > 0 and opt.first.is_visible():
+                                            opt.first.click(timeout=2_000)
+                                            self._auth._settle_navigation(page, timeout_ms=4_000)
+                                            break
                             except Exception:
-                                continue
-                    if not next_clicked or added == 0:
-                        break
+                                pass
 
-                # Merge richer AJAX metadata (category, startdate -> academic_year, shortname)
+                    # Paginate read-only through all pages of block_myoverview
+                    dom_found_any = False
+                    for _page_idx in range(max_pages):
+                        html = page.content()
+                        batch = parse_moodle_dashboard_html(html, self._config.moodle_base_url)
+                        added = 0
+                        for c in batch:
+                            dom_found_any = True
+                            if c.course_id not in courses_by_id:
+                                courses_by_id[c.course_id] = c
+                                added += 1
+                        next_clicked = False
+                        if hasattr(page, "locator"):
+                            for sel in (
+                                '.block_myoverview [data-control="next"]:not(.disabled) a',
+                                '.block_myoverview a[aria-label*="Suivant"]',
+                                '.block_myoverview a[aria-label*="Next"]',
+                            ):
+                                try:
+                                    loc = page.locator(sel)
+                                    if loc.count() > 0 and loc.first.is_visible():
+                                        loc.first.click(timeout=3_000)
+                                        self._auth._settle_navigation(page, timeout_ms=4_000)
+                                        next_clicked = True
+                                        break
+                                except Exception:
+                                    continue
+                        if not next_clicked or added == 0:
+                            break
+                    if dom_found_any:
+                        sources_used.append("playwright_myoverview")
+
+                # Merge richer AJAX metadata (category, startdate/enddate -> academic_year, shortname)
                 merged_courses: dict[str, MoodleCourseSummary] = dict(courses_by_id)
                 for cid, ac in ajax_courses_by_id.items():
                     if cid not in merged_courses:
@@ -1478,28 +1744,57 @@ class MoodleConnector(SourceConnector):
                             archived=dom_c.archived or ac.archived,
                         )
 
-                if merged_courses:
-                    return list(merged_courses.values())
-
-                # Fallback to user/profile.php or my/ ONLY if my/courses.php yielded nothing
-                for fallback_rel in ("user/profile.php", "my/"):
-                    fb_url = urljoin(self._config.moodle_base_url, fallback_rel)
-                    fb_probe = self._auth._probe_on_page(
-                        page,
-                        SourceKind.MOODLE,
-                        profile_dir=profile_dir,
-                        allow_myensai_fallback=False,
-                        target_url=fb_url,
-                        context=context,
-                        phase="moodle_discover_fallback",
-                    )
-                    if fb_probe.authenticated:
+                # ALWAYS consult /user/profile.php (static complete course list) if my/courses.php
+                # timed out, AJAX returned nothing, or <= 1 course was discovered!
+                if my_courses_timed_out or not ajax_courses_by_id or len(merged_courses) <= 1:
+                    for fallback_rel, fb_tag in (("user/profile.php", "playwright_profile"), ("my/", "playwright_my")):
+                        fb_url = urljoin(self._config.moodle_base_url, fallback_rel)
+                        try:
+                            fb_probe = self._auth._probe_on_page(
+                                page,
+                                SourceKind.MOODLE,
+                                profile_dir=profile_dir,
+                                allow_myensai_fallback=False,
+                                target_url=fb_url,
+                                context=context,
+                                phase="moodle_discover_fallback",
+                            )
+                        except TransientSourceError:
+                            self._last_discovery_diag["discovery_incomplete"] = True
+                            continue
+                        if not fb_probe.authenticated:
+                            if not fb_probe.origin_verified:
+                                raise PermissionDeniedError(fb_probe.detail)
+                            if my_courses_timed_out and not merged_courses:
+                                if attempt == 0 and can_reauth:
+                                    auth_status = self._auth.authenticate(
+                                        SourceKind.MOODLE,
+                                        interactive=interactive,
+                                        target_url=fb_url,
+                                    )
+                                    if auth_status.authenticated:
+                                        break
+                                raise AuthenticationRequiredError(fb_probe.detail)
+                            continue
+                        self._auth._save_session_cookies(context, profile_dir)
                         found = parse_moodle_dashboard_html(
                             page.content(), self._config.moodle_base_url
                         )
                         if found:
-                            return found
-                return []
+                            sources_used.append(fb_tag)
+                            for c in found:
+                                if c.course_id not in merged_courses:
+                                    merged_courses[c.course_id] = c
+                        if fallback_rel == "user/profile.php" and len(merged_courses) >= 2:
+                            break
+
+                self._last_discovery_diag["discovery_sources_used"] = sources_used
+                if my_courses_timed_out and not merged_courses:
+                    self._last_discovery_diag["discovery_incomplete"] = True
+                    raise TransientSourceError(
+                        "Moodle course discovery timed out on /my/courses.php and fallback pages returned no courses."
+                    )
+                return list(merged_courses.values())
         return []
 
     def discover_courses(
@@ -1513,9 +1808,15 @@ class MoodleConnector(SourceConnector):
         interactive: bool = False,
         allow_auto_reauth: bool | None = None,
     ) -> list[MoodleCourseSummary]:
-        """Discover enrolled courses via REST WS (when configured), fixture HTML, or Playwright session."""
+        """Discover enrolled courses via REST WS (when configured), fixture HTML, or cookie/Playwright session."""
+        self._last_discovery_diag = {
+            "discovery_sources_used": [],
+            "discovery_incomplete": False,
+            "my_courses_timeout": False,
+        }
         if dashboard_html is None and self._use_rest_mode():
             courses = self._discover_courses_rest()
+            self._last_discovery_diag["discovery_sources_used"] = ["rest"]
         elif dashboard_html is None:
             courses = self._discover_courses_playwright(
                 interactive=interactive,
@@ -1523,6 +1824,11 @@ class MoodleConnector(SourceConnector):
             )
         else:
             courses = parse_moodle_dashboard_html(dashboard_html, self._config.moodle_base_url)
+            self._last_discovery_diag["discovery_sources_used"] = ["fixture_html"]
+
+        raw_count = len(courses)
+        excluded_archived = 0
+        excluded_by_year = 0
 
         if course_ids:
             allowed = {str(cid).strip() for cid in course_ids if str(cid).strip()}
@@ -1545,15 +1851,30 @@ class MoodleConnector(SourceConnector):
             courses = matched
         else:
             if not include_archived:
-                courses = [c for c in courses if not c.archived]
+                kept = [c for c in courses if not c.archived]
+                excluded_archived = len(courses) - len(kept)
+                courses = kept
             if academic_year:
                 norm_yr = academic_year.replace("–", "-").replace("/", "-").strip()
                 # Keep courses matching the requested year OR courses with no explicit year metadata
-                courses = [
+                kept = [
                     c
                     for c in courses
                     if c.academic_year is None or c.academic_year == norm_yr
                 ]
+                excluded_by_year = len(courses) - len(kept)
+                courses = kept
+
+        unknown_year_count = sum(1 for c in courses if c.academic_year is None)
+        self._last_discovery_diag.update(
+            {
+                "courses_discovered_raw": raw_count,
+                "courses_excluded_archived": excluded_archived,
+                "courses_excluded_by_year": excluded_by_year,
+                "courses_unknown_year": unknown_year_count,
+            }
+        )
+
         if max_courses is not None and max_courses >= 0:
             courses = courses[:max_courses]
         return courses
@@ -1948,23 +2269,43 @@ class MoodleConnector(SourceConnector):
         max_courses = 1 if (single_course_first and not course_ids) else opts.get("max_courses")
         courses = all_discovered[:max_courses] if (max_courses is not None and max_courses >= 0) else all_discovered
 
+        # Distinguish durable Moodle watermark (`moodle_sync:<iso>`) from numeric page offset
         offset = int(cursor) if (cursor and cursor.isdigit()) else 0
         page_courses = courses[offset : offset + page_size]
         next_offset = offset + len(page_courses)
         complete = next_offset >= len(courses)
         next_cursor = None if complete else str(next_offset)
+        sync_mode = (
+            "full"
+            if opts.get("full")
+            else (
+                "selective"
+                if (course_ids or academic_year)
+                else ("incremental" if (known_versions or (cursor and cursor.startswith("moodle_sync:"))) else "initial")
+            )
+        )
 
         records: list[SourceRecord] = []
         warnings: list[str] = []
         errors: list[str] = []
+        disc_diag = dict(getattr(self, "_last_discovery_diag", {}) or {})
         stats: dict[str, Any] = {
+            "courses_discovered_raw": disc_diag.get("courses_discovered_raw", len(all_discovered)),
             "courses_discovered": len(all_discovered),
+            "courses_excluded_archived": disc_diag.get("courses_excluded_archived", 0),
+            "courses_excluded_by_year": disc_diag.get("courses_excluded_by_year", 0),
+            "courses_unknown_year": disc_diag.get("courses_unknown_year", 0),
+            "discovery_sources_used": disc_diag.get("discovery_sources_used", []),
+            "discovery_incomplete": bool(disc_diag.get("discovery_incomplete", False)),
+            "my_courses_timeout": bool(disc_diag.get("my_courses_timeout", False)),
             "courses_traversed": 0,
             "sections_discovered": 0,
             "sections_traversed": 0,
             "folders_traversed": 0,
             "unavailable_sections_skipped": 0,
             "resources_excluded": 0,
+            "sync_mode": sync_mode,
+            "resources_unchanged_skipped": 0,
             "resources_discovered": 0,
             "html_pages_extracted": 0,
             "formats_by_extension": {},
@@ -2012,6 +2353,7 @@ class MoodleConnector(SourceConnector):
                         rec.external_id in known_versions
                         and known_versions[rec.external_id] == rec.remote_version
                     ):
+                        stats["resources_unchanged_skipped"] += 1
                         continue
                     records.append(rec)
                     stats["resources_discovered"] += 1
@@ -2036,6 +2378,24 @@ class MoodleConnector(SourceConnector):
                     )
                 )
 
+        if disc_diag.get("discovery_incomplete"):
+            warnings.append(
+                "Moodle course discovery was incomplete (timeout or fallback error occurred); "
+                "do not treat this catalog as exhaustive until retried."
+            )
+        elif disc_diag.get("my_courses_timeout"):
+            warnings.append(
+                "Moodle /my/courses.php timed out; recovered enrolled courses via fallback discovery sources."
+            )
+        if disc_diag.get("courses_excluded_by_year", 0) > 0:
+            warnings.append(
+                f"Excluded {disc_diag['courses_excluded_by_year']} Moodle course(s) due to academic_year filter."
+            )
+        if disc_diag.get("courses_excluded_archived", 0) > 0:
+            warnings.append(
+                f"Excluded {disc_diag['courses_excluded_archived']} archived Moodle course(s)."
+            )
+
         if single_course_first and not course_ids and len(all_discovered) > 1:
             warnings.append(
                 f"Single-course safety limit active ({len(all_discovered)} authorized courses discovered); "
@@ -2047,10 +2407,16 @@ class MoodleConnector(SourceConnector):
             )
 
         self.last_stats = stats
+        durable_token = (
+            f"moodle_sync:{utc_now_iso()}"
+            if (complete and not errors and not disc_diag.get("discovery_incomplete"))
+            else None
+        )
         return ChangePage(
             items=tuple(records),
             next_cursor=next_cursor,
             complete=complete,
+            sync_token=durable_token,
             warnings=tuple(warnings),
             errors=tuple(errors),
         )

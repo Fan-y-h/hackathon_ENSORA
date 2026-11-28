@@ -59,6 +59,7 @@ from ...contracts.sources import (
     TeachingUnit,
 )
 from ...core.runtime import Components
+from ...core.drive_scope import ENSORA_DRIVE_ALLOWED_TOP_LEVEL_FOLDERS, folder_scope
 from ...core.settings import Settings
 from .auth.ensai import BrowserProfileLockError, EnsaiAuthAdapter
 from .auth.google_oauth import GoogleOAuthAdapter
@@ -95,6 +96,7 @@ from .resolution.entity_resolver import AcademicEntityResolver, CanonicalSubject
 logger = logging.getLogger(__name__)
 
 MAX_PAGE_CACHE_ENTRIES = 500
+DRIVE_STREAMING_PAGE_SIZE = 25
 
 
 class RecordConversionError(ValueError):
@@ -248,6 +250,13 @@ def _to_codex_auth_result(
             reason="service_access_denied",
             session_state="unknown" if rest_mode else "active",
             service_access="denied",
+        )
+    if meta.get("errorcode") == "transient_failure":
+        return AuthenticationResult(
+            status=ConnectionStatus.UNAVAILABLE,
+            reason="transient_failure",
+            session_state="unknown",
+            service_access="unknown",
         )
     return AuthenticationResult(
         status=ConnectionStatus.ERROR,
@@ -922,11 +931,13 @@ class CodexGoogleAuthBridge(SourceAuthenticationAdapter):
         self._oauth.disconnect(revoke_remote=True)
 
 
-def _load_active_drive_documents(db_path: Path) -> dict[str, str] | None:
+def _load_active_drive_documents(db_path: Path) -> dict[str, dict[str, str | None]] | None:
     """Read-only SQLite lookup of currently active Ensora Drive documents for root reconciliation.
 
-    Returns `{external_id: title}` (including `{}` when zero Drive docs are currently active),
-    or `None` if no database/table baseline is available.
+    Returns `{external_id: {"title": title, "folder": folder_path}}` (including `{}` when zero
+    Drive docs are currently active), or `None` if no database/table baseline is available.
+    Preserving `folder` ensures reconciled tombstones for previously imported Global documents
+    retain their original folder provenance when excluded non-destructively.
     """
     if not db_path.is_file():
         return None
@@ -939,16 +950,84 @@ def _load_active_drive_documents(db_path: Path) -> dict[str, str] | None:
                 return None
             rows = conn.execute(
                 """
-                SELECT d.external_id, json_extract(d.metadata_json, '$.title')
+                SELECT
+                    d.external_id,
+                    json_extract(d.metadata_json, '$.title'),
+                    json_extract(d.metadata_json, '$.provenance.folder')
                 FROM documents d
                 JOIN connections c ON c.id = d.connection_id
                 WHERE c.source = 'ensora_drive'
                   AND COALESCE(json_extract(d.metadata_json, '$.access_status'), 'active') = 'active'
                 """
             ).fetchall()
-            return {str(ext_id): str(title or ext_id) for ext_id, title in rows}
+            return {
+                str(ext_id): {
+                    "title": str(title or ext_id),
+                    "folder": str(folder) if folder is not None else None,
+                }
+                for ext_id, title, folder in rows
+                if folder_scope(folder) == "allowed"
+            }
     except Exception:
         return None
+
+
+def _load_known_document_revisions(db_path: Path, source_value: str) -> dict[str, str]:
+    """Read-only SQLite lookup of `{external_id: remote_revision}` for active versioned documents.
+
+    Enables incremental scheduled runs (e.g. weekly Moodle or on-change local sync) to skip
+    unchanged documents at listing time without redundant downloads or reparsing.
+    """
+    if not db_path.is_file():
+        return {}
+    try:
+        with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as conn:
+            has_docs = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'documents'"
+            ).fetchone()
+            if not has_docs:
+                return {}
+            rows = conn.execute(
+                """
+                SELECT d.external_id, d.remote_revision
+                FROM documents d
+                JOIN connections c ON c.id = d.connection_id
+                WHERE c.source = ?
+                  AND d.active_version_id IS NOT NULL
+                  AND d.remote_revision IS NOT NULL
+                  AND COALESCE(json_extract(d.metadata_json, '$.access_status'), 'active') = 'active'
+                """,
+                (source_value,),
+            ).fetchall()
+            return {str(ext_id): str(rev) for ext_id, rev in rows if ext_id and rev}
+    except Exception:
+        return {}
+
+
+def _load_known_record_revisions(db_path: Path, source_value: str) -> dict[str, str]:
+    """Read-only SQLite lookup of `{external_id: remote_revision}` for persisted structured records."""
+    if not db_path.is_file():
+        return {}
+    try:
+        with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as conn:
+            has_recs = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'records'"
+            ).fetchone()
+            if not has_recs:
+                return {}
+            rows = conn.execute(
+                """
+                SELECT r.external_id, r.remote_revision
+                FROM records r
+                JOIN connections c ON c.id = r.connection_id
+                WHERE c.source = ?
+                  AND r.remote_revision IS NOT NULL
+                """,
+                (source_value,),
+            ).fetchall()
+            return {str(ext_id): str(rev) for ext_id, rev in rows if ext_id and rev}
+    except Exception:
+        return {}
 
 
 class CodexConnectorBridge:
@@ -960,11 +1039,15 @@ class CodexConnectorBridge:
         *,
         calendar_availability_only: bool = True,
         known_external_ids_loader: Callable[[], set[str] | Mapping[str, str] | None] | None = None,
+        known_versions_loader: Callable[[], Mapping[str, str] | None] | None = None,
+        drive_allowed_cohorts: tuple[str, ...] = ENSORA_DRIVE_ALLOWED_TOP_LEVEL_FOLDERS,
         page_size: int = MAX_PAGE_CACHE_ENTRIES,
     ) -> None:
         self._connector = connector
         self._calendar_availability_only = calendar_availability_only
         self._known_external_ids_loader = known_external_ids_loader
+        self._known_versions_loader = known_versions_loader
+        self._drive_allowed_cohorts = tuple(drive_allowed_cohorts)
         self._page_size = max(1, min(int(page_size), MAX_PAGE_CACHE_ENTRIES))
         # Strictly page-scoped bounded cache (replaced every list_changes call)
         self._page_cache: dict[str, InternalSourceRecord] = {}
@@ -984,6 +1067,13 @@ class CodexConnectorBridge:
         scope_dict: dict[str, Any] = {
             "page_size": self._page_size,
         }
+        if self._connector.source_kind == InternalSourceKind.ENSORA_DRIVE:
+            root_id = getattr(self._connector, "root_folder_id", None)
+            if scope.folder_id and (not root_id or scope.folder_id != root_id):
+                raise PermissionDeniedError("Drive synchronization is restricted to the approved cohort folders.")
+            # This filter is applied by connector discovery for initial, incremental,
+            # full and failed-resource retry runs alike.
+            scope_dict["cohorts"] = list(self._drive_allowed_cohorts)
         if scope.subject_id:
             scope_dict["course_ids"] = [scope.subject_id]
         if scope.folder_id:
@@ -1007,6 +1097,29 @@ class CodexConnectorBridge:
             # Runtime connector listing must never prompt, open a headed window, or auto-submit credentials
             scope_dict["interactive"] = False
             scope_dict["allow_auto_reauth"] = False
+        if self._connector.source_kind == InternalSourceKind.PAMPLEMOUSSE:
+            pamp_slice = (
+                getattr(scope, "pamplemousse_scope", None)
+                or getattr(scope, "sync_slice", None)
+                or getattr(scope, "dataset", None)
+                or getattr(scope, "sections", None)
+            )
+            if pamp_slice:
+                scope_dict["sections"] = pamp_slice
+        if (
+            self._known_versions_loader is not None
+            and not scope.full
+            and not getattr(scope, "retry_failed", False)
+            and self._connector.source_kind in (
+                InternalSourceKind.MOODLE,
+                InternalSourceKind.LOCAL_FILE,
+                InternalSourceKind.PAMPLEMOUSSE,
+            )
+        ):
+            known_revs = self._known_versions_loader()
+            if known_revs:
+                scope_dict["known_versions"] = dict(known_revs)
+                scope_dict["known_hashes"] = dict(known_revs)
         if (
             self._connector.source_kind == InternalSourceKind.ENSORA_DRIVE
             and not scope.subject_id
@@ -1038,6 +1151,16 @@ class CodexConnectorBridge:
             raise
         except TransientSourceError as exc:
             raise RetryableSourceError(str(exc)) from exc
+        except Exception as exc:
+            if type(exc).__name__ == "DriveSizeLimitError":
+                from .connectors.moodle import DownloadSizeLimitError
+
+                raise DownloadSizeLimitError(
+                    "Drive file exceeds configured size limit.",
+                    size_bytes=getattr(exc, "size_bytes", 0),
+                    limit_bytes=getattr(exc, "limit_bytes", 0),
+                ) from exc
+            raise
 
         # Replace cache per page and bound size; page_size <= MAX_PAGE_CACHE_ENTRIES ensures
         # every fetched item retains its full metadata.
@@ -1047,6 +1170,15 @@ class CodexConnectorBridge:
         conversion_error_codes: list[str] = []
 
         for item in page.items:
+            if (
+                self._connector.source_kind == InternalSourceKind.ENSORA_DRIVE
+                and item.access_status == AccessStatus.ACTIVE
+                and folder_scope(item.folder_path) != "allowed"
+            ):
+                # Defense in depth for stale durable cursors or connector inventory:
+                # never cache, normalize, download or expose active Global/unverified items,
+                # while still forwarding tombstones so moved/removed docs retire cleanly.
+                continue
             if len(new_cache) < MAX_PAGE_CACHE_ENTRIES:
                 new_cache[item.external_id] = item
             try:
@@ -1191,6 +1323,7 @@ class CodexConnectorBridge:
         selective = bool(
             scope.subject_id
             or scope.folder_id
+            or getattr(scope, "pamplemousse_scope", None)
             or getattr(scope, "window_start", None) is not None
             or getattr(scope, "academic_year", None)
         )
@@ -1233,11 +1366,20 @@ class CodexConnectorBridge:
                 if (
                     self._connector.source_kind == InternalSourceKind.ENSORA_DRIVE
                     and obs_key in ("folders_traversed", "resources_discovered")
-                    and cursor not in (None, "0")
                 ):
-                    continue
+                    delta_key = f"page_{obs_key}"
+                    if delta_key in raw_stats:
+                        val = raw_stats.get(delta_key)
+                    elif not page.complete:
+                        continue
                 if isinstance(val, int) and not isinstance(val, bool) and val >= 0:
                     observations[obs_key] = val
+            if (
+                self._connector.source_kind == InternalSourceKind.MOODLE
+                and raw_stats.get("discovery_incomplete") is True
+                and "discovery_coverage_unknown" not in warning_codes
+            ):
+                warning_codes.append("discovery_coverage_unknown")
 
         if not page.complete:
             return CodexChangePage(
@@ -1308,17 +1450,82 @@ class CodexConnectorBridge:
             raise
         except TransientSourceError as exc:
             raise RetryableSourceError(str(exc)) from exc
+        except Exception as exc:
+            if type(exc).__name__ == "DriveSizeLimitError":
+                from .connectors.moodle import DownloadSizeLimitError
+
+                raise DownloadSizeLimitError(
+                    "Drive file exceeds configured size limit.",
+                    size_bytes=getattr(exc, "size_bytes", 0),
+                    limit_bytes=getattr(exc, "limit_bytes", 0),
+                ) from exc
+            raise
+
+
+MAX_RAG_CHUNK_CHARS = 1800
+RAG_CHUNK_OVERLAP_CHARS = 180
+
+
+def _split_rag_text(
+    text: str,
+    *,
+    max_chars: int = MAX_RAG_CHUNK_CHARS,
+    overlap_chars: int = RAG_CHUNK_OVERLAP_CHARS,
+) -> list[str]:
+    """Deterministically split oversized text blocks into RAG-ready chunks preserving boundaries."""
+    if len(text) <= max_chars:
+        return [text]
+    chunks: list[str] = []
+    start = 0
+    n = len(text)
+    step_min = max(1, max_chars - overlap_chars)
+    while start < n:
+        end = min(n, start + max_chars)
+        if end < n:
+            # Prefer paragraph break, then newline, then sentence boundary, then space
+            cut = text.rfind("\n\n", start + step_min // 2, end)
+            if cut == -1:
+                cut = text.rfind("\n", start + step_min // 2, end)
+            if cut == -1:
+                cut = text.rfind(". ", start + step_min // 2, end)
+                if cut != -1:
+                    cut += 1
+            if cut == -1:
+                cut = text.rfind(" ", start + step_min // 2, end)
+            if cut > start:
+                end = cut
+        segment = text[start:end].strip()
+        if segment:
+            chunks.append(segment)
+        if end >= n:
+            break
+        next_start = max(start + 1, end - overlap_chars)
+        # Avoid starting in the middle of a word when backing up for overlap
+        if next_start > start and next_start < n and text[next_start - 1].isalnum() and text[next_start].isalnum():
+            ws = text.find(" ", next_start, end)
+            if ws != -1:
+                next_start = ws + 1
+        start = next_start
+    return chunks or [text[:max_chars]]
 
 
 class CodexParserBridge:
     """Bridges DocumentParserRegistry to Codex's DocumentParser protocol.
 
-    Preserves block kinds, code languages, math/table/figure counts, and parser
-    warnings inside Codex's `DocumentChunk.locator` dictionary (`dict[str, str | int]`).
+    Preserves block kinds, code languages, language hints, math/table/figure counts,
+    bounded RAG-ready chunk sizes, partial extraction status, and parser warnings.
     """
 
-    def __init__(self, registry: DocumentParserRegistry | None = None) -> None:
+    def __init__(
+        self,
+        registry: DocumentParserRegistry | None = None,
+        *,
+        max_chunk_chars: int = MAX_RAG_CHUNK_CHARS,
+        chunk_overlap_chars: int = RAG_CHUNK_OVERLAP_CHARS,
+    ) -> None:
         self._registry = registry or DocumentParserRegistry()
+        self._max_chunk_chars = max(256, int(max_chunk_chars))
+        self._chunk_overlap_chars = max(0, min(int(chunk_overlap_chars), self._max_chunk_chars // 3))
 
     def parse(self, document: Document, content: bytes) -> ParsedContent | None:
         parsed = self._registry.parse_bytes(
@@ -1331,49 +1538,91 @@ class CodexParserBridge:
             return None
         chunks: list[DocumentChunk] = []
         warning_codes: list[str] = []
+
+        def _add_warn(code: str) -> None:
+            if code not in warning_codes:
+                warning_codes.append(code)
+
         if "scanned_pages_without_ocr_engine" in parsed.unsupported_elements:
-            warning_codes.append("scanned_pages_without_ocr")
+            _add_warn("scanned_pages_without_ocr")
         if "ocr_engine_unavailable" in parsed.unsupported_elements:
-            warning_codes.append("ocr_unavailable")
+            _add_warn("ocr_unavailable")
+        for w in parsed.warnings:
+            low_w = str(w).lower()
+            if "pdf_mixed_media_empty_pages" in low_w:
+                _add_warn("mixed_media_pages_present")
+            elif "legacy_binary_office" in low_w:
+                _add_warn("legacy_binary_office")
+            elif "zip_contains_no_parseable_text_members" in low_w:
+                _add_warn("non_textual_archive")
+            elif "zip archive truncated" in low_w or "skipped oversized zip" in low_w or "high-compression-ratio" in low_w:
+                _add_warn("archive_limit_truncated")
+        if parsed.parser_name == "notebook_parser" and parsed.figures:
+            _add_warn("notebook_visual_outputs")
         if parsed.warnings and not warning_codes:
-            warning_codes.append("parse_warning")
+            _add_warn("parse_warning")
 
         figure_count = len(parsed.figures)
         for idx, block in enumerate(parsed.blocks):
-            loc_dict: dict[str, str | int] = {
+            base_loc: dict[str, str | int] = {
                 "kind": block.locator.kind,
                 "block_kind": block.kind,
             }
             for k in ("page", "slide", "cell", "line_start", "line_end", "section"):
                 v = getattr(block.locator, k)
                 if v is not None:
-                    loc_dict[k] = v
+                    base_loc[k] = v
             if block.code_language:
-                loc_dict["code_language"] = block.code_language
+                base_loc["code_language"] = block.code_language
 
-            structured: dict[str, object] = {}
-            if block.code_language:
-                structured["code_language"] = block.code_language
-            if block.table_rows:
-                structured["table_rows"] = [list(r) for r in block.table_rows]
-            if block.math_expressions:
-                structured["math_expressions"] = list(block.math_expressions)
-            if idx == 0:
-                structured["quality_pct"] = int(round(parsed.extraction_quality * 100))
-                if figure_count:
-                    structured["figure_count"] = figure_count
-
-            chunks.append(
-                DocumentChunk(
-                    text=block.text,
-                    section=list(block.heading_path),
-                    locator=loc_dict,
-                    block_kind=block.kind,
-                    structured=structured,
+            # Keep structured tables intact; split only oversized prose/code/raw blocks for RAG context windows
+            segments = (
+                [block.text]
+                if block.table_rows or len(block.text) <= self._max_chunk_chars
+                else _split_rag_text(
+                    block.text,
+                    max_chars=self._max_chunk_chars,
+                    overlap_chars=self._chunk_overlap_chars,
                 )
             )
+            seg_total = len(segments)
+            for seg_idx, seg_text in enumerate(segments):
+                loc_dict = dict(base_loc)
+                if seg_total > 1:
+                    loc_dict["sub_chunk"] = seg_idx + 1
+                    loc_dict["sub_chunks_total"] = seg_total
+
+                structured: dict[str, object] = {}
+                if block.language:
+                    structured["language"] = block.language
+                if block.code_language:
+                    structured["code_language"] = block.code_language
+                if block.table_rows and seg_idx == 0:
+                    structured["table_rows"] = [list(r) for r in block.table_rows]
+                if block.math_expressions and seg_idx == 0:
+                    structured["math_expressions"] = list(block.math_expressions)
+                if idx == 0 and seg_idx == 0:
+                    structured["quality_pct"] = int(round(parsed.extraction_quality * 100))
+                    if figure_count:
+                        structured["figure_count"] = figure_count
+
+                chunks.append(
+                    DocumentChunk(
+                        text=seg_text,
+                        section=list(block.heading_path),
+                        locator=loc_dict,
+                        block_kind=block.kind,
+                        structured=structured,
+                    )
+                )
+
+        is_partial = bool(
+            parsed.unsupported_elements
+            or (0.0 < parsed.extraction_quality < 0.70)
+        )
         return ParsedContent(
             parser_version=f"{parsed.parser_name}-{parsed.parser_version}",
+            status="partial" if is_partial else "ready",
             chunks=chunks,
             warning_codes=warning_codes,
         )
@@ -1419,6 +1668,7 @@ def extract_concept_candidates(
                         source=document.provenance.source,
                         source_url=document.provenance.source_url,
                         folder=document.provenance.folder,
+                        academic_year=document.provenance.academic_year,
                     ),
                     title=label,
                     parent_key=parent_key,
@@ -1443,6 +1693,7 @@ def extract_concept_candidates(
                         source=document.provenance.source,
                         source_url=document.provenance.source_url,
                         folder=document.provenance.folder,
+                        academic_year=document.provenance.academic_year,
                     ),
                     title=label,
                     parent_key=parent_key,
@@ -1459,7 +1710,7 @@ def extract_prerequisite_hints(parsed: ParsedContent | None) -> list[dict[str, o
     if parsed is None or not parsed.chunks:
         return []
     prereq_re = re.compile(
-        r"^\s*(?:pr[eé]requis|prerequisites?|requires|n[eé]cessite)\s*[:\-–]\s*(.{3,160})",
+        r"^\s*(?:pr[eé][\-\s]?requis|prerequisites?|requires|n[eé]cessite|notions?\s+requises?|chapitres?\s+requis|avant\s+de\s+commencer)\s*[:\-–]\s*(.{3,160})",
         re.IGNORECASE | re.MULTILINE,
     )
     hints: list[dict[str, object]] = []
@@ -1513,11 +1764,31 @@ class CodexClassifierBridge:
                 blocks=blocks,
             )
 
+        resolved_source = (
+            _from_codex_source_kind(document.provenance.source)
+            or _infer_source_kind_from_external_id(document.provenance.external_id)
+        )
+        section_hint = document.chapter_id or (
+            " / ".join(document.section_path) if document.section_path else None
+        )
+        synth_record = InternalSourceRecord(
+            source_kind=resolved_source,
+            external_id=document.provenance.external_id,
+            title=document.title,
+            record_kind="announcement" if document.resource_kind == "announcement" else "document",
+            mime_type=document.mime_type,
+            folder_path=document.provenance.folder,
+            course_id=document.course_id or document.subject_id,
+            course_title=document.course_title,
+            section_title=section_hint,
+            payload={"resource_kind": document.resource_kind, "filename": document.title},
+        )
         res = self._classifier.classify(
             title=document.title,
             filename=document.title,
             folder_path=document.provenance.folder,
             mime_type=document.mime_type,
+            record=synth_record,
             parsed=parsed_doc,
         )
         return CodexClassificationResult(
@@ -1584,12 +1855,19 @@ class CodexEntityMatcherBridge:
             for row in subj_rows:
                 payload = row["payload"] or {}
                 title = payload.get("title") or row["external_id"]
-                code = payload.get("code")
+                code = payload.get("code") or payload.get("source_code")
+                raw_aliases = payload.get("aliases") or []
+                aliases = tuple(str(a) for a in raw_aliases if a)
+                if payload.get("source_code") and payload.get("source_code") != code:
+                    aliases = (*aliases, str(payload["source_code"]))
+                parent_ue = payload.get("parent_key")
                 self._resolver.register_subject(
                     CanonicalSubject(
                         subject_id=row["external_id"],
                         title=str(title),
                         code=str(code) if code else None,
+                        aliases=aliases,
+                        teaching_unit=str(parent_ue) if parent_ue else None,
                     )
                 )
                 added += 1
@@ -1639,6 +1917,8 @@ class CodexEntityMatcherBridge:
                 meta = row["metadata_json"] or {}
                 if meta.get("access_status", "active") != "active":
                     continue
+                if meta.get("ingestion_state") == "download_failed":
+                    continue
                 clf = meta.get("classification") or {}
                 res_type = str(clf.get("resource_type") or "other")
                 if res_type not in ("examination", "examination_correction"):
@@ -1667,18 +1947,23 @@ class CodexEntityMatcherBridge:
             _from_codex_source_kind(document.provenance.source)
             or _infer_source_kind_from_external_id(document.provenance.external_id)
         )
+        section_hint = document.chapter_id or (
+            " / ".join(document.section_path) if document.section_path else None
+        )
         internal_rec = InternalSourceRecord(
             source_kind=resolved_source,
             external_id=document.provenance.external_id,
             title=document.title,
             mime_type=document.mime_type,
             folder_path=document.provenance.folder,
-            course_id=document.subject_id,
-            section_title=document.chapter_id,
+            course_id=document.course_id or document.subject_id,
+            course_title=document.course_title,
+            section_title=section_hint,
             source_url=document.provenance.source_url,
         )
         res = self._resolver.resolve_record(internal_rec)
         return EntityMatch(
+            teaching_unit_id=res.teaching_unit or document.teaching_unit_id,
             subject_id=res.canonical_subject_id or document.subject_id,
             chapter_id=res.chapter or document.chapter_id,
             confidence=res.confidence,
@@ -1774,19 +2059,35 @@ def build_components(
             ),
         },
         connectors={
-            CodexSourceKind.MOODLE: CodexConnectorBridge(moodle_conn),
-            CodexSourceKind.PAMPLEMOUSSE: CodexConnectorBridge(pamp_conn),
+            CodexSourceKind.MOODLE: CodexConnectorBridge(
+                moodle_conn,
+                known_versions_loader=lambda db_path=settings.local_data_dir / "ensora.sqlite3": _load_known_document_revisions(
+                    db_path, CodexSourceKind.MOODLE.value
+                ),
+            ),
+            CodexSourceKind.PAMPLEMOUSSE: CodexConnectorBridge(
+                pamp_conn,
+                known_versions_loader=lambda db_path=settings.local_data_dir / "ensora.sqlite3": _load_known_record_revisions(
+                    db_path, CodexSourceKind.PAMPLEMOUSSE.value
+                ),
+            ),
             CodexSourceKind.ENSORA_DRIVE: CodexConnectorBridge(
                 drive_conn,
                 known_external_ids_loader=lambda db_path=settings.local_data_dir / "ensora.sqlite3": _load_active_drive_documents(
                     db_path
                 ),
+                page_size=DRIVE_STREAMING_PAGE_SIZE,
             ),
             CodexSourceKind.GOOGLE_CALENDAR: CodexConnectorBridge(
                 cal_conn,
                 calendar_availability_only=not cfg.google_calendar_include_personal_details,
             ),
-            CodexSourceKind.LOCAL: CodexConnectorBridge(local_conn),
+            CodexSourceKind.LOCAL: CodexConnectorBridge(
+                local_conn,
+                known_versions_loader=lambda db_path=settings.local_data_dir / "ensora.sqlite3": _load_known_document_revisions(
+                    db_path, CodexSourceKind.LOCAL.value
+                ),
+            ),
         },
         parser=CodexParserBridge(DocumentParserRegistry()),
         classifier=CodexClassifierBridge(DocumentClassifier()),

@@ -317,17 +317,27 @@ class PdfDocumentParser(DocumentParser):
             ordinal += 1
 
         ocr_used = False
+        empty_ratio = empty_pages / max(1, len(pages))
         if empty_pages > 0:
-            if shutil.which("tesseract") is None:
-                unsupported.append("scanned_pages_without_ocr_engine")
-                warnings.append(
-                    f"{empty_pages}/{len(pages)} PDF page(s) contained no extractable text "
-                    "(likely scanned); tesseract OCR is not installed."
-                )
+            # Distinguish genuinely scanned / image-heavy PDFs (0 text blocks or >=30% empty pages)
+            # from normal text-rich slide decks/lectures with 1-2 blank or diagram-only pages.
+            is_scanned_heavy = (len(blocks) == 0) or (empty_ratio >= 0.30)
+            if is_scanned_heavy:
+                if shutil.which("tesseract") is None:
+                    unsupported.append("scanned_pages_without_ocr_engine")
+                    warnings.append(
+                        f"{empty_pages}/{len(pages)} PDF page(s) contained no extractable text "
+                        "(likely scanned); tesseract OCR is not installed."
+                    )
+                else:
+                    warnings.append(
+                        f"{empty_pages}/{len(pages)} PDF page(s) had no embedded text layer; "
+                        "invoke OCR workflow for scanned pages."
+                    )
             else:
                 warnings.append(
-                    f"{empty_pages}/{len(pages)} PDF page(s) had no embedded text layer; "
-                    "invoke OCR workflow for scanned pages."
+                    f"pdf_mixed_media_empty_pages: {empty_pages}/{len(pages)} PDF page(s) "
+                    "contained non-textual/blank slide content while the remaining pages extracted cleanly."
                 )
 
         non_empty_ratio = (len(pages) - empty_pages) / max(1, len(pages))

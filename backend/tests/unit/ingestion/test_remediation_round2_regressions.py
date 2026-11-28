@@ -337,11 +337,12 @@ def test_r2_drive_incremental_watermark_and_validated_tombstones(tmp_path: Path)
 
     tree: dict[str, dict[str, Any]] = {
         root_id: {"id": root_id, "name": "Ensora", "mimeType": DRIVE_FOLDER_MIME, "parents": [], "trashed": False},
+        "fld_2a": {"id": "fld_2a", "name": "2A", "mimeType": DRIVE_FOLDER_MIME, "parents": [root_id], "trashed": False},
         "f_old": {
             "id": "f_old",
             "name": "Old.pdf",
             "mimeType": "application/pdf",
-            "parents": [root_id],
+            "parents": ["fld_2a"],
             "modifiedTime": "2026-11-01T10:00:00Z",
             "trashed": False,
         },
@@ -349,7 +350,7 @@ def test_r2_drive_incremental_watermark_and_validated_tombstones(tmp_path: Path)
             "id": "f_gone",
             "name": "MovedAway.pdf",
             "mimeType": "application/pdf",
-            "parents": [root_id],
+            "parents": ["fld_2a"],
             "modifiedTime": "2026-11-02T10:00:00Z",
             "trashed": False,
         },
@@ -381,7 +382,7 @@ def test_r2_drive_incremental_watermark_and_validated_tombstones(tmp_path: Path)
         "id": "f_new",
         "name": "New.pdf",
         "mimeType": "application/pdf",
-        "parents": [root_id],
+        "parents": ["fld_2a"],
         "modifiedTime": "2026-11-10T12:00:00Z",
         "trashed": False,
     }
@@ -774,6 +775,7 @@ def test_r2_bridge_fetched_document_metadata_and_page_size_cap(tmp_path: Path) -
                         external_id="ensora_drive:gdoc_1",
                         title="Lecture Notes",
                         mime_type="application/vnd.google-apps.document",
+                        folder_path="Ensora/2A/ML",
                         remote_version="v1",
                     ),
                 ),

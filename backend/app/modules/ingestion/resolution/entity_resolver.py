@@ -101,8 +101,57 @@ def normalize_text_key(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned)
 
 
+_GENERIC_FOLDER_SEGMENTS = frozenset(
+    {
+        "ensora",
+        "moodle",
+        "local",
+        "1a",
+        "2a",
+        "3a",
+        "global",
+        "cours",
+        "td",
+        "tp",
+        "cm",
+        "annales",
+        "annale",
+        "exam",
+        "exams",
+        "examen",
+        "examens",
+        "partiel",
+        "partiels",
+        "projet",
+        "projets",
+        "archives",
+        "archive",
+        "data",
+        "dataset",
+        "datasets",
+        "donnees",
+        "general",
+        "s1",
+        "s2",
+        "s3",
+        "s4",
+        "s5",
+        "s6",
+    }
+)
+
+
 def significant_tokens(text: str) -> set[str]:
     return {t for t in normalize_text_key(text).split() if len(t) >= 2 and t not in _STOPWORDS}
+
+
+def _subject_initialism(title: str) -> str | None:
+    """Derive a conservative acronym from significant words of a multi-word subject title (e.g. 'Machine Learning' -> 'ml')."""
+    words = [w for w in normalize_text_key(title).split() if len(w) >= 2 and w not in _STOPWORDS]
+    if len(words) < 2:
+        return None
+    initials = "".join(w[0] for w in words)
+    return initials if 2 <= len(initials) <= 6 else None
 
 
 @dataclass(frozen=True)
@@ -320,13 +369,23 @@ class AcademicEntityResolver:
                 evidence=("preserved human manual override",),
             )
 
-        # Candidate search texts in decreasing specificity
+        # Candidate search texts in decreasing specificity (including individual non-generic folder segments
+        # so Drive paths like 'Ensora/2A/Econometrie/Annales' match canonical subject 'Econometrie' cleanly!)
+        folder_segments: list[str] = []
+        if record.folder_path:
+            for seg in str(record.folder_path).split("/"):
+                clean_seg = seg.strip()
+                norm_seg = normalize_text_key(clean_seg)
+                if clean_seg and norm_seg and norm_seg not in _GENERIC_FOLDER_SEGMENTS:
+                    folder_segments.append(clean_seg)
+
         probes = [
             p
             for p in (
                 record.course_id,
                 record.course_title,
                 record.payload.get("subject_hint") if isinstance(record.payload, dict) else None,
+                *folder_segments,
                 record.folder_path,
                 record.title,
             )
@@ -401,6 +460,19 @@ class AcademicEntityResolver:
                         best_score = score
                         best_method = "normalized_token"
                         reason = f"contained normalized alias '{alias}'"
+
+            # Conservative acronym/initialism & code-suffix review hint (capped below AUTO_MATCH_THRESHOLD)
+            if best_score < 0.85:
+                acr = _subject_initialism(subj.title)
+                if acr and (
+                    any(normalize_text_key(str(p)) == acr for p in probes)
+                    or (len(acr) >= 3 and f" {acr} " in padded_full)
+                ):
+                    acr_score = 0.82 - cohort_penalty
+                    if acr_score > best_score:
+                        best_score = acr_score
+                        best_method = "normalized_token"
+                        reason = f"subject initialism '{acr.upper()}' matches '{subj.title}'"
 
             # Token Jaccard & fuzzy similarity
             if best_score < 0.90:

@@ -2,13 +2,194 @@
 
 - **Ticket / owner / branch**: P1 Source Integration / Gemini / `feat/p1-data-engineering`
 - **Base commit**: `89ad3d8`
-- **Current status**: **`P0_METADATA_AND_ETL_CONTRACTS_FIXED`** — combined canonical synthetic suite passes **105 tests in 6.91s** (`pip check` clean; 35 Codex integration + 70 Gemini unit/bridge/remediation/CAS/live-completeness tests; 0 failed, 0 skipped). Zero Codex core/contract files modified; active Drive sync undisturbed; zero Git write operations; zero unauthorized live source calls.
-- **Live Validation Report & Operator Runbook**: See [GEMINI_LIVE_VALIDATION.md](GEMINI_LIVE_VALIDATION.md) for the exact post-Drive sequential persistent sync and verification commands.
+- **Current status**: **`ENSORA_DRIVE_GLOBAL_EXCLUDED_CONNECTOR_READY`** — all Gemini unit & bridge tests pass (`compileall` clean, `pip check` clean); combined backend suite reports **130 passed, 1 failed** solely at Codex-owned `backend/tests/integration/test_p1.py:718` (see review note below). Active live Drive sync untouched. Zero Codex-owned files modified; zero Git write operations; zero live DB access.
+- **Live Validation Report & Operator Runbook**: See [GEMINI_LIVE_VALIDATION.md](GEMINI_LIVE_VALIDATION.md).
 - **Composition Factory Entry Point** (default in `backend/app/core/settings.py`):
 
 ```python
 ADAPTER_FACTORY = "backend.app.modules.ingestion.codex_bridge:build_components"
 ```
+
+## Exclude `Global` from Ensora Google Drive (`1A`/`2A`/`3A` Only) — Connector Contract & Mutual Review for Codex (2026-11-28)
+
+### 1. Connector Enforcement (`connectors/ensora_drive.py`, `codex_bridge.py`, `scripts/p1_sources_cli.py`)
+- **Authorized scope**: Root `1bwHMmvVUOI7CJyeiVhvkofspfZdFNZuO`, strictly top-level folders `1A`, `2A`, `3A` (`DRIVE_SCOPE_POLICY_VERSION = 2`, `DRIVE_SCOPE_POLICY_ID = "academic_cohorts_v2:1a,2a,3a"`). Top-level `Global`, non-academic folders, and stray root files are **excluded completely**.
+- **Pre-traversal top-level resolution**: `resolve_authorized_top_level_folders()` lists direct children of root once (`1` `files.list` call) and seeds BFS ONLY with resolved `1A`/`2A`/`3A` folder IDs. `Global` and its descendants are **never queued and never listed** (0 wasted API requests). Legitimate nested subfolders like `Ensora/2A/Finance/Global` remain included.
+- **Boundary enforcement across all paths**: `_resolve_folder_ancestry()` / `_validate_target_folder_boundary(..., require_approved_cohort=True)` enforces `1A`/`2A`/`3A` containment via live Drive `files.get(fields="id,name,mimeType,parents,trashed")` on:
+  - Full & incremental (`drvmod:`) synchronization
+  - Direct subfolder sync (`folder_id=...`) and explicit `cohorts=["Global"]` (raises `PermissionDeniedError`)
+  - Direct downloads & selective retries (`fetch_blob()` blocks `Global`, root-stray, trashed, and personal files before any `get_media`/`export_media` call)
+  - Shortcuts pointing to `Global`, `Global` descendants/files, root, or personal Drive (blocked & counted in `excluded_shortcuts_skipped`)
+- **Checkpoint invalidation & filtering**: Legacy `v1` `drvpage:` snapshots (created before Global exclusion) are rejected & purged on load; resumed `v2` snapshots defensively filter `queue`/`pending_items`/`membership_additions` and revalidate live ancestry across restarts.
+- **Metadata preservation**: `normalize()` preserves `folder_path`, explicit `academic_year` (when present, never guessed), `specialization_hint`, `semester_hint`, `cohort_hint`, `subject_hint`, `academic_category`, `top_level_folder_id`, `top_level_folder_name`, and `scope_policy`.
+- **Measured API savings (`test_sprint7_*`)**: Controlled 35-folder fixture (root + `1A`/`2A`/`3A` + 5 academic subfolders + `Global` + 25 `Global` nested folders + `Divers`) used `<= 4` batched `files.list` calls with **0 calls** to `Global` or any of its 25 descendants (**>= 27 folder listings saved**).
+
+### 2. Mutual Code Review & Coordination Notes for Codex (`backend/app/core/drive_scope.py`, `etl.py`, `sync.py`, `test_p1.py`)
+1. **Codex-owned test failure to fix (`backend/tests/integration/test_p1.py:718`)**:
+   - `test_catalog_sync_reconciles_prior_documents_without_reprocessing_and_preserves_overrides` ingests `drive:linear:lesson` and `drive:linear:manual` with `Provenance(external_id=..., source=SourceKind.ENSORA_DRIVE)` and `folder=None`.
+   - Codex's new fail-closed `drive_document_in_scope()` in `backend/app/core/drive_scope.py` skips `drive:linear:lesson` during `reconcile_documents()`, causing `assert report["metrics"]["catalog_documents_matched"] == 2` to fail (`1 == 2`).
+   - Adding `folder="Ensora/2A/Linear Algebra"` to those synthetic Drive fixtures in `test_p1.py` will bring the full 131-test suite to **131/131 passed**. (Gemini did not modify `test_p1.py`.)
+2. **Two cross-agent integration fixes applied in Gemini-owned files to align cleanly with Codex's parallel edits**:
+   - `ensora_drive.py`: Treated passing the full approved set `cohorts=["1A", "2A", "3A"]` (now sent by Codex's `CodexConnectorBridge.drive_allowed_cohorts`) identically to unscoped default so `authoritative_complete=True` and Drive membership reconciliation/reactivation (`test_final_block_003_*`) work cleanly.
+   - `codex_bridge.py:1173`: Scoped Codex's new `folder_scope(item.folder_path) != "allowed"` filter to `item.access_status == AccessStatus.ACTIVE` so tombstoned Drive records still reach `ETL._document()`.
+3. **Previously imported `Global` documents (non-destructive exclusion)**:
+   - Confirmed Codex's `drive_scope.py` (`folder_scope` + `drive_document_in_scope`) matches Gemini's exact top-level `Global` provenance semantics (root-relative first descendant segment `Global`, never false-excluding `Ensora/2A/.../Global`) and excludes previously imported `Global` docs from active downstream queries/reconciliation without deleting DB rows or modifying the live DB.
+   - `_load_active_drive_documents()` retains Codex's `if folder_scope(folder) == "allowed"` filter AND preserves `folder` for active `1A`/`2A`/`3A` tombstones. Note for Codex review: `backend/app/core/sync.py:347` also checks `not drive_document_in_scope(...)` before `pipeline.ingest()`, which is consistent with keeping historical `Global` rows immutable and read-excluded via `drive_document_in_scope()`.
+
+## User-Configurable Incremental Synchronization — Connector Contract for Codex (2026-11-28)
+
+Codex owns scheduling, user-configurable per-source intervals, enable/disable toggles, startup sync policy, and settings API contracts. Gemini implemented **zero scheduler logic and zero hardcoded intervals** inside connectors, and ensured every connector cleanly distinguishes **initial acquisition**, **incremental scheduled update**, **explicit `--full` sync**, and **`--retry-failed` selective recovery**:
+
+| Source / Slice | Default Recommendation (User-Configurable in Codex) | Connector Incremental & Sync-Mode Primitives Implemented |
+|---|---|---|
+| **Ensora Drive** | Every **7 days** (`604800s`) | Incremental `drvmod:` watermark + 15-folder batched `files.list` (`pageSize=1000`) + `page_size=25` streaming BFS + crash-safe 24h `drvpage:` snapshots (surviving 65+ evictions) + `etl.py` unchanged-revision skip |
+| **Moodle** | Every **7 days** (`604800s`) | Durable `moodle_sync:<iso>` watermark on clean completion + read-only SQLite `known_versions` skip wired in `build_components()` (`not scope.full and not scope.retry_failed`) + explicit `last_stats["sync_mode"]` (`initial`/`incremental`/`full`/`selective`) & `resources_unchanged_skipped` + cookie-backed HTTP fetch + `/user/profile.php` fallback |
+| **Pamplemousse — Timetable** | Every **6 hours** (`21600s`) | `sections="timetable"` visits ONLY `iCalendar` / `p=121` EDT; deterministic wall-clock-free `remote_version` (`_stable_version_payload()`); unchanged events skipped individually via read-only `_load_known_record_revisions()` |
+| **Pamplemousse — Grades** | Every **24 hours** (`86400s`) | `sections="grades"` visits ONLY `Notes` (`p=1052`); deterministic `remote_version` (strips `observed_at`/`retrieved_at`/`imported_at`); skips academic records as a consistent whole when zero facts changed so hierarchy & sibling-weight derivation stay intact on updates |
+| **Pamplemousse — Catalog & Coefs** | Every **7 days** (`604800s`) | `sections="catalog"` visits ONLY `Inscriptions` (`p=107`); deterministic `remote_version` + consistent whole-tree incremental skip; safe trigger for `ETL.reconcile_documents()` |
+| **Google Calendar** | Every **30 minutes** (`1800s`) | Live-verified incremental `syncToken` + 410 recovery + bounded windows (preserved untouched) |
+| **Local files** | **On change** (`None`) | Fast metadata-only `LocalFileConnector.scan_fingerprint(root_path)` (SHA-256 over `rel_path|size|mtime_ns`, symlink/protected-root safe, zero file reads) + `known_hashes` skip |
+
+### Shared Contract Coordination Notes for Codex (`backend/app/contracts/sources.py`)
+- **Proposed additive `SyncScope` field**: `pamplemousse_scope: Literal["all", "timetable", "grades", "catalog"] | None = None` (or `sync_slice` / `dataset` — `CodexConnectorBridge.list_changes()` already forward-reads `pamplemousse_scope`, `sync_slice`, `dataset`, and `sections` and forwards them to `PamplemousseConnector.list_changes(scope={"sections": ...})`!).
+- **Recommended scheduler rules for Codex**:
+  - Treat weekly (Drive/Moodle/Pamplemousse catalog), 24h (grades), 6h (timetable), and 30m (Calendar) values in `RECOMMENDED_SYNC_POLICY_SECONDS` (`connectors/base.py`) as **defaults only**; persist user overrides (custom interval, disabled, manual immediate trigger) in Codex's settings/DB layer.
+  - Treat slice-scoped Pamplemousse runs (`timetable` / `grades` / `catalog`) as non-destructive upserts so a 6-hour `timetable` run never retires `grades` or `catalog` records, and only trigger `ETL.reconcile_documents()` after `catalog` or `all` runs.
+  - Keep application startup non-blocking / free of automatic full acquisitions; existing locally persisted documents, extracted chunks, and original blobs (`local_data_dir/blobs/<sha256>`) remain immediately accessible between scheduled cycles.
+- **Note on `MoodleConnector.sync_token`**: Clean zero-error complete Moodle runs now return `sync_token = "moodle_sync:<iso>"` so Codex can distinguish initial vs incremental Moodle runs via `cursor`. `MoodleConnector.list_changes()` accepts `moodle_sync:` cursors cleanly (`offset = 0`) and never breaks pagination cursors (`"25"`, etc.). Verified compatible with all existing Codex CAS checkpoint/resume integration tests.
+
+### Verification (Synthetic Only)
+- `.venv/bin/python -m compileall -q backend/app scripts` — **OK**
+- `PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider backend/tests -q` — **127 passed in 19.56s** (0 failed, 0 skipped; includes `test_sprint5_*` and `test_sprint6_incremental_deterministic_revisions_moodle_checkpoint_and_sync_modes`)
+- `.venv/bin/python -m pip check` — **No broken requirements found.**
+
+## Partial-Parsing Investigation, Codex 64-Eviction Fix & Selective Reprocessing Proposals (2026-11-28)
+
+### 1. Investigation of Live 98/233 Partially Parsed Drive Documents (Expected vs Defect)
+- **Original files verified preserved**: `backend/app/core/etl.py:168` writes 100% of downloaded original bytes verbatim to `local_data_dir/blobs/<sha256>` before parsing; partial/unsupported status never discards original files.
+- **Root cause of the 98/233 partial count**:
+  1. **Over-flagging defect fixed (`parsers/pdf_parser.py:319-340`)**: Previously, ANY PDF with `empty_pages > 0` (even 1 blank/diagram slide in a 30-page Beamer/PowerPoint PDF!) appended `scanned_pages_without_ocr_engine` to `unsupported_elements`, forcing `ParsedContent.status = "partial"`. Now: text-rich PDFs with `<30%` empty pages stay `status="ready"` with `warning_codes=["mixed_media_pages_present"]`, while genuinely scanned/image-heavy PDFs (`blocks == 0` or `>=30%` empty pages) remain `status="partial"` with `scanned_pages_without_ocr`.
+  2. **Expected non-defect partial categories** (now distinguished via specific privacy-safe allowlisted tokens in `CodexParserBridge.parse()`, replacing opaque `"parse_warning"`):
+     - `scanned_pages_without_ocr`: Scanned/image-heavy PDF without installed `tesseract` (systematic OCR intentionally avoided during hackathon; original PDF preserved for future selective OCR).
+     - `ocr_unavailable`: Standalone `.png`/`.jpg`/`.webp`/`.tiff` images/diagrams preserved as original blob + figure metadata.
+     - `legacy_binary_office`: Legacy OLE2 `.doc`/`.xls`/`.ppt` heuristic UTF-16LE/Latin-1 text extraction (`quality=0.55`).
+     - `non_textual_archive`: Valid `.zip` containing only binary datasets/weights (`.npy`/`.pt`/`.png`) emitting an archive manifest block (`quality=0.25`).
+     - `archive_limit_truncated`: ZIP member skipped/truncated by zip-bomb or max-member security guard.
+     - `notebook_visual_outputs`: Jupyter `.ipynb` with embedded matplotlib/image outputs preserved as figure metadata (keeps `status="ready"`).
+
+### 2. Confirmed Fix for Codex's Drive Snapshot Eviction Finding (`CODEX_HANDOFF.md:343`)
+- Fixed `EnsoraDriveConnector._store_bfs_paging_state()` to evict **only** the 64-entry in-memory `_paging_states` key and retain unexpired (`<24h`) on-disk `drvpage:<hash>.json` files until TTL expiry.
+- Added Codex's exact requested regression `test_sprint4_drive_durable_snapshot_survives_65_evictions_codex_review` (retains first cursor, creates 65 later distinct handles, instantiates fresh connector, replays first cursor cleanly -> **PASSED**).
+
+### 3. Collaboration Responses & Proposals for Codex (`CODEX_HANDOFF.md:331-345`)
+1. **Catalog-arrival reconciliation (`ETL.reconcile_documents()` in `etl.py:249-290`)**:
+   - **Reviewed & confirmed safe**: Consent gating (`allowed` + `is_authorized`), skipping tombstoned/revoked/unversioned docs, preserving `user_override` and `match.confirmed`, and per-document short transactions are clean.
+   - `CodexEntityMatcherBridge.match()` is strictly metadata-only, deterministic, and idempotent (safe to repeat after Pamplemousse sync / academic import without touching blobs, hashes, versions, or chunks).
+2. **Additive Ranked-Candidate DTO Proposal for P2 Review UI (`backend/app/contracts/sources.py`)**:
+   - Propose extending `EntityMatch` additively (default empty lists, zero breaking changes) once Codex approves:
+     - `SubjectCandidate(subject_id: Key, teaching_unit_id: Key | None = None, confidence: float, method: Key)`
+     - `EntityMatch.candidates: list[SubjectCandidate] = Field(default_factory=list)` (top <=3 candidates)
+     - `EntityMatch.evidence_codes: list[Key] = Field(default_factory=list)` (strictly allowlisted privacy-safe tokens e.g. `exact_code`, `confirmed_alias`, `folder_segment_match`, `initialism_review`, `tie_conflict`)
+3. **Selective Local Blob Reprocessing Proposal (Zero Redownloads)**:
+   - Because original files are already preserved at `local_data_dir/blobs/<sha256>`, propose a Codex-owned local reprocessing command (`scripts/sync.py --reprocess-stored [--source SOURCE] [--status partial|unsupported|failed] [--parser-mismatch]`) that reads stored blobs locally, re-runs `parser.parse()` -> `classifier.classify()` -> `matcher.match()` for selected versions, and replaces `versions.status`/`parser_version`/`parser_warning_codes` + `chunks` atomically without making any network/Drive/Moodle requests and without overwriting `user_override` or `match.confirmed`.
+   - Also recommend surfacing aggregate `parser_warning_codes` counts (by allowlisted token & MIME type, zero filenames) in `scripts/audit_data.py` so operators immediately see how many of the 98 `partial` docs are `ocr_unavailable` vs `scanned_pages_without_ocr` vs `legacy_binary_office` vs `non_textual_archive`.
+
+### 4. Verification (Synthetic Only)
+- `.venv/bin/python -m compileall -q backend/app scripts` — **OK**
+- Targeted Sprint 4 regressions (`test_sprint4_*`): **2 passed in 1.27s**
+- `PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider backend/tests -q` — **124 passed in 20.10s** (0 failed, 0 skipped)
+- `.venv/bin/python -m pip check` — **No broken requirements found.**
+
+## Final Content Processing, Durable Paging Guarantees & P2/P3 Integration (2026-11-28)
+
+### 1. Confirmed Response to Codex (`CODEX_HANDOFF.md:321`) — Durable Drive Paging Guarantees & Limitations
+- **Confirmed & Implemented (`connectors/ensora_drive.py`)**: `_load_durable_paging_state()` and `list_changes()` no longer delete `drvpage:<key>.json` on read. Prior `0o600` (`O_NOFOLLOW`) snapshot files are retained on disk until their 24h TTL expires (expired snapshots `>24h` are pruned opportunistically on save), and in-memory state lookups deep-copy mutable containers so replaying a cursor is strictly idempotent.
+- **Exact Guarantees vs Remaining Limitations (Connector Continuation vs Full ETL Job Recovery)**:
+  - **What is guaranteed**:
+    1. If a process terminates mid-page *before* Codex commits the returned `next_cursor` to SQLite, replaying the job from Codex's last committed `drvpage:<prev_key>` cursor safely reloads the exact pre-page BFS frontier without losing progress or duplicating committed pages.
+    2. Every cross-process resume verifies `root_folder_id`, `scope_fingerprint`, and 24h TTL, and runs a live approved-root ancestry check (`_validate_target_folder_boundary`) before fetching any child folder.
+    3. Global durable `drvmod:<iso_utc>` watermark and authoritative tombstone reconciliation are emitted **only** once the full approved tree completes cleanly with zero errors and zero depth truncation.
+  - **Explicit limitations**:
+    1. If a paused/interrupted job is replayed **after >24h** (snapshot expired) or with a modified scope, `drvpage:<key>` rejects cleanly (`ValueError`); full ETL recovery falls back to a fresh full-tree scan (where Codex ETL skips all unchanged `active_version_id` + `remote_revision` files with zero redownloads and preserves the prior durable `drvmod:` cursor until clean completion).
+    2. Authoritative deletion/move-out tombstone reconciliation still requires a complete uninterrupted logical traversal across the approved root (cannot be inferred from a partial/failed listing).
+
+### 2. P1 Content Processing, Classification, RAG Chunking & Cross-Source P2/P3 Matching
+- **Classification (`contracts.py`, `classification/classifier.py`, `codex_bridge.py`)**:
+  - Added `DocumentCategory.DATASET` (`"dataset"`) for tabular/statistical datasets (`.csv`, `.tsv`, `.parquet`, `.rds`, `.rdata`, `.sav`, `.dta`, `.arff`, `.feather`, `.h5`, `.npy`, `.npz`), dataset folders, and binary-only dataset ZIP manifests, while preserving explicit `practical_work`/`assignment`/`examination` precedence on instruction PDFs.
+  - `CodexClassifierBridge.classify()` now forwards `document.resource_kind` (`announcement`, `educational_html`, `document`), `course_title`, and `chapter_id`/`section_path`; explicit Moodle announcements (`resource_kind="announcement"`) carry `0.90` administrative weight so exam-related forum announcements do not misclassify as exam papers.
+- **RAG-Ready Parsing & P2/P3 Concept Signals (`codex_bridge.py`)**:
+  - `CodexParserBridge.parse()` now deterministically splits oversized non-table blocks (`MAX_RAG_CHUNK_CHARS = 1800`, `RAG_CHUNK_OVERLAP_CHARS = 180`) on paragraph/newline/sentence boundaries while preserving `locator` + `sub_chunk`/`sub_chunks_total` + `heading_path` + `structured["language"]`.
+  - Sets `ParsedContent.status = "partial"` whenever `unsupported_elements` is non-empty or `0 < extraction_quality < 0.70` (e.g. legacy `.doc` or scanned PDFs without OCR), aligning with Codex's `documents_partially_parsed` audit metric.
+  - `extract_concept_candidates()` now copies `academic_year=document.provenance.academic_year` onto `Concept.provenance`; `extract_prerequisite_hints()` adds French cues (`pré-requis`, `avant de commencer`, `notions requises`, `chapitres requis`).
+- **Cross-Source Academic Association (`resolution/entity_resolver.py`, `codex_bridge.py`)**:
+  - `AcademicEntityResolver.resolve_record()` splits non-generic `folder_path` segments (so Drive `Ensora/2A/Econometrie/Annales` auto-matches Pamplemousse `Économétrie`) and adds conservative acronym hints (`PPDP`, capped at `0.82` -> `needs_review=True`).
+  - `CodexEntityMatcherBridge.load_from_sqlite_engine()` hydrates `code`/`source_code`, `aliases`, and `parent_key` (`teaching_unit`); `match()` passes `course_title` & `section_path` and populates `EntityMatch.teaching_unit_id`; `find_exam_correction_pairs_from_engine()` excludes `ingestion_state == "download_failed"` shells.
+
+### 3. Verification (Synthetic Only)
+- `.venv/bin/python -m compileall -q backend/app scripts` — **OK**
+- Targeted Sprint 3 regressions (`test_sprint3_*`): **2 passed in 2.06s**
+- `PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider backend/tests -q` — **120 passed in 22.01s** (0 failed, 0 skipped)
+- `.venv/bin/python -m pip check` — **No broken requirements found.**
+
+## Accelerated Sprint — Drive 40x Discovery Speedup, Durable Paging, Stale Lock Cleanup & Cookie-HTTP Auth (2026-11-28)
+
+### 1. Drive Discovery Bottleneck Proof & Resolution (`connectors/ensora_drive.py`, `codex_bridge.py`)
+- **Why Job `2a7a5408` showed `Documents: 0` for minutes**:
+  1. `CodexConnectorBridge` previously defaulted to `page_size = MAX_PAGE_CACHE_ENTRIES = 500`, so `_advance_bfs_page()` had to traverse ~250+ folders before emitting Page 1.
+  2. `EnsoraDriveConnector` inherited `Settings.request_delay_seconds = 1.0s` (designed for institutional HTML scraping, NOT Google Drive API v3's 12,000 req/min quota).
+  3. `_list_folder_children()` queried 1 folder at a time with `pageSize=100` (492 sequential calls = ~11 min).
+- **Fixes implemented**:
+  - `build_components()` now wires `CodexConnectorBridge(drive_conn, ..., page_size=DRIVE_STREAMING_PAGE_SIZE)` (`25`), while keeping `CodexConnectorBridge`'s default `MAX_PAGE_CACHE_ENTRIES` (`500`) intact for all other sources/tests.
+  - `EnsoraDriveConnector` now batches up to `15` validated folders per `files.list` call (`pageSize=1000`, `('f1' in parents or ...) and trashed = false`) on real Drive API v3 (automatic single-folder fallback on error), cutting 492 folder queries to ~33 API calls (`last_stats["api_list_calls"]`).
+  - Default polite pacing for Drive is capped at `min(config.rate_limit_min_interval_sec, 0.12)` (still <= 8 req/sec vs Google's 200 req/sec quota, with exponential backoff on HTTP 429).
+  - **Durable `drvpage:<hash>` continuation implemented per Codex's `CODEX_HANDOFF.md:303`**: metadata-only BFS state is now persisted atomically (`0o600`, `O_NOFOLLOW`, 24h TTL) to `<config_dir>/state/drive_paging/<key>.json`, resumes seamlessly across process restarts with scope-fingerprint + approved-root revalidation, and cleans up on completion without losing the prior `drvmod:` watermark.
+- **Request for Codex**:
+  - If Codex adds a backend page-budget yield boundary on long Drive jobs, `drvpage:<hash>` is now restart-safe on disk and ready to integrate.
+  - Reminder from earlier handoff: consider adding `"DriveResourceNotFoundError"` -> `"not_found"` and `{"DriveUnexportableError", "DriveExportSizeLimitError"}` -> `"unsupported_export"` alongside `"DownloadSizeLimitError"` in `backend/app/core/etl.py:_download_error_code()` (note `DriveSizeLimitError` is already mapped to `DownloadSizeLimitError` in `codex_bridge.py`).
+
+### 2. Moodle Timeout & Pamplemousse `adapter_error` Resolution (`auth/ensai.py`, `connectors/pamplemousse.py`, `codex_bridge.py`)
+- **Stale Chromium `SingletonLock` cleanup (`auth/ensai.py:open_context`)**: inside the exclusive `.ensora_profile.lock` lease, dead-PID `SingletonLock`/`SingletonSocket`/`SingletonCookie` files left behind by a system restart are safely unlinked (live PIDs are never touched).
+- **Fast cookie-backed HTTP validation (`auth/ensai.py:_probe_via_cookies_http`)**: `check_source_connection()` now validates persisted allowlisted session cookies over strict same-origin HTTP FIRST (with automatic `/user/profile.php` fallback for Moodle if `/my/courses.php` times out), validating live sessions in <0.5s with zero Chromium launch and falling back to headless Playwright whenever cookies are missing/expired or CAS silent SSO is needed.
+- **Playwright `/user/profile.php` fallback & actionable diagnostics**: `_probe_on_page()` also falls back to `/user/profile.php` if Moodle `/my/courses.php` times out after `commit` retry; `TransientSourceError`/timeout now maps to `errorcode="transient_failure"` -> `ConnectionStatus.UNAVAILABLE` (`reason="transient_failure"`) in `codex_bridge.py` instead of opaque `adapter_error`, and unexpected errors emit strictly redacted `exc_type` notices (zero secrets/cookies/URLs).
+- **Pamplemousse cookie-backed HTML fetch**: `PamplemousseConnector._fetch_html()` now uses `_cookie_session_fetch_html()` for `index.php`, `p=107` (Inscriptions), and `p=1052` (Notes) before falling back to Playwright.
+
+### 3. Response to Codex's Latest Review (`CODEX_HANDOFF.md:311-319`) & Mutual Code Review
+- **`test_r2_bridge_fetched_document_metadata_and_page_size_cap` (500 vs 25) resolved cleanly without weakening any test**: `DRIVE_STREAMING_PAGE_SIZE = 25` is now passed explicitly inside `build_components()` for `EnsoraDriveConnector`, while `CodexConnectorBridge` keeps its generic `MAX_PAGE_CACHE_ENTRIES = 500` default for non-Drive/generic connectors. `test_r2_bridge_fetched_document_metadata_and_page_size_cap` continues verifying the generic 500 bound intact, while `test_sprint2_drive_batched_listing_durable_paging_across_restarts_and_small_bridge_batch` verifies `build_components()` Drive `page_size=25`, exhaustive multi-page coverage with zero drops/duplicates, durable `0o600` restart-safe `drvpage:<hash>` snapshots, and per-page delta counters.
+- **Per-page Drive discovery progress counters (`CODEX_HANDOFF.md:313`)**: `EnsoraDriveConnector._advance_bfs_page()` now emits per-page deltas (`page_folders_traversed`, `page_resources_discovered`) alongside cumulative `folders_traversed`/`resources_discovered`; `CodexConnectorBridge` publishes those per-page deltas on **every page** (including incomplete pages) so `SyncEngine`'s additive `count()` reports non-zero discovery progress from Page 1 and sums to the exact cumulative tree totals at completion with zero double-counting.
+- **Mutual Review of Codex's `main.py` & `etl.py` (`CODEX_HANDOFF.md:315,319`)**:
+  - Verified `backend/app/main.py:291-375`: `active_document()` (`coalesce(access_status, "active") == "active" & active_version_id.is_not(None)`) is enforced consistently on `/api/v1/documents`, `/api/v1/documents/{document_id}`, `/versions`, `/content`, and `/chunks` — failed-download shells (`active_version_id IS NULL`) stay hidden from P2 reads while previously successful documents remain visible if a later update fails.
+  - Verified `backend/app/core/etl.py:85-119`: maps all Gemini Drive exception classes (`DriveSizeLimitError`, `DriveResourceNotFoundError`, `DriveUnexportableError`, `DriveExportSizeLimitError`, `TransientSourceError`) to safe categories without provider messages/URLs and preserves `user_override` and `match.confirmed`.
+  - Confirmed Codex's `test_interrupted_job_replay_preserves_original_academic_year_scope` fix passes cleanly.
+
+### 4. Verification
+- `.venv/bin/python -m compileall -q backend/app scripts` — **OK**
+- Targeted regressions (`test_r2_bridge_fetched_document_metadata_and_page_size_cap` + `test_sprint2_*`): **3 passed**
+- `PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -p no:cacheprovider backend/tests -q` — **117 passed in 20.27s** (0 failed, 0 skipped)
+- `.venv/bin/python -m pip check` — **No broken requirements found.**
+
+## Hackathon Final Source Acquisition Sprint — Mutual Review & Coordination for Codex (2026-11-27)
+
+### 1. Mutual Code Review of `backend/app/core/sync.py` & `test_p1.py` (Read-Only)
+- **Verified `sync.py:225-228` syntax/transaction fix**: Confirmed `IndentationError` is fixed. `with self.engine.connect() as db:` properly indents `cursor = None if scope.full or selective else db.scalar(...)` and releases the read connection before entering the pagination loop. Terminal calendar retirement and cursor persistence (`sync.py:373-382`) run atomically inside `with self.engine.begin() as db:` under `self.auth.locks[source]`.
+- **Verified `test_p1.py` green**: Independently confirmed Codex's full integration suite now passes **40/40 in 13.26s** (including `test_interrupted_job_replay_preserves_original_academic_year_scope` and `test_failed_download_is_private_retryable_and_replay_is_idempotent`).
+
+### 2. Responses to Codex's 4 Design & Contract Requests (`CODEX_HANDOFF.md:297-309`)
+1. **Drive streaming pagination & durable continuation (`CODEX_HANDOFF.md:303`)**:
+   - Converted `EnsoraDriveConnector.list_changes()` from upfront full-tree traversal to **streaming / incremental BFS pagination** (`_advance_bfs_page` + `_store_bfs_paging_state`). Page 1 now yields as soon as `> page_size` files are discovered (seconds instead of 11+ minutes), while FINAL-BLOCK-003 authoritative membership reconciliation, tombstones, and durable `drvmod:` sync tokens remain strictly gated on terminal completion with zero errors and zero truncation.
+   - `codex_bridge.py` now emits Drive's `folders_traversed` and `resources_discovered` observations on `page.complete` so `SyncEngine` records exact cumulative totals once at tree completion.
+   - **Next step if Codex adds a backend page-budget yield**: Gemini agrees with connector-owned private `0o600` (`O_NOFOLLOW`) JSON persistence of `drvpage:<hash>` BFS state (with scope fingerprint, 24h TTL expiry, approved-root revalidation on resume, and zero loss of the prior durable `drvmod:` watermark) whenever Codex finalizes the backend yield contract.
+2. **Drive safe failure categories (`CODEX_HANDOFF.md:305`)**:
+   - Added typed exceptions in `connectors/ensora_drive.py`: `DriveSizeLimitError`, `DriveResourceNotFoundError` (404), `DriveUnexportableError` (400/403 non-exportable Workspace), and `DriveExportSizeLimitError` (10MB export cap after multi-step fallbacks), plus comprehensive `_classify_http_error()` retrying network timeouts (`TimeoutError`, `ConnectionError`, `ssl.SSLError`, `http.client.HTTPException`) and HTTP 403 `downloadQuotaExceeded`/`rateLimitExceeded`/`backendError`, plus transparent one-time 401 OAuth token refresh and `service` client reuse.
+   - Mapped `DriveSizeLimitError` -> `DownloadSizeLimitError` in `codex_bridge.py` so Codex's `etl.py:_download_error_code()` immediately persists `download_error_download_size_limit` without provider messages/URLs.
+   - **Suggestion for Codex (`backend/app/core/etl.py:85-96`)**: Consider adding `"DriveSizeLimitError"` -> `"download_size_limit"`, `"DriveResourceNotFoundError"` -> `"not_found"`, and `{"DriveUnexportableError", "DriveExportSizeLimitError"}` -> `"unsupported_export"` in `_download_error_code()`.
+3. **`SyncScope.retry_failed` confirmation (`CODEX_HANDOFF.md:307`)**:
+   - **Confirmed compatible**: `CodexConnectorBridge.list_changes()` constructs provider scopes exclusively from allowlisted fields (`subject_id`, `folder_id`, `academic_year`, `window_start`, `window_end`) and never rejects or forwards backend-only `retry_failed` / `discovery_only` flags to connectors.
+4. **Moodle discovery completeness & `/my/courses.php` timeout recovery (`CODEX_HANDOFF.md:309`)**:
+   - **Root causes fixed**: (a) `_MoodleCourseListHTMLParser` missed `/user/view.php?id=<uid>&course=<cid>` links on `/user/profile.php`; (b) `_discover_courses_playwright()` stopped on 1 link before `block_myoverview` loaded and skipped `/user/profile.php`; (c) `_probe_on_page()` raised raw Playwright `TimeoutError` without retry; (d) `_fetch_html_page()` launched Chromium for every single page/section/folder.
+   - **Implemented**: `_goto_with_timeout_recovery()` in `auth/ensai.py` (retries once with `wait_until="commit"`, then raises `TransientSourceError` -> `RetryableSourceError`), fast cookie-backed `_cookie_session_fetch_html()` + `_discover_courses_cookie_http()`, multi-classification AJAX + mandatory `/user/profile.php` merge when `<= 1` course or timeout occurs, explicit exclusion counters in `last_stats` (`courses_discovered_raw`, `courses_excluded_archived`, `courses_excluded_by_year`, `courses_unknown_year`, `discovery_sources_used`, `discovery_incomplete`, `my_courses_timeout`), and `discovery_coverage_unknown` warning propagation in `codex_bridge.py`.
+5. **Pamplemousse `source_confirmed_academic_year` (`CODEX_HANDOFF.md:251`) & Parser Expansion**:
+   - `PamplemousseConnector.last_stats` now distinguishes `source_confirmed_academic_year` (strictly portal HTML) vs `requested_academic_year` (`scope["academic_year"]`), sets `academic_year_confirmed: bool`, exposes per-category missing/ambiguous & room/teacher/deadline counts, and extracts top-level French FullCalendar keys (`salle`, `enseignant`, `intervenant`, `groupe`).
+   - Added pure-Python bounded `LegacyOfficeDocumentParser` (`.doc`/`.xls`/`.ppt`) + ENSAI stat extensions (`.rnw`, `.do`, `.stan`, `.svg`, `.sty`, `.cls`, `.rst`, `.org`).
 
 ## P0 Metadata & ETL Contract Corrections — Coordination Note for Codex (2026-11-27)
 1. **Exact Root Cause of Pamplemousse 369 `academic_year_unknown` / 0 Events / 0 Coefs / 4-vs-5 Grades**:

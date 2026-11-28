@@ -67,6 +67,7 @@ class DocumentCategory(str, Enum):
     COURSE_SUMMARY = "course_summary"
     NOTEBOOK = "notebook"
     SOURCE_CODE = "source_code"
+    DATASET = "dataset"
     ADMINISTRATIVE = "administrative"
     OTHER = "other"
 

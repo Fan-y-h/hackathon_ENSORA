@@ -947,14 +947,33 @@ def parse_fullcalendar_json_events(
         desc_raw = entry.get("description") or ext_props.get("description") or ext_props.get("comment")
         desc = re.sub(r"<[^>]+>", "\n", str(desc_raw)).strip() if desc_raw else None
         teacher, group, subject_hint = _extract_pamplemousse_metadata(title, desc)
-        teacher = teacher or ext_props.get("teacher") or ext_props.get("enseignant") or entry.get("teacher")
-        group = group or ext_props.get("group") or ext_props.get("groupe") or entry.get("group")
+        teacher = (
+            teacher
+            or ext_props.get("teacher")
+            or ext_props.get("enseignant")
+            or ext_props.get("intervenant")
+            or ext_props.get("professeur")
+            or entry.get("teacher")
+            or entry.get("enseignant")
+            or entry.get("intervenant")
+            or entry.get("professeur")
+        )
+        group = (
+            group
+            or ext_props.get("group")
+            or ext_props.get("groupe")
+            or entry.get("group")
+            or entry.get("groupe")
+        )
         room = (
             entry.get("location")
             or entry.get("room")
+            or entry.get("salle")
+            or entry.get("lieu")
             or ext_props.get("room")
             or ext_props.get("salle")
             or ext_props.get("location")
+            or ext_props.get("lieu")
         )
         if not room and desc:
             m_room = re.search(r"(?:salle|amphi|room|lieu)\s*[:\-]\s*(.+)", desc, re.IGNORECASE)
@@ -2006,6 +2025,45 @@ def parse_pamplemousse_academic_html(html: str) -> list[AcademicRecord]:
     return records
 
 
+PAMPLEMOUSSE_SYNC_SCOPES: frozenset[str] = frozenset({"timetable", "grades", "catalog"})
+_PAMPLEMOUSSE_SCOPE_ALIASES: dict[str, str] = {
+    "timetable": "timetable",
+    "edt": "timetable",
+    "schedule": "timetable",
+    "ical": "timetable",
+    "grades": "grades",
+    "notes": "grades",
+    "marks": "grades",
+    "catalog": "catalog",
+    "academic_catalog": "catalog",
+    "inscriptions": "catalog",
+    "coefficients": "catalog",
+}
+
+
+def resolve_pamplemousse_scopes(raw: Any) -> set[str]:
+    """Normalize optional Pamplemousse sync slice selection into a subset of {timetable, grades, catalog}."""
+    if raw is None:
+        return set(PAMPLEMOUSSE_SYNC_SCOPES)
+    if isinstance(raw, str):
+        tokens = [t.strip().lower() for t in re.split(r"[,;\s]+", raw) if t.strip()]
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        tokens = [str(t).strip().lower() for t in raw if str(t).strip()]
+    else:
+        return set(PAMPLEMOUSSE_SYNC_SCOPES)
+    if not tokens or "all" in tokens:
+        return set(PAMPLEMOUSSE_SYNC_SCOPES)
+    resolved: set[str] = set()
+    for tok in tokens:
+        mapped = _PAMPLEMOUSSE_SCOPE_ALIASES.get(tok)
+        if mapped is None:
+            raise ValueError(
+                f"Unsupported Pamplemousse sync scope '{tok}'; expected one of timetable, grades, catalog, all."
+            )
+        resolved.add(mapped)
+    return resolved
+
+
 class PamplemousseConnector(SourceConnector):
     """Authorized read-only Pamplemousse connector with ICS/CSV/JSON fallbacks."""
 
@@ -2043,6 +2101,98 @@ class PamplemousseConnector(SourceConnector):
         interactive = bool((config or {}).get("interactive", False))
         return self._auth.ensure_authenticated(SourceKind.PAMPLEMOUSSE, interactive=interactive)
 
+    def _cookie_session_fetch_html(self, url: str) -> str | None:
+        """Fast authenticated HTML fetch using persisted Pamplemousse cookies (no Chromium launch).
+
+        Returns None when persisted cookies are absent or expired/redirected to CAS so callers
+        fall back seamlessly to Playwright protected-page access.
+        """
+        import json as _json
+        import os as _os
+        import requests as _requests
+        from ..auth.ensai import DEFAULT_ENSAI_USER_AGENT, SESSION_COOKIES_FILENAME
+
+        profile_dir = self._auth.profile_dir_for(SourceKind.PAMPLEMOUSSE)
+        cookie_path = profile_dir / SESSION_COOKIES_FILENAME
+        if not cookie_path.is_file() or cookie_path.is_symlink():
+            return None
+        try:
+            fd = _os.open(str(cookie_path), _os.O_RDONLY | getattr(_os, "O_NOFOLLOW", 0))
+            with _os.fdopen(fd, "r", encoding="utf-8") as fh:
+                data = _json.load(fh)
+        except Exception:
+            return None
+        raw_cookies = data.get("cookies", []) if isinstance(data, dict) else []
+        pamp_host = urlparse(self._config.pamplemousse_base_url).netloc.lower()
+        cookies = [
+            c
+            for c in self._auth._filter_institutional_cookies(raw_cookies)
+            if pamp_host == str(c.get("domain") or "").lstrip(".").lower()
+            or pamp_host.endswith("." + str(c.get("domain") or "").lstrip(".").lower())
+        ]
+        if not cookies:
+            return None
+
+        session = _requests.Session()
+        session.headers.update({"User-Agent": DEFAULT_ENSAI_USER_AGENT})
+        for c in cookies:
+            session.cookies.set(
+                str(c["name"]),
+                str(c["value"]),
+                domain=str(c.get("domain") or "").lstrip(".") or None,
+                path=str(c.get("path") or "/"),
+            )
+
+        current_url = url
+        try:
+            for hop in range(6):
+                if not is_same_origin(current_url, self._config.pamplemousse_base_url):
+                    if is_same_origin(current_url, self._config.cas_login_url):
+                        return None
+                    raise PermissionDeniedError(
+                        f"Refused to navigate outside Pamplemousse origin: {sanitize_url_for_logs(current_url)}"
+                    )
+                resp = session.get(
+                    current_url,
+                    timeout=self._config.request_timeout_sec,
+                    allow_redirects=False,
+                )
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("Location") or resp.headers.get("location")
+                    if not loc:
+                        return None
+                    next_url = urljoin(current_url, str(loc))
+                    if is_same_origin(next_url, self._config.cas_login_url):
+                        return None
+                    if not is_same_origin(next_url, self._config.pamplemousse_base_url):
+                        raise PermissionDeniedError(
+                            f"Blocked cross-origin redirect before follow: {sanitize_url_for_logs(next_url)}"
+                        )
+                    if hop >= 5:
+                        return None
+                    current_url = next_url
+                    continue
+                if resp.status_code != 200:
+                    return None
+                html_text = resp.text or ""
+                probe = self._auth.classify_page_state(
+                    SourceKind.PAMPLEMOUSSE,
+                    requested_url=url,
+                    current_url=current_url,
+                    html_content=html_text,
+                    has_service_cookies=True,
+                )
+                if not probe.authenticated:
+                    return None
+                return html_text
+            return None
+        except PermissionDeniedError:
+            raise
+        except Exception:
+            return None
+        finally:
+            session.close()
+
     def _fetch_html(
         self,
         url: str,
@@ -2060,6 +2210,10 @@ class PamplemousseConnector(SourceConnector):
                 lambda: self._page_fetcher(url),
                 max_retries=self._config.max_retries,
             )
+        if self._auth._context_factory is None:
+            fast_html = self._cookie_session_fetch_html(url)
+            if fast_html is not None:
+                return fast_html
         auto_allowed = (
             self._config.ensai_allow_automated_credential_submit
             if allow_auto_reauth is None
@@ -2828,13 +2982,30 @@ class PamplemousseConnector(SourceConnector):
 
         return events, academics
 
+    @staticmethod
+    def _stable_version_payload(raw_item: dict[str, Any]) -> dict[str, Any]:
+        """Strip volatile observation timestamps so identical upstream facts keep identical remote_version."""
+        cleaned: dict[str, Any] = {}
+        for k, v in raw_item.items():
+            if k in ("observed_at", "retrieved_at", "imported_at"):
+                continue
+            if k == "provenance" and isinstance(v, dict):
+                cleaned[k] = {
+                    pk: pv
+                    for pk, pv in v.items()
+                    if pk not in ("observed_at", "retrieved_at", "imported_at")
+                }
+            else:
+                cleaned[k] = v
+        return cleaned
+
     def normalize(self, raw_item: dict[str, Any]) -> SourceRecord:
         """Wrap either a CalendarEventRecord dict or AcademicRecord dict into SourceRecord."""
         kind = raw_item.get("record_kind", "event")
         ext_id = str(raw_item["external_id"])
         title = str(raw_item["title"])
         version = hashlib.sha256(
-            json.dumps(raw_item, sort_keys=True, default=str).encode("utf-8")
+            json.dumps(self._stable_version_payload(raw_item), sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()[:16]
         return SourceRecord(
             source_kind=SourceKind.PAMPLEMOUSSE,
@@ -2867,6 +3038,21 @@ class PamplemousseConnector(SourceConnector):
         - max_items / page_size: bounded pagination
         """
         opts = scope or {}
+        raw_sections = (
+            opts.get("sections")
+            if "sections" in opts
+            else (
+                opts.get("pamplemousse_scope")
+                or opts.get("sync_slice")
+                or opts.get("slice")
+                or opts.get("dataset")
+            )
+        )
+        active_scopes = resolve_pamplemousse_scopes(raw_sections)
+        want_timetable = "timetable" in active_scopes
+        want_grades = "grades" in active_scopes
+        want_catalog = "catalog" in active_scopes
+
         events: list[CalendarEventRecord] = []
         inscriptions_academics: list[AcademicRecord] = []
         notes_academics: list[AcademicRecord] = []
@@ -2881,7 +3067,21 @@ class PamplemousseConnector(SourceConnector):
             "edt_xhr_captured": 0,
             "edt_months_scanned": 0,
         }
-        detected_year: str | None = opts.get("academic_year")
+        requested_year: str | None = opts.get("academic_year")
+        source_confirmed_year: str | None = None
+
+        def _capture_source_year(html_blob: str | None) -> None:
+            nonlocal source_confirmed_year
+            if source_confirmed_year is None and html_blob:
+                found_yr = extract_pamplemousse_academic_year(html_blob)
+                if found_yr:
+                    source_confirmed_year = found_yr
+
+        for html_key in ("inscriptions_html", "notes_html", "timetable_html", "academic_html"):
+            if html_key in opts and isinstance(opts[html_key], str):
+                _capture_source_year(opts[html_key])
+
+        detected_year: str | None = source_confirmed_year or requested_year
 
         range_start: datetime | None = opts.get("range_start")
         range_end: datetime | None = opts.get("range_end")
@@ -2901,7 +3101,7 @@ class PamplemousseConnector(SourceConnector):
             "fullcalendar_json",
             "fullcalendar_html",
         )
-        if "ics_text" in opts:
+        if "ics_text" in opts and want_timetable:
             ics_used = True
             events.extend(
                 self.import_ics_text(
@@ -2913,19 +3113,23 @@ class PamplemousseConnector(SourceConnector):
             )
         if "csv_text" in opts:
             ev, ac = self.import_csv_text(opts["csv_text"])
-            events.extend(ev)
-            other_academics.extend(ac)
+            if want_timetable:
+                events.extend(ev)
+            if want_grades or want_catalog:
+                other_academics.extend(ac)
         if "json_data" in opts:
             ev, ac = self.import_json_data(opts["json_data"])
-            events.extend(ev)
-            other_academics.extend(ac)
-        if "timetable_html" in opts:
+            if want_timetable:
+                events.extend(ev)
+            if want_grades or want_catalog:
+                other_academics.extend(ac)
+        if "timetable_html" in opts and want_timetable:
             events.extend(
                 parse_pamplemousse_timetable_html(
                     opts["timetable_html"], academic_year=detected_year
                 )
             )
-        if "fullcalendar_json" in opts:
+        if "fullcalendar_json" in opts and want_timetable:
             events.extend(
                 parse_fullcalendar_json_events(
                     opts["fullcalendar_json"],
@@ -2934,7 +3138,7 @@ class PamplemousseConnector(SourceConnector):
                     range_end=range_end,
                 )
             )
-        if "fullcalendar_html" in opts:
+        if "fullcalendar_html" in opts and want_timetable:
             events.extend(
                 parse_fullcalendar_list_html(
                     opts["fullcalendar_html"],
@@ -2943,17 +3147,17 @@ class PamplemousseConnector(SourceConnector):
                     range_end=range_end,
                 )
             )
-        if "inscriptions_html" in opts:
+        if "inscriptions_html" in opts and want_catalog:
             inscriptions_academics.extend(
                 parse_pamplemousse_inscriptions_html(
                     opts["inscriptions_html"], academic_year=detected_year
                 )
             )
-        if "notes_html" in opts:
+        if "notes_html" in opts and want_grades:
             notes_academics.extend(
                 parse_pamplemousse_notes_html(opts["notes_html"], academic_year=detected_year)
             )
-        if "academic_html" in opts:
+        if "academic_html" in opts and (want_grades or want_catalog):
             other_academics.extend(parse_pamplemousse_academic_html(opts["academic_html"]))
 
         # Live authenticated browser traversal across Mon Espace -> iCalendar/EDT + Inscriptions + Notes
@@ -2967,17 +3171,21 @@ class PamplemousseConnector(SourceConnector):
                 allow_auto_reauth=allow_auto_reauth,
             )
             pages_visited.append("index.php")
-            if not detected_year:
-                detected_year = extract_pamplemousse_academic_year(home_html)
+            _capture_source_year(home_html)
+            if source_confirmed_year:
+                detected_year = source_confirmed_year
 
             # Check if start_url itself already holds timetable or academic data (fixture/direct URL)
-            events.extend(parse_pamplemousse_timetable_html(home_html, academic_year=detected_year))
-            inscriptions_academics.extend(
-                parse_pamplemousse_inscriptions_html(home_html, academic_year=detected_year)
-            )
-            notes_academics.extend(
-                parse_pamplemousse_notes_html(home_html, academic_year=detected_year)
-            )
+            if want_timetable:
+                events.extend(parse_pamplemousse_timetable_html(home_html, academic_year=detected_year))
+            if want_catalog:
+                inscriptions_academics.extend(
+                    parse_pamplemousse_inscriptions_html(home_html, academic_year=detected_year)
+                )
+            if want_grades:
+                notes_academics.extend(
+                    parse_pamplemousse_notes_html(home_html, academic_year=detected_year)
+                )
 
             nav = discover_pamplemousse_nav_links(home_html, start_url)
             discovered_explicit = self._discover_pamplemousse_subpages(home_html, start_url)
@@ -2986,9 +3194,13 @@ class PamplemousseConnector(SourceConnector):
                 or bool(nav.get("inscriptions") or nav.get("notes") or nav.get("icalendar"))
             )
 
-            # 1. Official iCalendar export (preferred when available; fetched via HTTP/APIRequestContext so attachments never abort page.goto)
-            ical_url = nav.get("icalendar") or extract_ical_feed_url(home_html, start_url)
-            if ical_url:
+            # 1. Official iCalendar export (timetable slice only)
+            ical_url = (
+                (nav.get("icalendar") or extract_ical_feed_url(home_html, start_url))
+                if want_timetable
+                else None
+            )
+            if want_timetable and ical_url:
                 try:
                     ical_payload, tried = self._fetch_ical_payload(
                         ical_url,
@@ -3013,13 +3225,16 @@ class PamplemousseConnector(SourceConnector):
                 except Exception as exc:
                     warnings.append(f"pamplemousse_ical_unavailable:{type(exc).__name__}")
 
-            # 2. Timetable EDT (`index.php?p=121`) whenever iCalendar yielded no events
-            edt_url = nav.get("edt") or (
-                urljoin(start_url, PAMPLEMOUSSE_EDT_PATH)
-                if not events and (looks_like_leos or not discovered_explicit)
-                else None
-            )
-            if edt_url and not events:
+            # 2. Timetable EDT (`index.php?p=121`) whenever timetable requested and iCalendar yielded no events
+            edt_url = (
+                nav.get("edt")
+                or (
+                    urljoin(start_url, PAMPLEMOUSSE_EDT_PATH)
+                    if not events and (looks_like_leos or not discovered_explicit)
+                    else None
+                )
+            ) if want_timetable else None
+            if want_timetable and edt_url and not events:
                 try:
                     edt_events, edt_html = self._fetch_edt_playwright(
                         edt_url,
@@ -3069,13 +3284,16 @@ class PamplemousseConnector(SourceConnector):
                 except Exception as exc:
                     warnings.append(f"pamplemousse_edt_extraction_failed:{type(exc).__name__}")
 
-            # 3. Academic catalog & coefficients — Inscriptions (`index.php?p=107`)
-            insc_url = nav.get("inscriptions") or (
-                urljoin(start_url, PAMPLEMOUSSE_INSCRIPTIONS_PATH)
-                if not inscriptions_academics and not discovered_explicit
-                else None
-            )
-            if insc_url and not inscriptions_academics:
+            # 3. Academic catalog & coefficients — Inscriptions (`index.php?p=107`, catalog slice only)
+            insc_url = (
+                nav.get("inscriptions")
+                or (
+                    urljoin(start_url, PAMPLEMOUSSE_INSCRIPTIONS_PATH)
+                    if not inscriptions_academics and not discovered_explicit
+                    else None
+                )
+            ) if want_catalog else None
+            if want_catalog and insc_url and not inscriptions_academics:
                 try:
                     insc_html = self._fetch_html(
                         insc_url,
@@ -3083,8 +3301,9 @@ class PamplemousseConnector(SourceConnector):
                         allow_auto_reauth=allow_auto_reauth,
                     )
                     pages_visited.append("inscriptions")
-                    if not detected_year:
-                        detected_year = extract_pamplemousse_academic_year(insc_html)
+                    _capture_source_year(insc_html)
+                    if source_confirmed_year:
+                        detected_year = source_confirmed_year
                     inscriptions_academics.extend(
                         parse_pamplemousse_inscriptions_html(
                             insc_html, academic_year=detected_year
@@ -3095,13 +3314,16 @@ class PamplemousseConnector(SourceConnector):
                 except Exception as exc:
                     warnings.append(f"pamplemousse_inscriptions_failed:{type(exc).__name__}")
 
-            # 4. Detailed grades — Notes (`index.php?p=1052`)
-            notes_url = nav.get("notes") or (
-                urljoin(start_url, PAMPLEMOUSSE_NOTES_PATH)
-                if not notes_academics and not discovered_explicit
-                else None
-            )
-            if notes_url and not notes_academics:
+            # 4. Detailed grades — Notes (`index.php?p=1052`, grades slice only)
+            notes_url = (
+                nav.get("notes")
+                or (
+                    urljoin(start_url, PAMPLEMOUSSE_NOTES_PATH)
+                    if not notes_academics and not discovered_explicit
+                    else None
+                )
+            ) if want_grades else None
+            if want_grades and notes_url and not notes_academics:
                 try:
                     notes_html = self._fetch_html(
                         notes_url,
@@ -3109,8 +3331,9 @@ class PamplemousseConnector(SourceConnector):
                         allow_auto_reauth=allow_auto_reauth,
                     )
                     pages_visited.append("notes")
-                    if not detected_year:
-                        detected_year = extract_pamplemousse_academic_year(notes_html)
+                    _capture_source_year(notes_html)
+                    if source_confirmed_year:
+                        detected_year = source_confirmed_year
                     parsed_notes = parse_pamplemousse_notes_html(
                         notes_html, academic_year=detected_year
                     )
@@ -3123,30 +3346,31 @@ class PamplemousseConnector(SourceConnector):
                 except Exception as exc:
                     warnings.append(f"pamplemousse_notes_failed:{type(exc).__name__}")
 
-            # 5. Any additional explicit subpages discovered on home_html not yet visited
+            # 5. Additional explicit subpages only when running full (all-slices) Pamplemousse discovery
             visited_urls = {start_url, ical_url, edt_url, insc_url, notes_url}
-            for sub_url in discovered_explicit:
-                if sub_url in visited_urls:
-                    continue
-                visited_urls.add(sub_url)
-                try:
-                    sub_body = self._fetch_html(
-                        sub_url,
-                        interactive=interactive,
-                        allow_auto_reauth=allow_auto_reauth,
-                    )
-                except AuthenticationRequiredError:
-                    raise
-                except Exception:
-                    continue
-                if "BEGIN:VCALENDAR" in sub_body:
-                    ics_used = True
-                    events.extend(
-                        self.import_ics_text(sub_body, range_start=range_start, range_end=range_end)
-                    )
-                else:
-                    events.extend(parse_pamplemousse_timetable_html(sub_body))
-                    other_academics.extend(parse_pamplemousse_academic_html(sub_body))
+            if active_scopes == PAMPLEMOUSSE_SYNC_SCOPES:
+                for sub_url in discovered_explicit:
+                    if sub_url in visited_urls:
+                        continue
+                    visited_urls.add(sub_url)
+                    try:
+                        sub_body = self._fetch_html(
+                            sub_url,
+                            interactive=interactive,
+                            allow_auto_reauth=allow_auto_reauth,
+                        )
+                    except AuthenticationRequiredError:
+                        raise
+                    except Exception:
+                        continue
+                    if "BEGIN:VCALENDAR" in sub_body:
+                        ics_used = True
+                        events.extend(
+                            self.import_ics_text(sub_body, range_start=range_start, range_end=range_end)
+                        )
+                    else:
+                        events.extend(parse_pamplemousse_timetable_html(sub_body))
+                        other_academics.extend(parse_pamplemousse_academic_html(sub_body))
 
             if not events and not inscriptions_academics and not notes_academics and not other_academics:
                 warnings.append(
@@ -3180,18 +3404,26 @@ class PamplemousseConnector(SourceConnector):
         subject_coefs = [r for r in enrolled_subjects if r.weight is not None]
         ects_vals = [r for r in enrolled_subjects if (r.provenance or {}).get("ects") is not None]
         available_grades = [r for r in reconciled_academics if r.grade_value is not None]
+        ambiguous_events_count = sum(1 for ev in dedup_events if ev.confirmation_required)
+        missing_coefficients_count = sum(1 for r in enrolled_subjects if r.weight_status == ValueStatus.MISSING)
+        ambiguous_reconciliations_count = sum(
+            1
+            for r in reconciled_academics
+            if (r.provenance or {}).get("reconciliation_status") == "ambiguous"
+        )
+        missing_grades_count = sum(1 for r in assessments if r.grade_status == ValueStatus.MISSING)
         missing_or_ambiguous = (
-            sum(1 for ev in dedup_events if ev.confirmation_required)
-            + sum(1 for r in enrolled_subjects if r.weight_status == ValueStatus.MISSING)
-            + sum(
-                1
-                for r in reconciled_academics
-                if (r.provenance or {}).get("reconciliation_status") == "ambiguous"
-            )
-            + sum(1 for r in assessments if r.grade_status == ValueStatus.MISSING)
+            ambiguous_events_count
+            + missing_coefficients_count
+            + ambiguous_reconciliations_count
+            + missing_grades_count
         )
         self.last_stats = {
+            "active_scopes": sorted(active_scopes),
             "academic_year": detected_year,
+            "source_confirmed_academic_year": source_confirmed_year,
+            "requested_academic_year": requested_year,
+            "academic_year_confirmed": source_confirmed_year is not None,
             "pages_visited": pages_visited,
             "ics_used": ics_used,
             "timetable_strategy": timetable_diag["timetable_strategy"],
@@ -3199,6 +3431,11 @@ class PamplemousseConnector(SourceConnector):
             "edt_xhr_captured": timetable_diag["edt_xhr_captured"],
             "edt_months_scanned": timetable_diag["edt_months_scanned"],
             "timetable_events": len(dedup_events),
+            "events_with_room": sum(1 for ev in dedup_events if ev.room),
+            "events_with_teacher": sum(1 for ev in dedup_events if ev.teacher),
+            "events_with_deadline": sum(
+                1 for ev in dedup_events if ev.event_type.value in ("exam", "deadline", "presentation")
+            ),
             "enrolled_subjects": len(enrolled_subjects),
             "teaching_units": len(teaching_units),
             "semester_associations": len(semesters),
@@ -3207,19 +3444,46 @@ class PamplemousseConnector(SourceConnector):
             "available_grades": len(available_grades),
             "assessment_records": len(assessments),
             "aggregate_grades": len(aggregates),
+            "ambiguous_events_count": ambiguous_events_count,
+            "missing_coefficients_count": missing_coefficients_count,
+            "missing_grades_count": missing_grades_count,
+            "ambiguous_reconciliations_count": ambiguous_reconciliations_count,
             "missing_or_ambiguous_count": missing_or_ambiguous,
         }
 
         max_items = opts.get("max_items")
+        known_versions: dict[str, str] = dict(opts.get("known_versions") or {})
         all_records: list[SourceRecord] = []
+        unchanged_skipped = 0
         for ev in dedup_events:
             d = ev.to_dict()
             d["record_kind"] = "event"
-            all_records.append(self.normalize(d))
+            rec = self.normalize(d)
+            if (
+                rec.external_id in known_versions
+                and rec.remote_version is not None
+                and known_versions[rec.external_id] == rec.remote_version
+            ):
+                unchanged_skipped += 1
+                continue
+            all_records.append(rec)
+        normalized_academics: list[SourceRecord] = []
         for ac in reconciled_academics:
             d = ac.to_dict()
             d["record_kind"] = "academic"
-            all_records.append(self.normalize(d))
+            normalized_academics.append(self.normalize(d))
+        # Skip academic records as a consistent whole when zero academic facts changed so
+        # parent-before-child hierarchy and sibling-weight derivation always stay intact on updates.
+        if normalized_academics and known_versions and all(
+            r.external_id in known_versions
+            and r.remote_version is not None
+            and known_versions[r.external_id] == r.remote_version
+            for r in normalized_academics
+        ):
+            unchanged_skipped += len(normalized_academics)
+        else:
+            all_records.extend(normalized_academics)
+        self.last_stats["unchanged_skipped"] = unchanged_skipped
 
         if max_items is not None:
             all_records = all_records[: int(max_items)]

@@ -94,6 +94,12 @@ def _classify_download_error(rec: Any, exc: Exception) -> dict[str, Any]:
         PermissionDeniedError,
         TransientSourceError,
     )
+    from backend.app.modules.ingestion.connectors.ensora_drive import (
+        DriveExportSizeLimitError,
+        DriveResourceNotFoundError,
+        DriveSizeLimitError,
+        DriveUnexportableError,
+    )
     from backend.app.modules.ingestion.connectors.moodle import DownloadSizeLimitError
     from backend.app.modules.ingestion.credentials import redact_sensitive_text
 
@@ -106,16 +112,30 @@ def _classify_download_error(rec: Any, exc: Exception) -> dict[str, Any]:
     raw_url = getattr(rec, "download_url", None) or getattr(rec, "source_url", None)
     if raw_url:
         detail["url_path"] = sanitize_url_for_logs(str(raw_url))
-    if isinstance(exc, DownloadSizeLimitError):
+    if isinstance(exc, (DownloadSizeLimitError, DriveSizeLimitError)):
         detail["reason"] = "size_limit_exceeded"
         detail["size_bytes"] = exc.size_bytes
         detail["limit_bytes"] = exc.limit_bytes
+    elif isinstance(exc, DriveResourceNotFoundError):
+        detail["reason"] = "not_found"
+    elif isinstance(exc, DriveUnexportableError):
+        detail["reason"] = "unexportable_workspace"
+    elif isinstance(exc, DriveExportSizeLimitError):
+        detail["reason"] = "export_size_limit"
     elif isinstance(exc, AuthenticationRequiredError):
-        detail["reason"] = "cas_login_required"
+        detail["reason"] = "auth_expired"
     elif isinstance(exc, PermissionDeniedError):
         detail["reason"] = "permission_denied"
     elif isinstance(exc, TransientSourceError):
-        detail["reason"] = f"transient_http_{exc.status_code or 'error'}"
+        detail["reason"] = (
+            "rate_limit"
+            if exc.status_code == 429
+            else (
+                "network_timeout"
+                if exc.status_code is None
+                else f"transient_http_{exc.status_code}"
+            )
+        )
     else:
         msg = redact_sensitive_text(str(exc)).strip()
         if "exceeds configured size limit" in msg.lower() or "exceeded limit" in msg.lower():
@@ -125,6 +145,30 @@ def _classify_download_error(rec: Any, exc: Exception) -> dict[str, Any]:
         else:
             detail["reason"] = msg[:160] or type(exc).__name__
     return detail
+
+
+def _categorize_partial_parse(parsed: Any) -> str | None:
+    """Classify privacy-safe partial-parse reason without exposing filenames or document text."""
+    if parsed is None:
+        return "unsupported_format"
+    unsupported = tuple(getattr(parsed, "unsupported_elements", ()) or ())
+    warnings = tuple(str(w).lower() for w in (getattr(parsed, "warnings", ()) or ()))
+    if "scanned_pages_without_ocr_engine" in unsupported:
+        return "scanned_pages_without_ocr"
+    if "ocr_engine_unavailable" in unsupported:
+        return "ocr_unavailable"
+    if any("legacy_binary_office" in w for w in warnings):
+        return "legacy_binary_office"
+    if any("zip_contains_no_parseable_text_members" in w for w in warnings):
+        return "non_textual_archive"
+    if any("zip archive truncated" in w or "skipped oversized zip" in w or "high-compression-ratio" in w for w in warnings):
+        return "archive_limit_truncated"
+    if any("pdf_mixed_media_empty_pages" in w for w in warnings):
+        return "mixed_media_pages_present"
+    quality = float(getattr(parsed, "extraction_quality", 0.0) or 0.0)
+    if 0.0 < quality < 0.70 or unsupported:
+        return "partial_extraction"
+    return None
 
 
 def _load_retry_external_ids(retry_file: Path | None, explicit_ids: list[str] | None) -> set[str]:
@@ -284,6 +328,12 @@ def main(argv: list[str] | None = None) -> int:
     p_pamp.add_argument("--max-items", type=int, default=200)
     p_pamp.add_argument("--all", action="store_true", help="Remove max-items cap and collect all pages.")
     p_pamp.add_argument("--academic-year", type=str, default=None, help="Optional academic year label (e.g. 2026-2027).")
+    p_pamp.add_argument(
+        "--scope",
+        choices=("all", "timetable", "grades", "catalog"),
+        default="all",
+        help="Independent Pamplemousse sync slice (timetable=6h, grades=24h, catalog=7d, or all).",
+    )
     p_pamp.add_argument("--days-back", type=int, default=None, help="Optional timetable history window in days.")
     p_pamp.add_argument("--days-ahead", type=int, default=None, help="Optional timetable future window in days.")
     p_pamp.add_argument("--ics", type=Path, default=None)
@@ -292,8 +342,13 @@ def main(argv: list[str] | None = None) -> int:
     p_pamp.add_argument("--non-interactive", action="store_true", help="Never open a visible browser window on session expiry.")
     p_pamp.add_argument("--yes", action="store_true")
 
-    p_drive = sub.add_parser("discover-drive", help="Discover and optionally verify downloads/parsing inside Ensora shared Drive root.")
-    p_drive.add_argument("--cohort", action="append", default=None)
+    p_drive = sub.add_parser("discover-drive", help="Discover and optionally verify downloads/parsing inside approved Ensora academic Drive folders (1A/2A/3A; Global excluded).")
+    p_drive.add_argument(
+        "--cohort",
+        action="append",
+        default=None,
+        help="Optional subset of approved academic folders (1A, 2A, 3A). Global is always excluded.",
+    )
     p_drive.add_argument("--max-files", type=int, default=25)
     p_drive.add_argument("--all", action="store_true", help="Exhaustive recursive discovery across all pages within the approved Ensora root.")
     p_drive.add_argument("--verify-downloads", type=int, default=0, help="Download and parse up to N discovered files/Workspace exports (redacted stats only).")
@@ -706,6 +761,7 @@ def main(argv: list[str] | None = None) -> int:
         scope: dict[str, Any] = {
             "max_items": None if args.all else args.max_items,
             "academic_year": args.academic_year,
+            "sections": args.scope,
             "days_back": args.days_back,
             "days_ahead": args.days_ahead,
             "interactive": interactive_sync,
@@ -816,6 +872,7 @@ def main(argv: list[str] | None = None) -> int:
             attempted = 0
             downloaded_ok = 0
             parsed_ok = 0
+            partially_parsed = 0
             parsed_empty = 0
             unsupported_count = 0
             total_blocks = 0
@@ -824,6 +881,7 @@ def main(argv: list[str] | None = None) -> int:
             unparsed_external_ids = []
             parsed_by_mime: dict[str, int] = {}
             unparsed_by_mime: dict[str, int] = {}
+            partial_by_category: dict[str, int] = {}
             for rec in all_items:
                 if verify_cap is not None and attempted >= verify_cap:
                     break
@@ -838,11 +896,21 @@ def main(argv: list[str] | None = None) -> int:
                         filename=blob.filename,
                         mime_type=blob.mime_type,
                     )
+                    partial_cat = _categorize_partial_parse(parsed)
                     if parsed and parsed.blocks:
-                        parsed_ok += 1
                         total_blocks += len(parsed.blocks)
                         parsed_by_mime[blob.mime_type] = parsed_by_mime.get(blob.mime_type, 0) + 1
+                        if partial_cat and partial_cat != "mixed_media_pages_present":
+                            partially_parsed += 1
+                            partial_by_category[partial_cat] = partial_by_category.get(partial_cat, 0) + 1
+                        else:
+                            parsed_ok += 1
+                            if partial_cat == "mixed_media_pages_present":
+                                partial_by_category[partial_cat] = partial_by_category.get(partial_cat, 0) + 1
                     else:
+                        if partial_cat in ("scanned_pages_without_ocr", "ocr_unavailable"):
+                            partially_parsed += 1
+                            partial_by_category[partial_cat] = partial_by_category.get(partial_cat, 0) + 1
                         unparsed_external_ids.append(rec.external_id)
                         unparsed_by_mime[blob.mime_type] = unparsed_by_mime.get(blob.mime_type, 0) + 1
                         if parsed and parsed.parser_name == "unsupported":
@@ -856,12 +924,14 @@ def main(argv: list[str] | None = None) -> int:
                 "attempted": attempted,
                 "downloaded_ok": downloaded_ok,
                 "parsed_ok": parsed_ok,
+                "partially_parsed": partially_parsed,
                 "parsed_empty": parsed_empty,
                 "unsupported_count": unsupported_count,
                 "failed_count": len(failure_types),
                 "parsed_blocks_total": total_blocks,
                 "parsed_by_mime": parsed_by_mime,
                 "unparsed_by_mime": unparsed_by_mime,
+                "partial_by_category": partial_by_category,
                 "failure_types": failure_types,
                 "failure_details": failure_details,
                 "unparsed_external_ids": unparsed_external_ids,

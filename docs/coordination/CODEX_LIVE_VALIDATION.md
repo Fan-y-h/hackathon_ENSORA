@@ -261,3 +261,109 @@ Google Calendar's calendar_window_unverified came from the bridge omitting Calen
 scripts/sync.py now emits a privacy-safe aggregate progress snapshot every ten seconds during long runs. It includes allowlisted counts only; no titles, grades, event metadata, source payloads, or credentials are emitted.
 
 Evidence: Gemini's source-owned targeted regressions 2 passed in 0.71s; Codex's five-grade, three-busy-calendar and safe-progress regressions 3 passed in 0.90s; complete backend suite 108 passed in 6.31s; pip check clean. No live provider call or live database access occurred. After Drive completes, rerun Pamplemousse for 2026-2027, then Google Calendar for 2026-09-01T00:00:00+02:00 through 2027-09-01T00:00:00+02:00, and audit each result before Moodle bulk synchronization.
+
+## Accelerated sprint operational update — 2026-11-28
+
+The latest operator report supersedes older audit entries above: current Drive job `2a7a5408-6f0a-4a02-913d-837d3f491978` is being stopped by its human operator. The latest audit has 105 persisted documents/versions, 994 chunks, 105 unresolved documents, zero current pending download failure markers, and no current-run discovery/download/persistence metrics. Prior discovery of 958 resources in 492 folders and 41 download failures does not prove all 958 were processed or that the failures were recovered. Do not run another persistent job until the operator confirms the current writer lock is released.
+
+The P1 runtime now supports `--retry JOB_ID` for interrupted/failed/partial/cancelled runs. On the next Runtime startup, stale queued/running runs are changed to `interrupted` only after the process acquires `.runtime.lock`; no DB rows or blobs are deleted. `--retry` replays the prior job scope after checking current read consent and connected status. Authentication recovery remains `--resume JOB_ID --source SOURCE` after explicit reauthorization.
+
+Download failures from the new pipeline are persisted as redacted, allowlisted error categories. `--retry-failed` requires one `--source` and selects only documents with those markers, leaving successful versions and user-confirmed links unchanged. Since the current audit reports zero historical markers, do **not** use selective retry as the only recovery of the historic 41; run a full Drive scope once the active process is stopped. A full rerun compares source revisions and reuses unchanged successful versions. After new failures are captured, use the selective retry command below.
+
+The current Gemini Drive connector (see `GEMINI_STATUS.md`, `GEMINI_HANDOFF.md`, and `test_sprint2_drive_batched_listing_durable_paging_across_restarts_and_small_bridge_batch`) now persists metadata-only BFS snapshots with mode `0600`, `O_NOFOLLOW`, a 24-hour TTL, scope fingerprinting, approved-root revalidation after restart, and per-page folder/resource deltas. The previous statement in this section that Drive paging was memory-only is superseded. Codex additionally persists the returned `drvpage` cursor in the sync run after each successfully committed page, without exposing it through APIs or logs. Synthetic restart/page replay is covered; provider latency and historical failure recovery remain unverified on live data.
+
+The latest reported live source states are Moodle `ERROR/adapter_error` (catalog timeout/one discovered course) and Pamplemousse `ERROR/adapter_error`; acquisition and persistence must be revalidated. Google Calendar is reported as 12 persisted events (7 busy, 3 cancelled, and 2 other/free or nonblocking events by difference); preserve this previously successful data. No new live source operation was performed by Codex.
+
+### Operator recovery and complete acquisition commands
+
+Run only after the human operator stops the existing Drive process and confirms the runtime lock is free. These commands write private source data into the local SQLite/blob store. Run sources sequentially and inspect `audit_data.py` after each. Use the same authorized 2026-2027 scope throughout Moodle/Pamplemousse.
+
+```bash
+cd /home/ensai/hackathon_ENSORA
+
+# Offline status and exact prior-job audit (aggregate-only, no source contents)
+.venv/bin/python scripts/audit_data.py --job-id 2a7a5408-6f0a-4a02-913d-837d3f491978
+
+# If the interrupted job's stored scope is the desired Drive scope, replay it after restart:
+.venv/bin/python scripts/sync.py --retry 2a7a5408-6f0a-4a02-913d-837d3f491978 --source ensora_drive --approve
+.venv/bin/python scripts/audit_data.py
+
+# Otherwise, exhaustively rescan the approved root. Existing unchanged versions are reused;
+# this full scan is required to rediscover historical failures absent from the database.
+MAX_DOCUMENT_BYTES=104857600 .venv/bin/python scripts/sync.py --source ensora_drive --full --approve
+.venv/bin/python scripts/audit_data.py
+
+# Retry only newly persisted failed downloads; the old zero-marker failures are not selected.
+.venv/bin/python scripts/sync.py --source ensora_drive --full --retry-failed --approve
+.venv/bin/python scripts/audit_data.py
+
+# Validate each institution source separately. If REAUTH_REQUIRED, complete official CAS/MFA
+# directly in the browser and validate again; never provide passwords through this conversation.
+.venv/bin/python scripts/check_connections.py --validate --source moodle
+.venv/bin/python scripts/check_connections.py --validate --source pamplemousse
+
+# Reauthorize only when validation explicitly requires it:
+.venv/bin/python scripts/onboarding.py --source moodle --reauthorize
+.venv/bin/python scripts/check_connections.py --validate --source moodle
+.venv/bin/python scripts/onboarding.py --source pamplemousse --reauthorize
+.venv/bin/python scripts/check_connections.py --validate --source pamplemousse
+
+# Persistent 2026-2027 source runs; sequential execution and per-run audit are required.
+MAX_DOCUMENT_BYTES=104857600 .venv/bin/python scripts/sync.py --source moodle --academic-year 2026-2027 --full --approve
+.venv/bin/python scripts/audit_data.py
+.venv/bin/python scripts/sync.py --source pamplemousse --academic-year 2026-2027 --full --approve
+.venv/bin/python scripts/audit_data.py
+
+# Calendar is already reported live-persisted. Rerun its bounded range only if audit shows it is needed.
+.venv/bin/python scripts/sync.py --source google_calendar --window-start '2026-09-01T00:00:00+02:00' --window-end '2027-09-01T00:00:00+02:00' --full --approve
+.venv/bin/python scripts/audit_data.py
+```
+
+After an interrupted run, execute retry in a fresh CLI invocation. It acquires the exclusive runtime lock, marks stale statuses interrupted and creates an auditable successor. If the current owner has not stopped, the CLI must refuse with `RuntimeBusy`; do not work around the lock.
+
+Start with automatic synchronization disabled and validate P2/P3 using aggregate responses only:
+
+```bash
+SYNC_ON_STARTUP=false SYNC_INTERVAL_MINUTES=0 .venv/bin/python scripts/start.py --skip-onboarding
+# In another terminal:
+.venv/bin/python scripts/audit_data.py --api-base http://127.0.0.1:8765
+```
+
+### Latest synthetic verification and blockers
+
+- Focused Codex recovery/auth/retry tests: **4 passed**; retry + user-override/version regression: **1 passed**; Drive streaming BFS regression: **1 passed**; Codex integration suite: **41 passed in 12.74s**.
+- Latest full shared suite: **114 passed, 1 failed**. The remaining failure is Gemini-owned `test_r2_bridge_fetched_document_metadata_and_page_size_cap`: the assertion expects 500 for Drive while the new streaming cap is 25. Gemini has been asked to update it; Codex did not modify Gemini files. Rerun compileall, full suite and pip check after coordination.
+- Blocking for full acquisition: human confirmation that the current Drive process is stopped; diagnosis/live validation of Moodle and Pamplemousse `adapter_error`; durable Drive page-state continuation and page-level folder/resource telemetry remain open.
+- No live provider calls, credentials, current database contents or Git writes were accessed by Codex during this cycle.
+# Source schedules and restricted Drive scope — synthetic readiness (2026-11-28)
+
+Schedule defaults are Drive and Moodle every 7 days, Pamplemousse timetable every 6 hours, grades every 24 hours, catalog every 7 days, and Google Calendar every 30 minutes. User-configurable intervals are 30m, 1h, 6h, 12h, 1d, 3d, 7d, 14d, or 30d; `null` means manual-only. The settings persist locally. The scheduler is asynchronous and serializes through the existing runtime sync engine. No human-operated live schedule run has been performed.
+
+Frontend endpoints:
+
+```text
+GET  /api/v1/sync/schedule
+PATCH /api/v1/sync/schedule
+POST /api/v1/sync/schedule/reset
+POST /api/v1/sync                    # immediate manual refresh (source/scope body)
+```
+
+Drive's canonical backend rule is `backend/app/core/drive_scope.py`: only top-level `1A`, `2A`, and `3A` under the approved root are in scope. Top-level `Global`, other top-level folders and records lacking verifiable folder provenance are excluded from acquisition and downstream active-document APIs. Existing Global records are retained but hidden. To inspect candidates, stop application writers first and run:
+
+```bash
+.venv/bin/python scripts/drive_scope_cleanup.py
+# Only after reviewing the aggregate dry-run and stopping all writers:
+.venv/bin/python scripts/drive_scope_cleanup.py --apply
+```
+
+`--apply` takes the runtime lock and tombstones metadata only; it does not delete file blobs, versions or academic rows. Do not execute it during an operator-owned synchronization. Gemini connector independently enforces the same scope at Drive API traversal, downloads, shortcuts, cached paging, and retries; canonicalizing the duplicate connector constant is a coordination request pending Gemini response.
+
+Synthetic evidence: focused schedule and Drive-scope regressions, including Gemini's strict traversal fixture, **6 passed**. Full suite remains **incomplete** because test execution stalls in existing async ASGI cases; compileall was clean; pip check is pending. Nothing in this entry represents live validation.
+
+Verification update: two additional Codex regressions (catalog-arrival document reconciliation and safe Global cleanup) passed. `python -m compileall -q backend/app scripts` passed and `.venv/bin/python -m pip check` reported no broken requirements. Pytest collected 132 tests, but full and narrowed runs stalled in ASGI-backed tests; do not treat the suite as green until those tests complete. No live API, source, configuration, or database validation was performed.
+
+## Delivery checkpoint — operator evidence update
+
+The human operator now reports **132 backend tests passed**, compilation and dependency checks succeeded, 958 Drive documents persisted before scope exclusion, 20 Global documents subsequently excluded while preserving files/versions, Pamplemousse persisted 214 events, 71 subjects, 71 subject coefficients, 83 coefficient records and 5 grades, and Google Calendar had prior live validation. These are human-reported and were not independently read from the private database here.
+
+Open live acceptance: the Moodle academic-year filter excludes 19/20 discovered courses; authorized restricted Drive discovery has not completed live verification; reconciliation examined 938 Drive documents but matched none. Do not mark those rows `LIVE_VERIFIED` or claim complete P2/P3 data association. Gemini's response is pending on allow-list centralization, Moodle-year filtering, and the zero-match reconciliation evidence.

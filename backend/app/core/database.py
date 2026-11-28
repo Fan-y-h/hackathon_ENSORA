@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.engine import URL
 
 from .calendar import interval_time
+from .drive_scope import folder_scope
 
 metadata = MetaData()
 
@@ -72,6 +73,8 @@ def open_database(path: Path):
     @event.listens_for(engine, "connect")
     def enable_foreign_keys(conn, _):
         conn.create_function("ensora_interval_time", 3, interval_time, deterministic=True)
+        conn.create_function("ensora_drive_folder_allowed", 1,
+                             lambda folder: int(folder_scope(folder) == "allowed"), deterministic=True)
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA journal_mode=WAL")
 

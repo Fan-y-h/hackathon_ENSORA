@@ -1,16 +1,20 @@
 import hashlib
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 from time import monotonic, sleep
 
 from httpx import ASGITransport, AsyncClient
 import asyncio
 from pydantic import SecretStr, ValidationError
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import func, insert, select, text, update
 
 from backend.app.contracts.authentication import AuthenticationResult, ConnectionStatus, ProfileBusy, ReauthenticationRequired
 from backend.app.contracts.sources import ChangePage, Document, Provenance, SourceKind, SyncScope
-from backend.app.core.database import chunks, documents, runs, versions
+from backend.app.contracts.sync import SyncScheduleSettings
+from backend.app.contracts.users import Preferences
+from backend.app.core.database import LOCAL_USER, chunks, connections, documents, new_id, runs, users, versions
 from backend.app.core.runtime import Components, Runtime
 from backend.app.core.security import KeyringCredentialStore, LockedBrowserSession
 from backend.app.core.settings import Settings
@@ -37,6 +41,143 @@ def test_config_preserves_file_and_applies_overrides(tmp_path, monkeypatch):
     assert settings.local_data_dir.stat().st_mode & 0o777 == 0o700
     with pytest.raises(ValidationError):
         Settings(google_project_id="unexpected-project")
+
+
+def test_source_sync_schedules_cooldowns_backoff_and_persistence(settings, monkeypatch):
+    now = datetime(2026, 11, 28, 12, tzinfo=UTC)
+    sources = (SourceKind.ENSORA_DRIVE, SourceKind.MOODLE)
+    components = Components(connectors={source: Connector() for source in sources})
+    with Runtime(settings, components) as runtime:
+        defaults = runtime.schedule_status(now)
+        by_source = {item.source: item for item in defaults.sources if item.scope_key is None}
+        assert by_source[SourceKind.ENSORA_DRIVE].interval_minutes == 10080
+        assert by_source[SourceKind.MOODLE].interval_minutes == 10080
+        pample_by_scope = {item.scope_key: item.interval_minutes for item in defaults.sources
+                           if item.source == SourceKind.PAMPLEMOUSSE}
+        assert pample_by_scope == {"timetable": 360, "grades": 1440, "catalog": 10080}
+        assert by_source[SourceKind.GOOGLE_CALENDAR].interval_minutes == 30
+        assert by_source[SourceKind.LOCAL].interval_minutes is None
+        assert defaults.supported_intervals_minutes == [30, 60, 360, 720, 1440, 4320, 10080, 20160, 43200]
+
+        schedule = SyncScheduleSettings(enabled=True, intervals_minutes={
+            SourceKind.ENSORA_DRIVE.value: 10080, SourceKind.MOODLE.value: 10080,
+        })
+        runtime.update_schedule(schedule)
+        for source in sources:
+            runtime.consent.record(source, "read", True)
+            runtime.consent.record(source, "automatic_sync", True)
+        with runtime.engine.begin() as db:
+            db.execute(update(connections).where(connections.c.source == SourceKind.ENSORA_DRIVE.value).values(
+                last_success_at=(now - timedelta(days=8)).isoformat()))
+            db.execute(update(connections).where(connections.c.source == SourceKind.MOODLE.value).values(
+                last_success_at=(now - timedelta(days=1)).isoformat()))
+
+        submissions = []
+        monkeypatch.setattr(runtime.sync, "submit", lambda scope, **kwargs: submissions.append((scope, kwargs)) or "job")
+        assert runtime.schedule_due_sync(now) == "job"
+        assert submissions[0][0].source == SourceKind.ENSORA_DRIVE
+        assert submissions[0][1] == {"automatic": True}
+        with runtime.sync.active_lock:
+            runtime.sync.active["running"] = Event()
+        assert runtime.schedule_due_sync(now) is None
+        with runtime.sync.active_lock:
+            runtime.sync.active.pop("running")
+
+        # A failed attempt persists a bounded exponential delay, rather than
+        # immediately launching the same expensive source again.
+        failed_at = now - timedelta(minutes=1)
+        with runtime.engine.begin() as db:
+            db.execute(insert(runs).values(
+                id=new_id(), user_id=LOCAL_USER, status="partial",
+                scope={"source": SourceKind.ENSORA_DRIVE.value},
+                report={SourceKind.ENSORA_DRIVE.value: {"status": "failed", "error_codes": ["source_failure"]}},
+                started_at=failed_at.isoformat(), finished_at=failed_at.isoformat(),
+            ))
+            # A retry attempt after the previous success is the latest relevant history.
+            db.execute(update(connections).where(connections.c.source == SourceKind.ENSORA_DRIVE.value).values(
+                last_success_at=None))
+        status = runtime.schedule_status(now)
+        drive_status = next(item for item in status.sources if item.source == SourceKind.ENSORA_DRIVE)
+        assert drive_status.recent_failure_code == "source_failure"
+        assert drive_status.next_scheduled_at == now + timedelta(minutes=4)
+        persisted = drive_status.interval_minutes
+
+    with Runtime(settings, components) as restarted:
+        assert next(item for item in restarted.schedule_status(now).sources
+                    if item.source == SourceKind.ENSORA_DRIVE).interval_minutes == persisted
+        manual = SyncScheduleSettings(intervals_minutes={SourceKind.ENSORA_DRIVE.value: None})
+        manual_status = restarted.update_schedule(manual)
+        drive = next(item for item in manual_status.sources if item.source == SourceKind.ENSORA_DRIVE)
+        assert drive.manual_only and drive.next_scheduled_at is None
+        disabled = SyncScheduleSettings(enabled=False, intervals_minutes={})
+        result = restarted.update_schedule(disabled)
+        assert result.enabled is False
+        assert restarted.schedule_due_sync(now) is None
+
+
+def test_overdue_source_sync_runs_once_and_restart_observes_success(settings):
+    source = SourceKind.ENSORA_DRIVE
+
+    class EmptyConnector:
+        def list_changes(self, scope, cursor):
+            return ChangePage(items=[], complete=True)
+
+        def fetch_blob(self, record):
+            raise AssertionError("No document was discovered")
+
+    components = Components(adapters={source: Auth()}, connectors={source: EmptyConnector()})
+    with Runtime(settings, components) as runtime:
+        runtime.consent.record(source, "read", True)
+        runtime.consent.record(source, "automatic_sync", True)
+        job = runtime.schedule_due_sync()
+        assert job
+        assert await_job(runtime, job)["status"] == "succeeded"
+        with runtime.engine.connect() as db:
+            saved = db.scalar(select(connections.c.last_success_at).where(connections.c.source == source.value))
+        assert saved
+        status = next(row for row in runtime.schedule_status().sources if row.source == source)
+        assert status.last_success_at is not None
+        assert status.next_scheduled_at > datetime.now(UTC)
+        assert runtime.schedule_due_sync() is None
+
+    with Runtime(settings, components) as restarted:
+        assert restarted.schedule_due_sync() is None
+
+
+def test_pamplemousse_schedule_runs_three_independent_scopes(settings):
+    source = SourceKind.PAMPLEMOUSSE
+
+    class SliceConnector:
+        observed_scopes = []
+
+        def list_changes(self, scope, cursor):
+            self.observed_scopes.append(scope.pamplemousse_scope)
+            return ChangePage(items=[], complete=True)
+
+        def fetch_blob(self, record):
+            raise AssertionError("No documents are expected")
+
+    connector = SliceConnector()
+    components = Components(adapters={source: Auth()}, connectors={source: connector})
+    with Runtime(settings, components) as runtime:
+        runtime.consent.record(source, "read", True)
+        runtime.consent.record(source, "automatic_sync", True)
+        scopes = []
+        for expected in ("timetable", "grades", "catalog"):
+            job = runtime.schedule_due_sync()
+            assert job and await_job(runtime, job)["status"] == "succeeded"
+            # The just-succeeded scope receives its own cadence; the next overdue
+            # Pamplemousse slice is selected without waiting for the longest interval.
+            scope = await_job(runtime, job)["scope"]
+            scopes.append(scope["pamplemousse_scope"])
+        assert scopes == ["timetable", "grades", "catalog"]
+        assert connector.observed_scopes == scopes
+        status = {row.scope_key: row for row in runtime.schedule_status().sources
+                  if row.source == source}
+        assert {key: value.interval_minutes for key, value in status.items()} == {
+            "timetable": 360, "grades": 1440, "catalog": 10080,
+        }
+        assert all(value.last_success_at is not None for value in status.values())
 
 
 def test_keyring_and_profile_lock(tmp_path, monkeypatch):
@@ -86,11 +227,14 @@ class Connector:
     revision = "one"
     fetches = 0
     requested = None
+    requested_scope = None
     fail = False
 
     def list_changes(self, scope, cursor):
         self.requested = cursor
-        items = [Document(provenance=Provenance(external_id="doc", remote_revision=self.revision),
+        self.requested_scope = scope
+        items = [Document(provenance=Provenance(external_id="doc", remote_revision=self.revision,
+                                                 academic_year=getattr(self, "academic_year", None)),
                           title="Demo", mime_type="text/plain")]
         return ChangePage(items=items, next_cursor=self.revision)
 
@@ -196,6 +340,165 @@ def test_api_onboarding_local_documents_and_academic(settings):
                 assert (await client.get(prefix + "/content")).status_code == 404
 
     asyncio.run(run())
+
+
+def test_sync_schedule_api_persists_preferences_and_manual_refresh(settings):
+    source = SourceKind.ENSORA_DRIVE
+
+    class EmptyConnector:
+        def list_changes(self, scope, cursor):
+            return ChangePage(items=[], complete=True)
+
+        def fetch_blob(self, record):
+            raise AssertionError("No document was discovered")
+
+    components = Components(adapters={source: Auth()}, connectors={source: EmptyConnector()})
+    app = create_app(settings, components)
+    request = type("RequestStub", (), {})()
+    request.app = type("AppStub", (), {})()
+    request.app.state = type("StateStub", (), {})()
+    with Runtime(settings, components) as runtime:
+        request.app.state.runtime = runtime
+        flat_routes = [route for route in app.routes if hasattr(route, "endpoint")]
+        flat_routes.extend(child for route in app.routes if hasattr(route, "original_router")
+                           for child in route.original_router.routes)
+        routes = {(route.path, method): route.endpoint for route in flat_routes
+                  for method in (route.methods or set())}
+        get_schedule = routes[("/api/v1/sync/schedule", "GET")]
+        update_schedule = routes[("/api/v1/sync/schedule", "PATCH")]
+        reset_schedule = routes[("/api/v1/sync/schedule/reset", "POST")]
+        initial = get_schedule(request)
+        drive = next(row for row in initial["sources"] if row["source"] == source.value)
+        assert drive["interval_minutes"] == 10080
+        custom = SyncScheduleSettings(enabled=True, enabled_sources=[source],
+                                      intervals_minutes={source.value: 1440})
+        update_schedule(request, custom)
+        routes[("/api/v1/settings", "PATCH")](request, Preferences(formats=["pdf"], daily_minutes=90))
+        assert next(row for row in get_schedule(request)["sources"] if row["source"] == source.value)[
+            "interval_minutes"] == 1440
+        reset_schedule(request)
+        assert next(row for row in get_schedule(request)["sources"] if row["source"] == source.value)[
+            "interval_minutes"] == 10080
+
+        runtime.consent.record(source, "read", True)
+        runtime.auth.authorize(source)
+        # Manual refresh is immediate and independent of automatic-sync consent/cadence.
+        response = routes[("/api/v1/sync", "POST")](request, SyncScope(source=source), None)
+        assert response["id"]
+        assert await_job(runtime, response["id"])["status"] == "succeeded"
+
+
+def test_drive_scope_policy_bridge_etl_api_cache_retry_and_safe_cleanup(settings, monkeypatch, capsys):
+    import json
+    import sys
+
+    from backend.app.core.drive_scope import folder_scope
+    from backend.app.core.database import documents as db_documents
+    from backend.app.modules.ingestion.codex_bridge import CodexConnectorBridge, _load_active_drive_documents
+    from backend.app.modules.ingestion.contracts import ChangePage as InternalPage
+    from backend.app.modules.ingestion.contracts import SourceKind as InternalSourceKind
+    from backend.app.modules.ingestion.connectors.base import PermissionDeniedError
+
+    assert folder_scope("Ensora/1A/Statistics/Slides") == "allowed"
+    assert folder_scope("Ensora/Global/Admin") == "global"
+    assert folder_scope("Ensora/Other/1A/Slides") == "unverified"
+    assert folder_scope("1A/Statistics/Global") == "allowed"  # only the top-level Global tree is excluded
+
+    class BridgeDrive:
+        source_kind = InternalSourceKind.ENSORA_DRIVE
+        root_folder_id = settings.ensora_drive_folder_id
+        last_stats = {}
+
+        def __init__(self):
+            self.scopes = []
+
+        def list_changes(self, scope, cursor):
+            self.scopes.append(scope)
+            return InternalPage(items=[], next_cursor=None, complete=True)
+
+        def fetch_blob(self, record):
+            raise AssertionError("No connector item expected")
+
+    bridge_connector = BridgeDrive()
+    bridge = CodexConnectorBridge(bridge_connector)
+    for scope in (SyncScope(source=SourceKind.ENSORA_DRIVE),
+                  SyncScope(source=SourceKind.ENSORA_DRIVE, full=True),
+                  SyncScope(source=SourceKind.ENSORA_DRIVE, retry_failed=True)):
+        bridge.list_changes(scope, None)
+        assert bridge_connector.scopes[-1]["cohorts"] == ["1A", "2A", "3A"]
+    with pytest.raises(PermissionDeniedError):
+        bridge.list_changes(SyncScope(source=SourceKind.ENSORA_DRIVE, folder_id="unapproved-subfolder"), None)
+
+    source = SourceKind.ENSORA_DRIVE
+    allowed = Document(provenance=Provenance(external_id="allowed", source=source,
+                                               folder="Ensora/1A/Statistics"),
+                       title="Allowed fixture", mime_type="text/plain")
+    global_doc = Document(provenance=Provenance(external_id="global", source=source,
+                                                 folder="Ensora/Global/Shared"),
+                          title="Excluded fixture", mime_type="text/plain")
+    unverified = Document(provenance=Provenance(external_id="unverified", source=source,
+                                                 folder="Ensora/Other/Shared"),
+                          title="Unverified fixture", mime_type="text/plain")
+
+    class MixedDrive:
+        fetched = []
+
+        def list_changes(self, scope, cursor):
+            return ChangePage(items=[allowed, global_doc, unverified], complete=True)
+
+        def fetch_blob(self, record):
+            self.fetched.append(record.provenance.external_id)
+            return b"synthetic allowed content"
+
+    connector = MixedDrive()
+    components = Components(adapters={source: Auth()}, connectors={source: connector})
+    with Runtime(settings, components) as runtime:
+        runtime.consent.record(source, "read", True)
+        report = await_job(runtime, runtime.sync.submit(SyncScope(source=source)))
+        detail = report["report"][source.value]
+        assert detail["metrics"]["documents_excluded"] == 2
+        assert detail["documents"] == 1
+        assert connector.fetched == ["allowed"]
+        # Exercise the persisted-document guard with a pre-existing Global row.
+        assert runtime.pipeline.ingest(runtime.connection_ids[source], global_doc,
+                                       lambda _: b"synthetic old global bytes") == "documents"
+        with runtime.engine.connect() as db:
+            global_id = db.scalar(select(db_documents.c.id).where(db_documents.c.external_id == "global"))
+        assert runtime.pipeline.reprocess_documents([runtime.connection_ids[source]],
+                                                    document_ids=[global_id], limit=1)["selected"] == 0
+        active_inventory = _load_active_drive_documents(settings.local_data_dir / "ensora.sqlite3")
+        assert set(active_inventory) == {"allowed"}
+
+        app = create_app(settings, components)
+        request = type("RequestStub", (), {})()
+        request.app = type("AppStub", (), {})()
+        request.app.state = type("StateStub", (), {"runtime": runtime})()
+        routes = [child for route in app.routes if hasattr(route, "original_router")
+                  for child in route.original_router.routes]
+        list_documents = next(route.endpoint for route in routes
+                              if route.path == "/api/v1/documents" and "GET" in route.methods)
+        visible_ids = {item["id"] for item in list_documents(request, limit=50, cursor=None,
+                                                                subject_id=None)["items"]}
+        assert global_id not in visible_ids
+        assert len(visible_ids) == 1
+
+    # Cleanup is dry-run by default, and explicit apply tombstones metadata only.
+    monkeypatch.setattr(sys, "argv", ["drive_scope_cleanup.py", "--data-dir", str(settings.local_data_dir)])
+    from scripts import drive_scope_cleanup
+    drive_scope_cleanup.main()
+    dry_run = json.loads(capsys.readouterr().out)
+    assert dry_run["mode"] == "dry_run" and dry_run["global_documents_to_tombstone"] == 1
+    monkeypatch.setattr(sys, "argv", ["drive_scope_cleanup.py", "--data-dir", str(settings.local_data_dir), "--apply"])
+    drive_scope_cleanup.main()
+    applied = json.loads(capsys.readouterr().out)
+    assert applied["global_documents_tombstoned"] == 1
+    assert applied["content_blobs_deleted"] == 0
+    with Runtime(settings, components) as runtime:
+        with runtime.engine.connect() as db:
+            metadata = db.scalar(select(db_documents.c.metadata_json).where(db_documents.c.external_id == "global"))
+            assert metadata["access_status"] == "tombstoned"
+            assert db.scalar(select(func.count()).select_from(versions)) == 2
+        assert (settings.local_data_dir / "blobs" / hashlib.sha256(b"synthetic old global bytes").hexdigest()).is_file()
 
 
 def test_cli_onboarding_network_free(settings, monkeypatch):
@@ -465,6 +768,163 @@ def test_default_bridge_uses_only_consented_catalog(settings):
         assert runtime.pipeline.matcher.match(document, ClassificationResult()).subject_id == "canonical-linear"
         runtime.consent.record(source, "read", False)
         assert runtime.pipeline.matcher.match(document, ClassificationResult()).subject_id != "canonical-linear"
+
+
+def test_catalog_sync_reconciles_prior_documents_without_reprocessing_and_preserves_overrides(settings):
+    from backend.app.contracts.sources import ChangePage, Provenance, Subject
+    from backend.app.core.database import documents as document_table, records
+
+    source = SourceKind.PAMPLEMOUSSE
+    connector = type("CatalogConnector", (), {
+        "list_changes": lambda self, scope, cursor: ChangePage(items=[Subject(
+            provenance=Provenance(external_id="pamp:subject:linear", source=source),
+            title="Linear Algebra", code="ALG201",
+        )]),
+    })()
+    fetches = {"count": 0}
+
+    def fetch(_record):
+        fetches["count"] += 1
+        return b"Synthetic Linear Algebra lesson with reusable content."
+
+    components = Components(adapters={source: Auth()}, connectors={source: connector})
+    with Runtime(settings, components) as runtime:
+        from backend.app.core.runtime import _PersistedCatalogMatcher
+
+        drive = SourceKind.ENSORA_DRIVE
+        runtime.consent.record(drive, "read", True)
+        moodle = SourceKind.MOODLE
+        runtime.consent.record(moodle, "read", True)
+        runtime.consent.record(source, "read", True)
+        runtime.pipeline.matcher = _PersistedCatalogMatcher(runtime)
+        document_ids = []
+        for external_id in ("drive:linear:lesson", "drive:linear:manual"):
+            document = Document(
+                title="Linear Algebra",
+                mime_type="text/plain",
+                provenance=Provenance(external_id=external_id, source=drive,
+                                      folder="Ensora/2A/Linear Algebra"),
+            )
+            runtime.pipeline.ingest(runtime.connection_ids[drive], document, fetch)
+            document_ids.append(external_id)
+        moodle_external_id = "moodle:course:demo:resource:linear"
+        runtime.pipeline.ingest(runtime.connection_ids[moodle], Document(
+            title="Linear Algebra", mime_type="text/plain",
+            provenance=Provenance(external_id=moodle_external_id, source=moodle),
+        ), fetch)
+
+        with runtime.engine.begin() as db:
+            manual_id = db.scalar(select(document_table.c.id).where(
+                document_table.c.connection_id == runtime.connection_ids[drive],
+                document_table.c.external_id == document_ids[1],
+            ))
+            current = db.scalar(select(document_table.c.metadata_json).where(document_table.c.id == manual_id))
+            db.execute(document_table.update().where(document_table.c.id == manual_id).values(
+                metadata_json={**current, "user_override": {"subject_id": "user-confirmed-subject"},
+                               "subject_id": "user-confirmed-subject"},
+            ))
+
+        # Catalog synchronization follows the prior document acquisition and triggers
+        # a metadata-only pass over currently authorized document sources.
+        run = await_job(runtime, runtime.sync.submit(SyncScope(source=source)))
+        report = run["report"][source]
+        assert report["status"] == "succeeded"
+        assert report["metrics"]["catalog_documents_matched"] == 2
+        assert report["metrics"]["catalog_documents_skipped"] == 1
+
+        with runtime.engine.connect() as db:
+            rows = db.execute(select(document_table.c.external_id, document_table.c.metadata_json,
+                                     document_table.c.active_version_id).where(
+                document_table.c.connection_id.in_((runtime.connection_ids[drive], runtime.connection_ids[moodle])),
+            )).mappings().all()
+            assert db.scalar(select(func.count()).select_from(versions)) == 3
+            assert db.scalar(select(func.count()).select_from(chunks)) == 3
+            subject = db.scalar(select(records.c.external_id).where(
+                records.c.connection_id == runtime.connection_ids[source], records.c.kind == "subject",
+            ))
+        by_external_id = {row["external_id"]: row for row in rows}
+        auto = by_external_id[document_ids[0]]["metadata_json"]
+        manual = by_external_id[document_ids[1]]["metadata_json"]
+        assert auto["subject_id"] == subject
+        assert auto["match"]["confirmed"] is True
+        assert by_external_id[moodle_external_id]["metadata_json"]["subject_id"] == subject
+        assert manual["subject_id"] == "user-confirmed-subject"
+        assert manual["user_override"]["subject_id"] == "user-confirmed-subject"
+        assert fetches["count"] == 3
+
+        # Consent withdrawal prevents later reconciliation reads of those documents.
+        runtime.consent.record(drive, "read", False)
+        counts = runtime.reconcile_academic_documents(source)
+        assert counts["examined"] == 0 and counts["matched"] == 0
+
+
+def test_document_match_confirmation_is_consent_scoped_and_survives_source_refresh(settings):
+    from backend.app.contracts.sources import Subject
+
+    app = create_app(settings, Components())
+
+    async def verify():
+        async with app.router.lifespan_context(app):
+            runtime = app.state.runtime
+            source = SourceKind.LOCAL
+            catalog = SourceKind.ACADEMIC_IMPORT
+            runtime.consent.record(source, "read", True)
+            runtime.consent.record(catalog, "read", True)
+            subject = Subject(provenance=Provenance(external_id="import:subject:stats", source=catalog),
+                             title="Statistics", code="STAT201")
+            assert runtime.pipeline.import_academics(runtime.connection_ids[catalog], [subject])[0]["status"] == "records"
+            doc = Document(title="Statistics", mime_type="text/plain",
+                           provenance=Provenance(external_id="local:statistics", source=source,
+                                                 remote_revision="revision-1"))
+            runtime.pipeline.ingest(runtime.connection_ids[source], doc,
+                                    lambda _: b"Synthetic statistics lecture notes.")
+            with runtime.engine.connect() as db:
+                doc_id = db.scalar(select(documents.c.id).where(
+                    documents.c.connection_id == runtime.connection_ids[source],
+                    documents.c.external_id == "local:statistics",
+                ))
+
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
+                                   headers={"Authorization": f"Bearer {runtime.api_token}"}) as client:
+                invalid = await client.put(f"/api/v1/documents/{doc_id}/match",
+                                           json={"subject_id": "missing-subject"})
+                assert invalid.status_code == 422
+                runtime.consent.record(catalog, "read", False)
+                unconsented = await client.put(f"/api/v1/documents/{doc_id}/match",
+                                               json={"subject_id": "import:subject:stats"})
+                assert unconsented.status_code == 422
+                runtime.consent.record(catalog, "read", True)
+                confirmed = await client.put(f"/api/v1/documents/{doc_id}/match",
+                                             json={"subject_id": "import:subject:stats", "chapter_id": "Chapter 2"})
+                assert confirmed.status_code == 200
+                assert confirmed.json()["confirmed"] is True
+                assert confirmed.json()["chapter_id"] == "Chapter 2"
+
+            updated_doc = doc.model_copy(update={
+                "provenance": doc.provenance.model_copy(update={"remote_revision": "revision-2"}),
+            })
+            runtime.pipeline.ingest(runtime.connection_ids[source], updated_doc,
+                                    lambda _: b"Synthetic updated statistics lecture notes.")
+            with runtime.engine.connect() as db:
+                row = db.execute(select(documents.c.metadata_json, documents.c.active_version_id).where(
+                    documents.c.id == doc_id,
+                )).one()
+                assert db.scalar(select(func.count()).select_from(versions)) == 2
+            assert row.metadata_json["subject_id"] == "import:subject:stats"
+            assert row.metadata_json["chapter_id"] == "Chapter 2"
+            assert row.metadata_json["user_override"] == {
+                "subject_id": "import:subject:stats", "chapter_id": "Chapter 2",
+            }
+            assert row.metadata_json["match"]["confirmed"] is True
+
+            runtime.consent.record(source, "read", False)
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
+                                   headers={"Authorization": f"Bearer {runtime.api_token}"}) as client:
+                hidden = await client.put(f"/api/v1/documents/{doc_id}/match",
+                                          json={"subject_id": "import:subject:stats"})
+                assert hidden.status_code == 404
+
+    asyncio.run(verify())
 
 
 def test_round2_configured_origin_and_private_local_imports(settings, monkeypatch):
@@ -856,7 +1316,9 @@ def test_ensai_cas_expiration_resumes_same_job_scope(settings, challenge_at):
                     assert db.scalar(select(connections.c.cursor).where(connections.c.id == connection)) == "durable-after"
                     assert db.scalar(select(func.count()).select_from(versions)) == 1
     asyncio.run(verify())
-    assert connector.cursors == ["durable-before", "page-two", "durable-before", "page-two"]
+    # The first page was committed before CAS expired, so the successor resumes
+    # from its durable per-job checkpoint instead of replaying the source cursor.
+    assert connector.cursors == ["durable-before", "page-two", "page-two"]
     assert adapter.interactive_calls == 1
 
 
@@ -1566,6 +2028,7 @@ def test_sync_cli_progress_snapshot_exposes_only_aggregate_allowlisted_metrics()
     assert result == {
         "pamplemousse": {
             "status": "running",
+            "stage": None,
             "documents": 0,
             "records": 18,
             "errors": 2,
@@ -1576,3 +2039,209 @@ def test_sync_cli_progress_snapshot_exposes_only_aggregate_allowlisted_metrics()
             },
         },
     }
+
+
+def test_failed_download_is_private_retryable_and_replay_is_idempotent(settings):
+    from backend.app.core.etl import Pipeline
+
+    class DriveResourceNotFoundError(Exception):
+        pass
+
+    class DriveUnexportableError(Exception):
+        pass
+
+    class DriveSizeLimitError(Exception):
+        pass
+
+    assert Pipeline._download_error_code(DriveResourceNotFoundError("private-id")) == "source_resource_missing"
+    assert Pipeline._download_error_code(DriveUnexportableError("private-title")) == "unsupported_export"
+    assert Pipeline._download_error_code(DriveSizeLimitError("private-size")) == "download_size_limit"
+    source = SourceKind.MOODLE
+    connector, adapter = Connector(), Auth()
+    connector.fail = True
+    components = Components(adapters={source: adapter}, connectors={source: connector})
+    with Runtime(settings, components) as runtime:
+        runtime.consent.record(source, "read", True)
+        runtime.auth.set_status(source, ConnectionStatus.CONNECTED)
+        failed = await_job(runtime, runtime.sync.submit(SyncScope(source=source)))
+        report = failed["report"][source.value]
+        assert failed["status"] == "partial"
+        assert report["error_codes"] == ["download_failure"]
+        assert report["metrics"]["download_error_download_failure"] == 1
+        with runtime.engine.connect() as db:
+            doc = db.execute(select(documents)).mappings().one()
+        assert doc["active_version_id"] is None
+        assert doc["metadata_json"]["ingestion_state"] == "download_failed"
+        assert doc["metadata_json"]["ingestion_error_code"] == "download_failure"
+        assert "private upstream details" not in str(doc["metadata_json"])
+        from backend.app.core.audit import audit_database
+        failure_audit = audit_database(settings.local_data_dir / "ensora.sqlite3")
+        assert failure_audit["cumulative"][source.value]["document_inventory"] == 1
+        assert failure_audit["cumulative"][source.value]["documents_persisted"] == 0
+        assert failure_audit["cumulative"][source.value]["pending_download_failures"] == 1
+        assert failure_audit["cumulative"][source.value]["download_failure_categories"] == {"download_failure": 1}
+
+        connector.fail = False
+        retry_scope = SyncScope(source=source, retry_failed=True)
+        recovered = await_job(runtime, runtime.sync.submit(retry_scope))
+        assert recovered["status"] == "succeeded"
+        assert recovered["report"][source.value]["metrics"]["failed_resources_retried"] == 1
+        assert recovered["report"][source.value]["documents"] == 1
+
+        again = await_job(runtime, runtime.sync.submit(retry_scope))
+        assert again["status"] == "succeeded"
+        assert again["report"][source.value]["metrics"]["failed_resources_retried"] == 0
+        assert again["report"][source.value]["metrics"]["retry_failed_skipped"] == 1
+        assert connector.fetches == 2
+        with runtime.engine.connect() as db:
+            doc = db.execute(select(documents)).mappings().one()
+            version_count = db.scalar(select(func.count()).select_from(versions))
+        assert doc["active_version_id"] is not None
+        assert doc["metadata_json"]["ingestion_state"] == "persisted"
+        assert doc["metadata_json"]["ingestion_error_code"] is None
+        assert version_count == 1
+
+        confirmed_active_version = doc["active_version_id"]
+        with runtime.engine.begin() as db:
+            db.execute(text("""UPDATE documents SET metadata_json = json_set(
+                metadata_json, '$.user_override.subject_id', 'user-confirmed-subject',
+                '$.subject_id', 'user-confirmed-subject') WHERE id = :id"""), {"id": doc["id"]})
+        connector.revision = "two"
+        connector.fail = True
+        updated_failure = await_job(runtime, runtime.sync.submit(SyncScope(source=source)))
+        assert updated_failure["status"] == "partial"
+        with runtime.engine.connect() as db:
+            doc = db.execute(select(documents)).mappings().one()
+        assert doc["active_version_id"] == confirmed_active_version
+        assert doc["metadata_json"]["user_override"]["subject_id"] == "user-confirmed-subject"
+        assert doc["metadata_json"]["subject_id"] == "user-confirmed-subject"
+
+        connector.fail = False
+        updated_success = await_job(runtime, runtime.sync.submit(retry_scope))
+        assert updated_success["status"] == "succeeded"
+        with runtime.engine.connect() as db:
+            doc = db.execute(select(documents)).mappings().one()
+            version_count = db.scalar(select(func.count()).select_from(versions))
+        assert doc["metadata_json"]["subject_id"] == "user-confirmed-subject"
+        assert doc["metadata_json"]["user_override"]["subject_id"] == "user-confirmed-subject"
+        assert version_count == 1
+
+
+def test_interrupted_job_replay_preserves_original_academic_year_scope(settings):
+    from sqlalchemy import insert
+    from backend.app.core.auth import now
+    from backend.app.core.database import LOCAL_USER
+
+    source = SourceKind.MOODLE
+    connector, adapter = Connector(), Auth()
+    connector.academic_year = "2026-2027"
+    components = Components(adapters={source: adapter}, connectors={source: connector})
+    with Runtime(settings, components) as runtime:
+        with runtime.engine.begin() as db:
+            db.execute(insert(runs).values(
+                id="synthetic-crashed-job", user_id=LOCAL_USER, status="running",
+                scope={"source": source.value, "academic_year": "2026-2027", "full": True},
+                report={}, started_at=now(),
+            ))
+    # A fresh Runtime acquires the flock and marks an abandoned running row interrupted.
+    with Runtime(settings, components) as runtime:
+        runtime.consent.record(source, "read", True)
+        runtime.auth.set_status(source, ConnectionStatus.CONNECTED)
+        with runtime.engine.connect() as db:
+            status = db.scalar(select(runs.c.status).where(runs.c.id == "synthetic-crashed-job"))
+        assert status == "interrupted"
+        replay = runtime.sync.retry("synthetic-crashed-job", source)
+        completed = await_job(runtime, replay)
+        assert completed["status"] == "succeeded"
+        assert connector.requested_scope.academic_year == "2026-2027"
+        assert connector.requested_scope.full is True
+
+
+def test_auth_adapter_failure_categories_are_actionable_and_redacted():
+    from backend.app.core.auth import AuthenticationManager
+    from backend.app.contracts.sync import SourceSyncReport
+    from backend.app.core.sync import SyncEngine
+
+    class TransientSourceError(Exception):
+        pass
+
+    class PermissionDeniedError(Exception):
+        pass
+
+    transient = AuthenticationManager._adapter_exception_result(TransientSourceError("secret URL and token"))
+    denied = AuthenticationManager._adapter_exception_result(PermissionDeniedError("private course title"))
+    unknown = AuthenticationManager._adapter_exception_result(RuntimeError("private exception content"))
+    assert transient.status == ConnectionStatus.UNAVAILABLE
+    assert transient.reason == "transient_failure"
+    assert denied.status == ConnectionStatus.ACCESS_DENIED
+    assert denied.reason == "service_access_denied"
+    assert unknown.status == ConnectionStatus.ERROR
+    assert unknown.reason == "adapter_error"
+    assert "secret" not in str(transient.model_dump())
+    assert "private" not in str(unknown.model_dump())
+    report = SourceSyncReport(source=SourceKind.MOODLE)
+    SyncEngine._report_auth(report, unknown)
+    assert report.errors == 1
+    assert report.error_codes == ["source_validation_error"]
+    assert report.next_action == "retry_validation"
+
+
+def test_interrupted_page_checkpoint_resumes_after_restart_and_is_not_public(settings):
+    source = SourceKind.MOODLE
+
+    class CheckpointConnector:
+        def __init__(self):
+            self.fail_on_page_two_once = True
+            self.received = []
+
+        def list_changes(self, scope, cursor):
+            self.received.append(cursor)
+            if cursor is None:
+                return ChangePage(
+                    items=[Document(provenance=Provenance(external_id="checkpoint-doc-1", remote_revision="1"),
+                                    title="One", mime_type="text/plain")],
+                    complete=False, next_cursor="page-two-token",
+                )
+            if cursor == "page-two-token" and self.fail_on_page_two_once:
+                self.fail_on_page_two_once = False
+                raise RuntimeError("private provider response")
+            assert cursor == "page-two-token"
+            return ChangePage(
+                items=[Document(provenance=Provenance(external_id="checkpoint-doc-2", remote_revision="1"),
+                                title="Two", mime_type="text/plain")],
+                complete=True,
+            )
+
+        def fetch_blob(self, record):
+            return record.title.encode("utf-8")
+
+    connector, adapter = CheckpointConnector(), Auth()
+    components = Components(adapters={source: adapter}, connectors={source: connector})
+    with Runtime(settings, components) as runtime:
+        runtime.consent.record(source, "read", True)
+        runtime.auth.set_status(source, ConnectionStatus.CONNECTED)
+        failed = await_job(runtime, runtime.sync.submit(SyncScope(source=source)))
+        assert failed["status"] == "partial"
+        assert failed["report"][source.value]["status"] == "failed"
+        assert connector.received == [None, "page-two-token"]
+        with runtime.engine.connect() as db:
+            stored = db.scalar(select(runs.c.report).where(runs.c.id == failed["id"]))
+        assert stored["_checkpoint_cursors"][source.value] == "page-two-token"
+
+    from scripts.sync import progress_snapshot, public_report
+    assert "_checkpoint_cursors" not in public_report(stored)
+    assert "_checkpoint_cursors" not in progress_snapshot(stored)
+
+    # A new Runtime models process restart: retry uses the last fully processed page cursor.
+    with Runtime(settings, components) as runtime:
+        runtime.consent.record(source, "read", True)
+        runtime.auth.set_status(source, ConnectionStatus.CONNECTED)
+        retried = runtime.sync.retry(failed["id"], source)
+        completed = await_job(runtime, retried)
+        assert completed["status"] == "succeeded"
+        assert connector.received[-1] == "page-two-token"
+        with runtime.engine.connect() as db:
+            count_docs = db.scalar(select(func.count()).select_from(documents))
+            stored = db.scalar(select(runs.c.report).where(runs.c.id == retried))
+        assert count_docs == 2
+        assert "_checkpoint_cursors" not in stored

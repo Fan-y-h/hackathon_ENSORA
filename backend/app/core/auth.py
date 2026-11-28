@@ -99,8 +99,10 @@ class AuthenticationManager:
                 except ProfileBusy:
                     result = AuthenticationResult(status=ConnectionStatus.UNAVAILABLE, reason="profile_busy")
                     self._trace(source, operation, stage, result)
-                except Exception:
-                    result = AuthenticationResult(status=ConnectionStatus.ERROR, reason="adapter_error")
+                except Exception as exc:
+                    result = self._adapter_exception_result(exc)
+                    logger.warning("Source authentication adapter failed (source=%s, exception_type=%s)",
+                                   source.value, type(exc).__name__)
                     self._trace(source, operation, stage, result)
             if source in INSTITUTIONAL_SOURCES:
                 result = self._institutional_result(result, previous, operation)
@@ -113,6 +115,20 @@ class AuthenticationManager:
             self.set_status(source, result.status)
             self._trace(source, operation, "persisted", result)
             return result
+
+    @staticmethod
+    def _adapter_exception_result(exc):
+        """Translate known adapter failures without retaining exception text or URLs."""
+        name = type(exc).__name__
+        if name == "AuthenticationRequiredError":
+            return AuthenticationResult(status=ConnectionStatus.REAUTH_REQUIRED, reason="cas_login_required",
+                                        session_state="reauth_required")
+        if name == "PermissionDeniedError":
+            return AuthenticationResult(status=ConnectionStatus.ACCESS_DENIED,
+                                        reason="service_access_denied", service_access="denied")
+        if name in {"TransientSourceError", "RetryableSourceError", "TimeoutError", "ConnectionError"}:
+            return AuthenticationResult(status=ConnectionStatus.UNAVAILABLE, reason="transient_failure")
+        return AuthenticationResult(status=ConnectionStatus.ERROR, reason="adapter_error")
 
     @staticmethod
     def _needs_post_auth_probe(source, operation, result):

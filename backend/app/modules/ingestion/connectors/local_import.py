@@ -567,6 +567,37 @@ class LocalFileConnector(SourceConnector):
             warnings=tuple(warnings),
         )
 
+    def scan_fingerprint(self, root_path: str | Path) -> str:
+        """Compute a fast, metadata-only SHA-256 fingerprint of a selected local root for on-change sync.
+
+        Strictly enforces protected-root and symlink containment without reading file contents.
+        """
+        root = Path(root_path).expanduser()
+        self._assert_not_protected(root)
+        resolved = root.resolve()
+        entries: list[str] = []
+        if resolved.is_file():
+            st = resolved.stat()
+            entries.append(f"{resolved.name}|{st.st_size}|{st.st_mtime_ns}")
+        elif resolved.is_dir():
+            for dirpath, dirnames, filenames in os.walk(resolved, followlinks=False):
+                dirnames[:] = sorted(
+                    d for d in dirnames if not d.startswith(".") and not (Path(dirpath) / d).is_symlink()
+                )
+                for fname in sorted(filenames):
+                    if fname.startswith("."):
+                        continue
+                    fp = Path(dirpath) / fname
+                    if fp.is_symlink():
+                        continue
+                    try:
+                        st = fp.stat()
+                        rel = fp.relative_to(resolved).as_posix()
+                    except OSError:
+                        continue
+                    entries.append(f"{rel}|{st.st_size}|{st.st_mtime_ns}")
+        return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
+
     def fetch_blob(self, item: SourceRecord) -> FetchResult:
         if not item.local_path:
             raise ValueError(f"Local record {item.external_id} is missing local_path.")

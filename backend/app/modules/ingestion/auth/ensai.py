@@ -804,6 +804,178 @@ class EnsaiAuthAdapter:
         except Exception:
             return False
 
+    @staticmethod
+    def _cleanup_stale_chromium_locks(leased_dir: Path) -> bool:
+        """Remove dead Chromium SingletonLock/Socket/Cookie leftovers after an unclean restart.
+
+        Only called while holding our exclusive `.ensora_profile.lock` lease. Inspects the
+        `SingletonLock` symlink (`<hostname>-<pid>`) and removes stale lock files ONLY when
+        the recorded PID is confirmed dead (`ProcessLookupError`), never touching a live browser.
+        """
+        lock_file = leased_dir / "SingletonLock"
+        if not lock_file.exists() and not lock_file.is_symlink():
+            return False
+        pid_alive = False
+        if lock_file.is_symlink():
+            try:
+                target = os.readlink(lock_file)
+                if "-" in target:
+                    pid_str = target.rsplit("-", 1)[-1]
+                    if pid_str.isdigit():
+                        pid = int(pid_str)
+                        try:
+                            os.kill(pid, 0)
+                            pid_alive = True
+                        except ProcessLookupError:
+                            pid_alive = False
+                        except PermissionError:
+                            pid_alive = True
+            except OSError:
+                pid_alive = False
+        if pid_alive:
+            return False
+        removed = False
+        for fname in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            p = leased_dir / fname
+            if p.exists() or p.is_symlink():
+                try:
+                    p.unlink(missing_ok=True)
+                    removed = True
+                except OSError:
+                    pass
+        if removed:
+            logger.info("Cleaned stale post-restart Chromium Singleton lock files in %s", leased_dir)
+        return removed
+
+    def _probe_via_cookies_http(
+        self,
+        source: SourceKind,
+        *,
+        profile_dir: Path,
+        phase: str = "check_connection",
+    ) -> EnsaiSessionProbe | None:
+        """Fast cookie-backed HTTP validation of a protected ENSAI resource (no Chromium launch).
+
+        Returns an authenticated `EnsaiSessionProbe` ONLY when persisted allowlisted cookies
+        yield HTTP 200 on the official target origin AND pass `classify_page_state()`.
+        Returns None whenever cookies are missing, expired, or redirected to CAS so callers
+        can seamlessly fall back to headless Playwright (for silent CAS SSO / auto-reauth).
+        """
+        import requests
+
+        cookie_path = profile_dir / SESSION_COOKIES_FILENAME
+        if not cookie_path.is_file() or cookie_path.is_symlink():
+            return None
+        try:
+            fd = os.open(str(cookie_path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception:
+            return None
+        raw_cookies = data.get("cookies", []) if isinstance(data, dict) else []
+        cookies = self._filter_institutional_cookies(raw_cookies)
+        if not cookies:
+            return None
+
+        target_host = urlparse(self.service_url_for(source)).netloc.lower()
+        service_cookies = [
+            c
+            for c in cookies
+            if target_host == str(c.get("domain") or "").lstrip(".").lower()
+            or target_host.endswith("." + str(c.get("domain") or "").lstrip(".").lower())
+        ]
+        if not service_cookies:
+            return None
+
+        candidate_urls = [self.protected_url_for(source)]
+        if source == SourceKind.MOODLE:
+            profile_fallback = urljoin(self._config.moodle_base_url, "user/profile.php")
+            if profile_fallback not in candidate_urls:
+                candidate_urls.append(profile_fallback)
+
+        session = requests.Session()
+        session.headers.update({"User-Agent": DEFAULT_ENSAI_USER_AGENT})
+        for c in service_cookies:
+            session.cookies.set(
+                str(c["name"]),
+                str(c["value"]),
+                domain=str(c.get("domain") or "").lstrip(".") or None,
+                path=str(c.get("path") or "/"),
+            )
+
+        timeout_sec = min(15.0, max(5.0, float(self._config.request_timeout_sec)))
+        try:
+            for start_url in candidate_urls:
+                cur_url = start_url
+                try:
+                    resp = None
+                    for hop in range(6):
+                        if not validate_official_origin(cur_url, self._allowed_origins):
+                            return None
+                        resp = session.get(cur_url, timeout=timeout_sec, allow_redirects=False)
+                        if resp.status_code in (301, 302, 303, 307, 308):
+                            loc = resp.headers.get("Location") or resp.headers.get("location")
+                            if not loc:
+                                resp = None
+                                break
+                            nxt = urljoin(cur_url, str(loc))
+                            if not validate_official_origin(nxt, self._allowed_origins):
+                                return None
+                            cas_host = urlparse(self._config.cas_login_url).netloc.lower()
+                            if urlparse(nxt).netloc.lower() == cas_host:
+                                # Session needs CAS/Playwright silent SSO or reauth
+                                return None
+                            cur_url = nxt
+                            continue
+                        break
+                    if resp is None or resp.status_code != 200:
+                        continue
+                    html_text = resp.text or ""
+                    title_m = re.search(r"<title>(.*?)</title>", html_text, re.IGNORECASE | re.DOTALL)
+                    page_title = " ".join(title_m.group(1).split()).strip() if title_m else ""
+                    probe = self.classify_page_state(
+                        source,
+                        requested_url=start_url,
+                        current_url=cur_url,
+                        html_content=html_text,
+                        page_title=page_title,
+                        profile_dir=profile_dir,
+                        has_service_cookies=True,
+                    )
+                    if probe.authenticated and probe.origin_verified:
+                        diag = self._build_diagnostics(
+                            source=source,
+                            phase=phase,
+                            current_url=cur_url,
+                            target_host=target_host,
+                            protected_url=start_url,
+                            probe=probe,
+                            session_persisted=True,
+                            service_cookies_present=True,
+                        )
+                        return EnsaiSessionProbe(
+                            source=probe.source,
+                            requested_url=probe.requested_url,
+                            final_url=probe.final_url,
+                            state=probe.state,
+                            authenticated=True,
+                            cas_redirect_detected=False,
+                            mfa_or_captcha_detected=False,
+                            auth_error_detected=False,
+                            origin_verified=True,
+                            detail=f"{probe.detail} (verified via persisted session cookies).",
+                            profile_dir=probe.profile_dir,
+                            used_myensai_fallback=False,
+                            html_excerpt_available=probe.html_excerpt_available,
+                            failure_reason=None,
+                            diagnostics=diag.to_dict(),
+                        )
+                except Exception:
+                    continue
+            return None
+        finally:
+            session.close()
+
     @contextmanager
     def open_context(
         self,
@@ -821,6 +993,7 @@ class EnsaiAuthAdapter:
                 if self._context_factory is not None:
                     context = self._context_factory(leased_dir, use_headless)
                 else:
+                    self._cleanup_stale_chromium_locks(leased_dir)
                     env_status = self.environment_status()
                     if not env_status.playwright_installed or not env_status.chromium_installed:
                         raise RuntimeError(env_status.detail)
@@ -1257,6 +1430,49 @@ class EnsaiAuthAdapter:
         )
         return enriched, diag
 
+    def _goto_with_timeout_recovery(
+        self,
+        page: BrowserPageProtocol,
+        url: str,
+        *,
+        timeout_ms: int,
+    ) -> None:
+        """Navigate with bounded timeout recovery, translating unrecoverable stalls to TransientSourceError."""
+        from ..connectors.base import TransientSourceError
+
+        def _is_timeout(exc: Exception) -> bool:
+            name = type(exc).__name__.lower()
+            msg = str(exc).lower()
+            return "timeout" in name or "timed out" in msg or "timeout " in msg
+
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            return
+        except Exception as first_exc:
+            if not _is_timeout(first_exc):
+                raise
+            logger.warning(
+                "ENSAI navigation timed out (%dms) reaching %s; retrying with commit fallback.",
+                timeout_ms,
+                sanitize_url_for_logs(url),
+            )
+            retry_timeout = max(timeout_ms, 45_000)
+            try:
+                page.goto(url, wait_until="commit", timeout=retry_timeout)
+            except Exception as second_exc:
+                if _is_timeout(second_exc):
+                    raise TransientSourceError(
+                        f"Playwright navigation timed out reaching {sanitize_url_for_logs(url)} "
+                        f"after retry ({retry_timeout}ms)."
+                    ) from second_exc
+                raise
+            if hasattr(page, "wait_for_load_state"):
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=min(15_000, retry_timeout))
+                except Exception:
+                    # Page committed and may already hold usable DOM; let caller inspect content.
+                    pass
+
     def _probe_on_page(
         self,
         page: BrowserPageProtocol,
@@ -1269,8 +1485,29 @@ class EnsaiAuthAdapter:
         phase: str = "verifying_protected_resource",
     ) -> EnsaiSessionProbe:
         # Always probe an actual protected resource URL (e.g. Moodle /my/courses.php)
+        from ..connectors.base import TransientSourceError
+
         probe_url = target_url or self.protected_url_for(source)
-        page.goto(probe_url, wait_until="domcontentloaded", timeout=self._config.ensai_timeout_ms)
+        try:
+            self._goto_with_timeout_recovery(page, probe_url, timeout_ms=self._config.ensai_timeout_ms)
+        except TransientSourceError:
+            # If Moodle /my/courses.php stalls, try lightweight static /user/profile.php before failing
+            if source == SourceKind.MOODLE and target_url is None:
+                alt_url = urljoin(self._config.moodle_base_url, "user/profile.php")
+                if alt_url != probe_url:
+                    logger.warning(
+                        "Moodle protected probe timed out on %s; falling back to %s.",
+                        sanitize_url_for_logs(probe_url),
+                        sanitize_url_for_logs(alt_url),
+                    )
+                    probe_url = alt_url
+                    self._goto_with_timeout_recovery(
+                        page, probe_url, timeout_ms=self._config.ensai_timeout_ms
+                    )
+                else:
+                    raise
+            else:
+                raise
         self._settle_navigation(page, timeout_ms=min(8_000, self._config.ensai_timeout_ms))
         probe, _ = self._inspect_current_page(
             page,
@@ -1291,7 +1528,7 @@ class EnsaiAuthAdapter:
             html = self._collect_page_html(page, urlparse(self.service_url_for(source)).netloc.lower())
             cas_entry = self._extract_service_cas_link(html, page.url)
             if cas_entry:
-                page.goto(cas_entry, wait_until="domcontentloaded", timeout=self._config.ensai_timeout_ms)
+                self._goto_with_timeout_recovery(page, cas_entry, timeout_ms=self._config.ensai_timeout_ms)
                 self._settle_navigation(page, timeout_ms=min(8_000, self._config.ensai_timeout_ms))
                 probe, _ = self._inspect_current_page(
                     page,
@@ -1309,10 +1546,10 @@ class EnsaiAuthAdapter:
             and not probe.cas_redirect_detected
             and probe.origin_verified
         ):
-            page.goto(
+            self._goto_with_timeout_recovery(
+                page,
                 self._config.myensai_url,
-                wait_until="domcontentloaded",
-                timeout=self._config.ensai_timeout_ms,
+                timeout_ms=self._config.ensai_timeout_ms,
             )
             self._settle_navigation(page, timeout_ms=min(8_000, self._config.ensai_timeout_ms))
             myensai_probe, _ = self._inspect_current_page(
@@ -1396,6 +1633,22 @@ class EnsaiAuthAdapter:
                 next_action=f"Run ENSAI authentication for {source.value}.",
                 metadata={"profile_dir": str(profile_dir), "diagnostics": diag.to_dict()},
             )
+        # Fast path: validate persisted allowlisted session cookies over HTTP before launching Chromium
+        if self._context_factory is None:
+            fast_probe = self._probe_via_cookies_http(
+                source, profile_dir=profile_dir, phase="check_connection"
+            )
+            if fast_probe is not None and fast_probe.authenticated:
+                return AuthStatus(
+                    source=source,
+                    state=fast_probe.state,
+                    authenticated=True,
+                    detail=fast_probe.detail,
+                    account_hint=self._optional_account_hint(),
+                    requires_interactive_action=False,
+                    next_action=None,
+                    metadata=fast_probe.to_dict(),
+                )
         try:
             with self.open_context(source, headless=headless) as context:
                 page = context.pages[0] if context.pages else context.new_page()
@@ -1450,15 +1703,42 @@ class EnsaiAuthAdapter:
         except BrowserProfileLockError:
             raise
         except Exception as exc:
+            from ..connectors.base import TransientSourceError
+
             if type(exc).__name__ == "ProfileBusy":
                 raise
+            is_transient = isinstance(exc, TransientSourceError) or (
+                "timeout" in type(exc).__name__.lower() or "timed out" in str(exc).lower()
+            )
+            err_type = type(exc).__name__
+            logger.warning(
+                "ENSAI connection check failed for %s (%s, transient=%s)",
+                source.value,
+                err_type,
+                is_transient,
+            )
+            if self._context_factory is None:
+                self._emit_interactive_notice(
+                    f"[ensora-auth] source={source.value} phase=check_connection_error "
+                    f"exc_type={err_type} transient={is_transient}",
+                    interactive=True,
+                )
             return AuthStatus(
                 source=source,
                 state=AuthState.ERROR,
                 authenticated=False,
-                detail=redact_sensitive_text(f"Connection check failed: {exc}"),
-                requires_interactive_action=True,
-                metadata={"profile_dir": str(profile_dir)},
+                detail=redact_sensitive_text(f"Connection check failed ({err_type}): {exc}"),
+                requires_interactive_action=not is_transient,
+                next_action=(
+                    "Retry validation (transient navigation timeout)."
+                    if is_transient
+                    else f"Reauthenticate via EnsaiAuthAdapter for {source.value}."
+                ),
+                metadata={
+                    "profile_dir": str(profile_dir),
+                    "error_type": err_type,
+                    "errorcode": "transient_failure" if is_transient else "adapter_error",
+                },
             )
 
     def _wait_for_interactive_login(

@@ -10,6 +10,7 @@ from .markup_parser import (
 from .notebook_parser import NotebookDocumentParser
 from .office_parser import (
     DocxDocumentParser,
+    LegacyOfficeDocumentParser,
     OpenDocumentParser,
     PptxDocumentParser,
     XlsxDocumentParser,
@@ -27,6 +28,7 @@ __all__ = [
     "DocxDocumentParser",
     "XlsxDocumentParser",
     "OpenDocumentParser",
+    "LegacyOfficeDocumentParser",
     "ZipArchiveDocumentParser",
     "MarkdownDocumentParser",
     "HtmlDocumentParser",

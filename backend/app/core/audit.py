@@ -1,5 +1,6 @@
 """Read-only aggregate reporting. Never return document, grade or event values."""
 import json
+import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -16,11 +17,19 @@ METRICS = (
     "documents_unsupported", "documents_persisted", "documents_excluded", "parsing_failures",
     "chunks_generated", "announcements_discovered", "assignments_discovered", "assessments_persisted",
     "existing_versions_reused", "busy_intervals_written", "intervals_updated", "intervals_cancelled",
+    "failed_resources_retried", "retry_failed_skipped", "download_error_download_failure",
+    "download_error_download_size_limit", "download_error_reauth_required",
+    "download_error_source_access_denied", "download_error_transient_download_failure",
+    "download_error_source_resource_missing", "download_error_unsupported_export", "download_error_export_limit",
 )
 SAFE_CODES = frozenset({
     "source_warning", "source_listing_error", "record_conversion_error", "invalid_record_payload",
     "incomplete_event_interval", "record_failure", "source_failure", "calendar_snapshot_scope",
     "academic_year_unknown", "calendar_window_unverified", "discovery_coverage_unknown", "parse_warning", "scanned_pages_without_ocr", "ocr_unavailable",
+    "download_failure", "download_size_limit", "reauth_required", "source_access_denied",
+    "transient_download_failure", "source_resource_missing", "unsupported_export", "export_limit",
+    "reauthorization_required", "source_access_denied", "source_not_configured", "source_unavailable",
+    "source_validation_error",
 })
 FORMATS = {
     "application/pdf": "pdf",
@@ -31,7 +40,20 @@ FORMATS = {
     "application/x-ipynb+json": "notebook",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-excel.sheet.macroenabled.12": "xlsm",
+    "application/vnd.oasis.opendocument.text": "odt",
+    "application/vnd.oasis.opendocument.presentation": "odp",
+    "application/vnd.oasis.opendocument.spreadsheet": "ods",
+    "application/zip": "zip",
+    "text/calendar": "ics",
 }
+FORMAT_SUFFIXES = frozenset({
+    "pdf", "html", "htm", "md", "markdown", "txt", "csv", "tsv", "ipynb", "docx", "pptx",
+    "xlsx", "xlsm", "odt", "odp", "ods", "zip", "ics", "rtf", "py", "r", "sql", "json",
+    "xml", "toml", "yaml", "yml", "qmd", "rmd", "bib", "log", "png", "jpg", "jpeg", "parquet",
+    "npy", "npz", "h5", "sav", "dta", "arff", "feather", "rds", "rdata",
+})
 KINDS = (
     "academic_year", "semester", "teaching_unit", "subject", "assessment", "assessment_weight",
     "coefficient", "grade", "event", "chapter", "concept", "specialization",
@@ -52,7 +74,7 @@ def audit_database(path: Path, job_id: str | None = None) -> dict:
             result["cumulative"][source.value] = base
         result["totals"] = {key: sum(item[key] for item in result["cumulative"].values()) for key in (
             "documents_persisted", "document_versions", "available_chunks", "associated_documents",
-            "unresolved_documents",
+            "unresolved_documents", "document_inventory", "pending_download_failures",
         )}
         result["totals"]["manual_availability_intervals"] = db.execute("SELECT COUNT(*) FROM availability").fetchone()[0]
         if job_id:
@@ -68,14 +90,19 @@ def audit_database(path: Path, job_id: str | None = None) -> dict:
 
 def source_totals(db, identifier):
     doc = db.execute("""
-        SELECT COUNT(*) AS documents_persisted,
+        SELECT COUNT(*) AS document_inventory,
+               COUNT(CASE WHEN active_version_id IS NOT NULL THEN 1 END) AS documents_persisted,
+               COUNT(CASE WHEN json_extract(metadata_json, '$.ingestion_state') = 'download_failed'
+                          THEN 1 END) AS pending_download_failures,
                COUNT(CASE WHEN COALESCE(json_extract(metadata_json, '$.access_status'), 'active') = 'active'
                            AND active_version_id IS NOT NULL THEN 1 END) AS active_documents,
                COUNT(CASE WHEN COALESCE(json_extract(metadata_json, '$.access_status'), 'active') != 'active'
                           THEN 1 END) AS excluded_documents,
-               COUNT(CASE WHEN json_extract(metadata_json, '$.subject_id') IS NOT NULL
+               COUNT(CASE WHEN active_version_id IS NOT NULL
+                               AND json_extract(metadata_json, '$.subject_id') IS NOT NULL
                           THEN 1 END) AS associated_documents,
-               COUNT(CASE WHEN json_extract(metadata_json, '$.subject_id') IS NULL
+               COUNT(CASE WHEN active_version_id IS NOT NULL
+                               AND json_extract(metadata_json, '$.subject_id') IS NULL
                           THEN 1 END) AS unresolved_documents,
                COUNT(DISTINCT CASE WHEN active_version_id IS NOT NULL
                                    THEN json_extract(metadata_json, '$.course_id') END) AS courses_with_documents,
@@ -84,6 +111,15 @@ def source_totals(db, identifier):
         FROM documents WHERE connection_id = ?
     """, (identifier,)).fetchone()
     result = dict(doc)
+    result["download_failure_categories"] = {
+        (code if code in SAFE_CODES else "other"): count
+        for code, count in db.execute("""
+            SELECT json_extract(metadata_json, '$.ingestion_error_code'), COUNT(*)
+            FROM documents WHERE connection_id = ?
+              AND json_extract(metadata_json, '$.ingestion_state') = 'download_failed'
+            GROUP BY json_extract(metadata_json, '$.ingestion_error_code')
+        """, (identifier,))
+    }
     result["document_versions"], result["duplicate_blob_references"] = db.execute("""
         SELECT COUNT(*), COUNT(*) - COUNT(DISTINCT v.sha256)
         FROM document_versions v JOIN documents d ON d.id = v.document_id WHERE d.connection_id = ?
@@ -98,14 +134,34 @@ def source_totals(db, identifier):
     """, (identifier,)).fetchone()[0]
     result["parsing_status"] = dict.fromkeys(("ready", "partial", "unsupported", "failed"), 0)
     result["formats"] = {}
+    result["parse_warnings_by_format"] = {}
     for row in db.execute("""
-        SELECT v.status, v.mime_type, COUNT(*) AS n FROM document_versions v JOIN documents d ON d.id = v.document_id
-        WHERE d.connection_id = ? GROUP BY v.status, v.mime_type
+        SELECT v.status, v.mime_type, v.filename, v.source_metadata
+        FROM document_versions v JOIN documents d ON d.id = v.document_id
+        WHERE d.connection_id = ?
     """, (identifier,)):
         if row["status"] in result["parsing_status"]:
-            result["parsing_status"][row["status"]] += row["n"]
-        format_name = FORMATS.get(row["mime_type"], "other")
-        result["formats"][format_name] = result["formats"].get(format_name, 0) + row["n"]
+            result["parsing_status"][row["status"]] += 1
+        source_metadata = row["source_metadata"]
+        if isinstance(source_metadata, str):
+            try:
+                source_metadata = json.loads(source_metadata)
+            except (ValueError, TypeError):
+                source_metadata = {}
+        source_metadata = source_metadata if isinstance(source_metadata, dict) else {}
+        format_name = FORMATS.get(row["mime_type"])
+        if format_name is None:
+            filename = row["filename"] or source_metadata.get("filename") or source_metadata.get("title") or ""
+            suffix = str(filename).rsplit(".", 1)[-1].lower() if "." in str(filename) else ""
+            format_name = suffix if suffix in FORMAT_SUFFIXES else "other"
+        result["formats"][format_name] = result["formats"].get(format_name, 0) + 1
+        warnings = source_metadata.get("parser_warning_codes") or []
+        if isinstance(warnings, list):
+            by_code = result["parse_warnings_by_format"].setdefault(format_name, {})
+            for warning in set(warnings):
+                code = (warning if isinstance(warning, str)
+                        and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", warning) else "other")
+                by_code[code] = by_code.get(code, 0) + 1
     result["academic_entities"] = dict.fromkeys(KINDS, 0)
     for kind, total in db.execute("SELECT kind, COUNT(*) FROM source_records WHERE connection_id = ? GROUP BY kind",
                                   (identifier,)):

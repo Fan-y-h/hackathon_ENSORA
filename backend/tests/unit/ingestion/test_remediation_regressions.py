@@ -101,7 +101,8 @@ def test_rev001_ensora_drive_revalidates_moved_folder_and_rejects_trashed_downlo
 
     tree: dict[str, dict[str, Any]] = {
         root_id: {"id": root_id, "name": "Ensora", "mimeType": DRIVE_FOLDER_MIME, "parents": [], "trashed": False},
-        "sub_ml": {"id": "sub_ml", "name": "ML", "mimeType": DRIVE_FOLDER_MIME, "parents": [root_id], "trashed": False},
+        "fld_2a": {"id": "fld_2a", "name": "2A", "mimeType": DRIVE_FOLDER_MIME, "parents": [root_id], "trashed": False},
+        "sub_ml": {"id": "sub_ml", "name": "ML", "mimeType": DRIVE_FOLDER_MIME, "parents": ["fld_2a"], "trashed": False},
         "doc1": {
             "id": "doc1",
             "name": "CM1.pdf",
@@ -143,8 +144,8 @@ def test_rev001_ensora_drive_revalidates_moved_folder_and_rejects_trashed_downlo
     with pytest.raises(PermissionDeniedError):
         conn.fetch_blob(doc_rec)
 
-    # Move back inside root, then trash the file -> fetch_blob must reject trashed file!
-    tree["sub_ml"]["parents"] = [root_id]
+    # Move back inside 2A, then trash the file -> fetch_blob must reject trashed file!
+    tree["sub_ml"]["parents"] = ["fld_2a"]
     tree["doc1"]["trashed"] = True
     with pytest.raises(PermissionDeniedError):
         conn.fetch_blob(doc_rec)
@@ -748,6 +749,7 @@ def test_rev017_rev018_rev019_rev020_and_new_codex_contract_fields(tmp_path: Pat
                 external_id="ensora_drive:f9",
                 title="Notes.pdf",
                 mime_type="application/pdf",
+                folder_path="Ensora/2A/ML",
             )
             return InternalChangePage(
                 items=(rec,),

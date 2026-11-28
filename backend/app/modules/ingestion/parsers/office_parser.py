@@ -1050,3 +1050,176 @@ class ZipArchiveDocumentParser(DocumentParser):
             extraction_quality=quality,
             warnings=tuple(warnings),
         )
+
+
+class LegacyOfficeDocumentParser(DocumentParser):
+    """Pure-Python bounded text extractor for legacy binary OLE2 Office files (.doc, .ppt, .xls).
+
+    Extracts readable UTF-16LE and Latin-1/ASCII text runs from legacy Microsoft Office files
+    without requiring LibreOffice/antiword, marking quality conservatively and preserving
+    provenance so archived ENSAI course notes & exams remain searchable.
+    """
+
+    name = "legacy_office_parser"
+    version = "1.0.0"
+    supported_mimes = frozenset(
+        {
+            "application/msword",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.ms-excel",
+        }
+    )
+    supported_extensions = frozenset({".doc", ".ppt", ".xls"})
+    _OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+    _BOILERPLATE_MARKERS = (
+        "root entry",
+        "worddocument",
+        "powerpoint document",
+        "workbook",
+        "summaryinformation",
+        "documentsummaryinformation",
+        "compobj",
+        "microsoft word",
+        "microsoft office",
+        "times new roman",
+        "arial",
+        "calibri",
+        "normal.dot",
+    )
+
+    @classmethod
+    def _extract_readable_runs(cls, content: bytes, *, max_chars: int = 200_000) -> list[str]:
+        import re as _re
+
+        runs: list[str] = []
+        seen: set[str] = set()
+        total_chars = 0
+
+        # 1. UTF-16LE runs (primary encoding of Word/PowerPoint/Excel strings inside OLE2 streams)
+        try:
+            u16 = content.decode("utf-16le", errors="ignore")
+        except Exception:
+            u16 = ""
+        for raw in _re.findall(r"[A-Za-z0-9À-ÿ][A-Za-z0-9À-ÿ ,.;:!?()'\"/%\-+*=°<>_]{14,}", u16):
+            cleaned = " ".join(raw.split()).strip()
+            low = cleaned.lower()
+            if len(cleaned) < 16 or any(m in low for m in cls._BOILERPLATE_MARKERS):
+                continue
+            alpha = sum(1 for ch in cleaned if ch.isalpha())
+            if alpha < 8 or (alpha / len(cleaned)) < 0.45:
+                continue
+            if cleaned not in seen:
+                seen.add(cleaned)
+                runs.append(cleaned)
+                total_chars += len(cleaned)
+                if total_chars >= max_chars:
+                    return runs
+
+        # 2. Latin-1 / ASCII printable runs (Word 97-2003 compressed 8-bit text pieces & Excel BIFF strings)
+        for m in _re.finditer(rb"[\x20-\x7e\xc0-\xff]{18,}", content):
+            cleaned = " ".join(m.group(0).decode("latin-1", errors="ignore").split()).strip()
+            low = cleaned.lower()
+            if len(cleaned) < 18 or any(mk in low for mk in cls._BOILERPLATE_MARKERS):
+                continue
+            alpha = sum(1 for ch in cleaned if ch.isalpha())
+            if alpha < 10 or (alpha / len(cleaned)) < 0.50:
+                continue
+            if cleaned not in seen:
+                seen.add(cleaned)
+                runs.append(cleaned)
+                total_chars += len(cleaned)
+                if total_chars >= max_chars:
+                    break
+        return runs
+
+    def parse(
+        self,
+        content: bytes,
+        *,
+        filename: str,
+        mime_type: str,
+        provenance: dict[str, Any] | None = None,
+    ) -> ParsedDocument:
+        digest = sha256_bytes(content)
+        prov = dict(provenance or {})
+        meta: dict[str, Any] = {
+            "filename": filename,
+            "size_bytes": len(content),
+            "ole2_magic_verified": content.startswith(self._OLE2_MAGIC),
+        }
+        if not content:
+            return ParsedDocument(
+                parser_name=self.name,
+                parser_version=self.version,
+                title=Path(filename).stem,
+                mime_type=mime_type,
+                content_hash=digest,
+                blocks=(),
+                metadata=meta,
+                provenance=prov,
+                extraction_quality=0.0,
+                error="Empty legacy Office document.",
+            )
+
+        runs = self._extract_readable_runs(content)
+        blocks: list[ParsedBlock] = []
+        all_math: list[str] = []
+        # Group runs into compact paragraph blocks (up to ~1200 chars each)
+        chunk: list[str] = []
+        chunk_len = 0
+        ordinal = 0
+        for run in runs:
+            chunk.append(run)
+            chunk_len += len(run) + 1
+            if chunk_len >= 1000:
+                text = "\n".join(chunk)
+                math = extract_math_expressions(text)
+                all_math.extend(m for m in math if m not in all_math)
+                blocks.append(
+                    ParsedBlock(
+                        ordinal=ordinal,
+                        kind="paragraph",
+                        text=text,
+                        locator=Locator(kind="section", section=f"segment_{ordinal + 1}"),
+                        heading_path=(f"segment_{ordinal + 1}",),
+                        language=detect_language_hint(text),
+                        math_expressions=math,
+                    )
+                )
+                ordinal += 1
+                chunk = []
+                chunk_len = 0
+        if chunk:
+            text = "\n".join(chunk)
+            math = extract_math_expressions(text)
+            all_math.extend(m for m in math if m not in all_math)
+            blocks.append(
+                ParsedBlock(
+                    ordinal=ordinal,
+                    kind="paragraph",
+                    text=text,
+                    locator=Locator(kind="section", section=f"segment_{ordinal + 1}"),
+                    heading_path=(f"segment_{ordinal + 1}",),
+                    language=detect_language_hint(text),
+                    math_expressions=math,
+                )
+            )
+
+        warnings = (
+            ("legacy_binary_office_text_extraction",)
+            if blocks
+            else ("legacy_binary_office_no_extractable_text",)
+        )
+        return ParsedDocument(
+            parser_name=self.name,
+            parser_version=self.version,
+            title=Path(filename).stem,
+            mime_type=mime_type,
+            content_hash=digest,
+            blocks=tuple(blocks),
+            math_expressions=tuple(all_math),
+            metadata=meta,
+            provenance=prov,
+            extraction_quality=0.55 if blocks else 0.0,
+            warnings=warnings,
+        )

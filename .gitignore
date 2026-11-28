@@ -152,12 +152,40 @@ activemq-data/
 # Environments
 .env
 .envrc
+.env.*
+!.env.example
+!.env.*.example
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Ensora+ private runtime data and source credentials
+sources.env
+**/sources.env
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.db-journal
+/data/
+/local-data/
+/downloads/
+/runtime/
+/blobs/
+sessions/
+playwright/.auth/
+browser-profile/
+token.json
+credentials.json
+client_secret*.json
+*.pem
+*.key
+*.har
 
 # Conda environments
 conda-meta/

@@ -178,7 +178,17 @@ _TEXT_RULES: tuple[_Rule, ...] = (
 )
 
 _SOURCE_CODE_EXTS = frozenset(
-    ext for ext in CODE_EXTENSIONS_TO_LANGUAGE.keys() if ext not in {".json", ".yaml", ".yml", ".csv", ".tex"}
+    ext for ext in CODE_EXTENSIONS_TO_LANGUAGE.keys() if ext not in {".json", ".yaml", ".yml", ".csv", ".tsv", ".tex", ".sty", ".cls", ".bib", ".rst", ".org", ".ini", ".cfg", ".conf", ".log", ".svg"}
+)
+_DATASET_EXTS = frozenset(
+    {".csv", ".tsv", ".parquet", ".rds", ".rdata", ".sav", ".dta", ".arff", ".feather", ".h5", ".hdf5", ".npy", ".npz"}
+)
+_DATASET_MIMES = frozenset(
+    {"text/csv", "text/tab-separated-values", "application/vnd.apache.parquet"}
+)
+_DATASET_PATH_RE = re.compile(
+    r"\b(?:datasets?|donnees|data[_\-\s]?(?:train|test|set|sample|raw)|echantillon|train[_\-\s]?set|test[_\-\s]?set)\b",
+    re.IGNORECASE,
 )
 
 
@@ -219,24 +229,33 @@ class DocumentClassifier:
 
         # 1. Explicit source record kind signals
         if record is not None:
-            if record.record_kind == "assignment" or record.payload.get("resource_kind") == "assignment":
+            rkind = str(record.payload.get("resource_kind") or record.record_kind or "").lower()
+            if record.record_kind == "assignment" or rkind == "assignment":
                 add(DocumentCategory.ASSIGNMENT, 0.92, "source record explicitly typed as Moodle assignment")
-            elif record.record_kind == "announcement":
-                add(DocumentCategory.ADMINISTRATIVE, 0.78, "source record is a course announcement")
+            elif record.record_kind == "announcement" or rkind == "announcement":
+                add(DocumentCategory.ADMINISTRATIVE, 0.90, "source record is a course announcement")
+            elif rkind == "educational_html":
+                add(DocumentCategory.LECTURE, 0.42, "source record is inline Moodle educational HTML section")
 
         # 2. Format-level deterministic signals
         if lower_fname.endswith(".ipynb") or norm_mime == "application/x-ipynb+json":
             add(DocumentCategory.NOTEBOOK, 0.88, "file format is Jupyter Notebook (.ipynb)")
+        elif any(lower_fname.endswith(ext) for ext in _DATASET_EXTS) or norm_mime in _DATASET_MIMES:
+            add(DocumentCategory.DATASET, 0.86, f"file format matches tabular/statistical dataset ({fname})")
         elif any(lower_fname.endswith(ext) for ext in _SOURCE_CODE_EXTS):
             add(DocumentCategory.SOURCE_CODE, 0.86, f"file extension matches source code ({fname})")
         elif lower_fname.endswith(".pptx") or "presentation" in norm_mime:
             add(DocumentCategory.LECTURE, 0.35, "PowerPoint slide deck often corresponds to lecture")
+        elif parsed is not None and "zip_contains_no_parseable_text_members" in (parsed.warnings or ()):
+            add(DocumentCategory.DATASET, 0.78, "binary-only archive manifest corresponds to dataset/weights archive")
 
         # 3. Title, filename, section, and folder path signals
         meta_text = _fold(" / ".join(p for p in (folder_path or (record.folder_path if record else ""), record.section_title if record else "", fname, title) if p))
         for rule in _PATH_AND_TITLE_RULES:
             if rule.pattern.search(meta_text):
                 add(rule.category, rule.weight, rule.label)
+        if _DATASET_PATH_RE.search(meta_text):
+            add(DocumentCategory.DATASET, 0.52, "title/path contains dataset/data marker")
 
         # Boost examination_correction when folder is Annales/Exams AND filename says correction/corrige
         if scores[DocumentCategory.EXAMINATION] >= 0.7 and (

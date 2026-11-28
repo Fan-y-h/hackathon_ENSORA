@@ -21,6 +21,10 @@ PROGRESS_METRICS = (
     "enrolled_subjects", "teaching_units", "subject_coefficients", "ects_values", "available_grades",
     "assessment_records", "aggregate_grades", "missing_or_ambiguous_count", "academic_year_unknown",
     "busy_intervals_written", "intervals_updated", "intervals_cancelled",
+    "failed_resources_retried", "retry_failed_skipped", "download_error_download_failure",
+    "download_error_download_size_limit", "download_error_reauth_required",
+    "download_error_source_access_denied", "download_error_transient_download_failure",
+    "download_error_source_resource_missing", "download_error_unsupported_export", "download_error_export_limit",
 )
 
 
@@ -28,7 +32,13 @@ def progress_snapshot(reports):
     """Return only allowlisted aggregate counts for CLI progress output."""
     snapshot = {}
     for source, report in reports.items():
-        item = {"status": report.get("status")}
+        if not isinstance(report, dict) or source.startswith("_"):
+            continue
+        item = {"status": report.get("status"), "stage": report.get("stage")}
+        for name in ("page_number", "items_remaining_in_page"):
+            value = report.get(name)
+            if isinstance(value, int) and not isinstance(value, bool):
+                item[name] = value
         for name in ("documents", "records", "unchanged", "errors"):
             value = report.get(name)
             if isinstance(value, int) and not isinstance(value, bool):
@@ -43,6 +53,12 @@ def progress_snapshot(reports):
                 item["metrics"] = selected
         snapshot[source] = item
     return snapshot
+
+
+def public_report(reports):
+    """Strip private continuation cursors from user-facing job output."""
+    return {source: report for source, report in reports.items()
+            if isinstance(report, dict) and not source.startswith("_")}
 
 
 def wait_for_job(runtime, job_id):
@@ -62,11 +78,16 @@ def wait_for_job(runtime, job_id):
                 }, sort_keys=True), flush=True)
                 last_progress_at = current
             if item.status not in ("queued", "running"):
-                print(json.dumps({"id": job_id, "status": item.status, "report": item.report}, indent=2))
-                for source, report in item.report.items():
+                reports = public_report(item.report)
+                print(json.dumps({"id": job_id, "status": item.status, "report": reports}, indent=2))
+                for source, report in reports.items():
                     if report.get("next_action") == "reauthorize":
                         print(f"Run python3 scripts/onboarding.py --source {source} --reauthorize, then "
                               f"python3 scripts/sync.py --resume {job_id} --source {source} --approve.",
+                              file=sys.stderr)
+                    elif report.get("next_action") == "retry_validation":
+                        print(f"Validate {source} with python3 scripts/check_connections.py --validate --source {source}; "
+                              f"if unavailable, inspect the redacted connection result before retrying job {job_id}.",
                               file=sys.stderr)
                 return item.status
             sleep(0.25)
@@ -85,11 +106,13 @@ def main():
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--resume", metavar="JOB_ID", help="Resume a source after reauthentication")
+    parser.add_argument("--retry", metavar="JOB_ID", help="Replay an interrupted/failed scope idempotently")
     parser.add_argument("--source", type=SourceKind, choices=list(SourceKind))
     parser.add_argument("--subject-id")
     parser.add_argument("--folder-id")
     parser.add_argument("--academic-year")
     parser.add_argument("--discover-only", action="store_true", help="List resources without downloading or persisting source data")
+    parser.add_argument("--retry-failed", action="store_true", help="Retry only resources previously marked as download failures")
     parser.add_argument("--window-start", type=datetime.fromisoformat)
     parser.add_argument("--window-end", type=datetime.fromisoformat)
     parser.add_argument("--full", action="store_true")
@@ -99,9 +122,13 @@ def main():
     args = parser.parse_args()
     if not args.approve:
         parser.error("Use --approve to authorize this run.")
-    if args.resume and (args.folder_id or args.subject_id or args.full or args.academic_json or args.dry_run
+    if args.resume and args.retry:
+        parser.error("Use either --resume (after reauthentication) or --retry, not both.")
+    if (args.resume or args.retry) and (args.folder_id or args.subject_id or args.full or args.academic_json or args.dry_run
                         or args.academic_year or args.window_start or args.window_end or args.discover_only):
-        parser.error("--resume reuses the original selection")
+        parser.error("--resume and --retry reuse the original selection")
+    if args.retry_failed and (not args.source or args.resume or args.retry or args.discover_only or args.academic_json):
+        parser.error("--retry-failed requires one --source and cannot be combined with resume, retry, discovery, or import.")
     if args.folder_id and not args.source:
         parser.error("--folder-id requires --source.")
     if args.source == SourceKind.LOCAL and not args.folder_id:
@@ -110,6 +137,9 @@ def main():
         with Runtime(settings) as runtime:
             if args.resume:
                 job = runtime.sync.resume(args.resume, args.source)
+                return int(wait_for_job(runtime, job) != "succeeded")
+            if args.retry:
+                job = runtime.sync.retry(args.retry, args.source)
                 return int(wait_for_job(runtime, job) != "succeeded")
             if args.academic_json:
                 source = SourceKind.ACADEMIC_IMPORT
@@ -131,7 +161,8 @@ def main():
                 parser.error("--dry-run requires --academic-json.")
             try:
                 scope = SyncScope(source=args.source, subject_id=args.subject_id, folder_id=args.folder_id,
-                                  full=args.full, academic_year=args.academic_year, discovery_only=args.discover_only,
+                                  full=args.full, discovery_only=args.discover_only, retry_failed=args.retry_failed,
+                                  academic_year=args.academic_year,
                                   window_start=args.window_start, window_end=args.window_end)
             except ValidationError:
                 parser.error("Invalid scope. Academic year requires Moodle or Pamplemousse, and Calendar windows need two timezone-aware endpoints.")

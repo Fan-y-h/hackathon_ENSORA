@@ -20,6 +20,7 @@ from .markup_parser import (
 from .notebook_parser import NotebookDocumentParser
 from .office_parser import (
     DocxDocumentParser,
+    LegacyOfficeDocumentParser,
     OpenDocumentParser,
     PptxDocumentParser,
     XlsxDocumentParser,
@@ -98,6 +99,7 @@ class DocumentParserRegistry:
                 DocxDocumentParser(),
                 XlsxDocumentParser(),
                 OpenDocumentParser(),
+                LegacyOfficeDocumentParser(),
                 MarkdownDocumentParser(),
                 HtmlDocumentParser(),
                 PlainTextAndCodeParser(),
