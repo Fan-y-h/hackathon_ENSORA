@@ -224,7 +224,7 @@ def classify_timetable_event(
     return event_type, confirmation_required, reason
 
 
-def parse_decimal_strict(value: Any) -> Decimal | None:
+def parse_decimal_strict(value: Any, *, allow_grade_scale: bool = False) -> Decimal | None:
     """Parse a Decimal strictly from string/int/float (French comma supported); returns None for missing."""
     if value is None:
         return None
@@ -269,12 +269,13 @@ def parse_decimal_strict(value: Any) -> Decimal | None:
         "verrouille",
     }:
         return None
-    # Strip optional trailing scale suffix like "16.5/20" -> only accept numeric numerator if clean
-    if "/" in text:
-        parts = text.split("/", 1)
-        text = parts[0].strip()
+    if allow_grade_scale:
+        grade = re.fullmatch(r"([+-]?\d+(?:\.\d+)?)/\d+(?:\.\d+)?", text)
+        if grade:
+            text = grade.group(1)
     try:
-        return Decimal(text)
+        result = Decimal(text)
+        return result if result.is_finite() else None
     except InvalidOperation:
         return None
 
@@ -1824,7 +1825,7 @@ def parse_pamplemousse_notes_html(
 
             note_raw = cells[idx_note]["text"].strip() if (idx_note is not None and idx_note < len(cells)) else ""
             coef_raw = cells[idx_coef]["text"].strip() if (idx_coef is not None and idx_coef < len(cells)) else ""
-            grade_val = parse_decimal_strict(note_raw)
+            grade_val = parse_decimal_strict(note_raw, allow_grade_scale=True)
             coef_val, coef_mode = _parse_coefficient_cell(coef_raw)
             row_weight_status = (
                 ValueStatus.CONFIRMED
@@ -2354,7 +2355,7 @@ def parse_pamplemousse_academic_html(html: str) -> list[AcademicRecord]:
         year = col(row, "année", "annee", "year")
         spec = col(row, "filière", "filiere", "spécial", "special")
         coef = parse_decimal_strict(col(row, "coef", "poids", "weight"))
-        grade = parse_decimal_strict(col(row, "note", "grade", "mark"))
+        grade = parse_decimal_strict(col(row, "note", "grade", "mark"), allow_grade_scale=True)
         scale = parse_decimal_strict(col(row, "barème", "bareme", "scale"))
 
         ext_seed = f"{year or ''}|{sem or ''}|{ue or ''}|{code or subject}"
@@ -3249,7 +3250,7 @@ class PamplemousseConnector(SourceConnector):
                 if not title:
                     continue
                 coef = parse_decimal_strict(norm.get("coefficient") or norm.get("weight") or norm.get("coef"))
-                grade = parse_decimal_strict(norm.get("grade") or norm.get("note") or norm.get("mark"))
+                grade = parse_decimal_strict(norm.get("grade") or norm.get("note") or norm.get("mark"), allow_grade_scale=True)
                 scale = parse_decimal_strict(norm.get("scale_max") or norm.get("bareme") or norm.get("barème"))
                 w_mode = norm.get("weight_mode") or ("coefficient" if coef is not None else None)
                 ext_id = (
@@ -3343,7 +3344,7 @@ class PamplemousseConnector(SourceConnector):
         for idx, entry in enumerate(raw_academics, start=1):
             title = str(entry.get("title") or entry.get("subject") or entry.get("name") or f"Record {idx}")
             coef = parse_decimal_strict(entry.get("weight") if "weight" in entry else entry.get("coefficient"))
-            grade = parse_decimal_strict(entry.get("grade_value") if "grade_value" in entry else entry.get("grade"))
+            grade = parse_decimal_strict(entry.get("grade_value") if "grade_value" in entry else entry.get("grade"), allow_grade_scale=True)
             scale = parse_decimal_strict(entry.get("grade_scale_max") or entry.get("scale_max"))
             rules = entry.get("rules") if isinstance(entry.get("rules"), dict) else None
             rule_verified = (

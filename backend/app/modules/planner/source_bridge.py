@@ -19,8 +19,9 @@ Mapping rules (no information is invented):
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
@@ -31,6 +32,7 @@ from app.core.common import Clock, get_clock
 from app.core.db import get_db
 from app.core.errors import AppError
 from app.core.identity import get_current_user_id
+from app.modules.planner.models import Event
 from app.modules.planner.schemas import EventImportItem, ImportResult
 from app.modules.planner.service import AgendaService
 
@@ -41,6 +43,7 @@ TYPE_FOLD = {"project": "deadline", "sport": "personal"}
 # ENSAI course codes: cohort (1A-3A) + domain letters + number, e.g. 2AECO02, 1ASTA05.
 COURSE_CODE = re.compile(r"(?<![A-Z0-9])([1-3]A[A-Z]{2,5}\d{2})(?![A-Z0-9])")
 TIMETABLE_SOURCES = {"pamplemousse"}
+DEFAULT_SOURCE_TZ = ZoneInfo("Europe/Paris")
 
 SOURCE_LABEL = {
     "pamplemousse": "pamplemousse",
@@ -69,12 +72,34 @@ class SourcesImportOut(BaseModel):
     sources: list[SourceImportResult]
 
 
-def _parse_dt(value: Any) -> datetime | None:
-    return datetime.fromisoformat(value) if isinstance(value, str) and value else None
+def _parse_dt(value: Any, tz_name: str | None = None) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        tz = DEFAULT_SOURCE_TZ
+        if tz_name:
+            try:
+                tz = ZoneInfo(tz_name)
+            except Exception:
+                tz = DEFAULT_SOURCE_TZ
+        dt = dt.replace(tzinfo=tz)
+    return dt.astimezone(UTC)
 
 
 def _parse_date(value: Any) -> date | None:
-    return date.fromisoformat(value) if isinstance(value, str) and value else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError:
+        return None
 
 
 def course_code(*texts: Any) -> str | None:
@@ -87,8 +112,28 @@ def course_code(*texts: Any) -> str | None:
 
 
 def to_import_item(external_id: str, payload: dict[str, Any], source: str | None = None) -> EventImportItem | None:
-    """Map one P1 ``CalendarEvent`` payload; ``None`` when it must not reach the agenda."""
-    if payload.get("kind") != "event" or payload.get("status") == "cancelled":
+    """Map one P1 ``CalendarEvent`` or Moodle ``assignment`` payload; ``None`` when it must not reach the agenda."""
+    kind = payload.get("kind")
+    tz_name = payload.get("original_timezone") if isinstance(payload.get("original_timezone"), str) else None
+    if kind == "assignment":
+        if payload.get("status") == "cancelled":
+            return None
+        due = _parse_dt(payload.get("deadline_at") or payload.get("due_at"), tz_name)
+        if due is None:
+            return None
+        title = str(payload.get("title") or "").strip()[:200] or "Devoir Moodle"
+        subject_id = payload.get("subject_id") or course_code(title, payload.get("course_title"))
+        return EventImportItem(
+            external_id=external_id[:255],
+            type="deadline",
+            title=title,
+            subject_id=subject_id,
+            start_at=due,
+            end_at=due + timedelta(minutes=1),
+            busy=False,
+            confirmation_required=bool(payload.get("confirmation_required")),
+        )
+    if kind != "event" or payload.get("status") == "cancelled":
         return None
     raw_type = str(payload.get("event_type") or "other")
     event_type = TYPE_FOLD.get(raw_type, raw_type)
@@ -99,60 +144,122 @@ def to_import_item(external_id: str, payload: dict[str, Any], source: str | None
         if event_type == "other":
             event_type = "class"
         subject_id = subject_id or course_code(payload.get("title"), payload.get("group"))
-    start, end = _parse_dt(payload.get("starts_at")), _parse_dt(payload.get("ends_at"))
+    start, end = _parse_dt(payload.get("starts_at"), tz_name), _parse_dt(payload.get("ends_at"), tz_name)
     all_day = _parse_date(payload.get("all_day_start")) if start is None else None
     if start is None and all_day is None:
         return None
-    if start is not None and end is None:
-        return None
+    if start is not None:
+        if end is None:
+            if event_type == "deadline":
+                end = start + timedelta(minutes=1)
+            else:
+                return None
+        elif end <= start:
+            if event_type == "deadline" and end == start:
+                end = start + timedelta(minutes=1)
+            else:
+                return None
+    raw_busy = payload.get("busy")
+    busy = raw_busy if isinstance(raw_busy, bool) else None
     title = str(payload.get("title") or "").strip()[:200] or "Événement"
-    return EventImportItem(
-        external_id=external_id[:255],
-        type=event_type,  # type: ignore[arg-type]
-        title=title,
-        subject_id=subject_id,
-        start_at=start,
-        end_at=end,
-        all_day_date=all_day,
-        room=payload.get("room"),
-        teacher=payload.get("teacher"),
-        group=payload.get("group"),
-        confirmation_required=bool(payload.get("confirmation_required")) or payload.get("status") == "tentative",
-        recurrence_key=payload.get("recurrence_key"),
-    )
+    try:
+        return EventImportItem(
+            external_id=external_id[:255],
+            type=event_type,  # type: ignore[arg-type]
+            title=title,
+            subject_id=subject_id,
+            start_at=start,
+            end_at=end,
+            all_day_date=all_day,
+            room=payload.get("room"),
+            teacher=payload.get("teacher"),
+            group=payload.get("group"),
+            busy=busy,
+            confirmation_required=bool(payload.get("confirmation_required")) or payload.get("status") == "tentative",
+            recurrence_key=payload.get("recurrence_key"),
+        )
+    except ValueError:
+        return None
 
 
 def read_source_events(engine) -> dict[str, list[tuple[str, dict[str, Any]]]]:
-    """All P1 event records grouped by source, read from the P1 database."""
+    """All P1 event and assignment records grouped by source, read from the P1 database."""
     from backend.app.core.database import connections, records
 
     grouped: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    cols = [connections.c.source, records.c.external_id, records.c.kind, records.c.payload]
+    if "title" in records.c:
+        cols.append(records.c.title)
     query = (
-        select(connections.c.source, records.c.external_id, records.c.payload)
+        select(*cols)
         .join(connections, records.c.connection_id == connections.c.id)
-        .where(records.c.kind == "event")
+        .where(records.c.kind.in_(("event", "assignment")))
         .order_by(connections.c.source, records.c.external_id)
     )
     with engine.connect() as db:
-        for source, external_id, payload in db.execute(query):
-            grouped.setdefault(str(source), []).append((external_id, payload or {}))
+        for row in db.execute(query):
+            source, external_id, kind, payload = row[0], row[1], row[2], dict(row[3] or {})
+            payload.setdefault("kind", kind)
+            if len(row) > 4 and row[4] and not payload.get("title"):
+                payload["title"] = row[4]
+            grouped.setdefault(str(source), []).append((external_id, payload))
     return grouped
 
 
 def apply_source_events(db: Session, clock: Clock, user_id: str, engine) -> list[SourceImportResult]:
-    """Copy every P1 calendar event into the agenda (idempotent)."""
+    """Copy every P1 calendar event & Moodle assignment into the agenda (idempotent)."""
     agenda = AgendaService(db, clock)
     results: list[SourceImportResult] = []
     for source, rows in read_source_events(engine).items():
         label = SOURCE_LABEL.get(source, "import")
         items: list[EventImportItem] = []
+        cancelled_ids: set[str] = set()
         for external_id, payload in rows:
+            if payload.get("status") == "cancelled":
+                cancelled_ids.add(external_id[:255])
             item = to_import_item(external_id, payload, source)
             if item is not None:
                 items.append(item)
         result = agenda.import_events(user_id, label, items) if items else ImportResult(
-            created=0, updated=0, unchanged=0, agenda_revision=0
+            created=0, updated=0, unchanged=0, agenda_revision=agenda.agenda_revision(user_id)
         )
+        # Propagate upstream cancellations to previously imported events without deleting history.
+        cancelled_updated = 0
+        if cancelled_ids:
+            existing = list(
+                db.scalars(
+                    select(Event).where(
+                        Event.user_id == user_id,
+                        Event.source == label,
+                        Event.external_id.in_(cancelled_ids),
+                        Event.status != "cancelled",
+                    )
+                )
+            )
+            for ev in existing:
+                ev.status = "cancelled"
+                ev.busy = False
+                ev.confirmation_required = False
+                ev.revision += 1
+                db.flush()
+                agenda._sync_assessment(user_id, ev)
+                agenda._emit(
+                    user_id,
+                    "EventChanged",
+                    ev.id,
+                    ev.revision,
+                    action="source_cancelled",
+                    source=label,
+                )
+                cancelled_updated += 1
+            if cancelled_updated:
+                rev = agenda.bump_revision(user_id)
+                result = ImportResult(
+                    created=result.created,
+                    updated=result.updated + cancelled_updated,
+                    unchanged=result.unchanged,
+                    agenda_revision=rev,
+                )
         results.append(
             SourceImportResult(source=source, agenda_source=label, read=len(rows), skipped=len(rows) - len(items), result=result)
         )

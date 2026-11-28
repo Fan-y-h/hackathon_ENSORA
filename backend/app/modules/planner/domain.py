@@ -136,6 +136,37 @@ class BusyBlock:
 
 
 @dataclass(frozen=True)
+class EventConflict:
+    """Two busy events whose half-open intervals [start, end) strictly overlap."""
+
+    event_id_a: str
+    event_id_b: str
+    overlap: Interval
+
+
+def detect_conflicts(busy: Sequence[BusyBlock]) -> list[EventConflict]:
+    """Detect all overlapping busy event pairs without mutating or dropping any event.
+
+    Consecutive events [08:00, 10:00) and [10:00, 12:00) satisfy a.end == b.start and
+    are never reported as conflicts.
+    """
+    ordered = sorted(busy, key=lambda b: (b.interval, b.event_id))
+    conflicts: list[EventConflict] = []
+    for i, a in enumerate(ordered):
+        for b in ordered[i + 1 :]:
+            if b.interval.start >= a.interval.end:
+                break
+            if a.event_id == b.event_id:
+                continue
+            ov_start = max(a.interval.start, b.interval.start)
+            ov_end = min(a.interval.end, b.interval.end)
+            if ov_start < ov_end:
+                id_a, id_b = sorted((a.event_id, b.event_id))
+                conflicts.append(EventConflict(id_a, id_b, Interval(ov_start, ov_end)))
+    return conflicts
+
+
+@dataclass(frozen=True)
 class DayLoad:
     date: date
     free_min: int
@@ -154,6 +185,7 @@ class AvailabilitySnapshot:
     busy: list[BusyBlock]
     days: list[DayLoad]
     warnings: list[str] = field(default_factory=list)
+    conflicts: list[EventConflict] = field(default_factory=list)
 
 
 def compute_availability(
@@ -169,6 +201,10 @@ def compute_availability(
     warnings: list[str] = []
     if not prefs.work_windows:
         warnings.append("NO_WORK_WINDOWS")
+
+    conflicts = detect_conflicts(busy)
+    for c in conflicts:
+        warnings.append(f"EVENT_CONFLICT:{c.event_id_a}:{c.event_id_b}")
 
     work = expand_weekly(prefs.work_windows, tz, range_)
     rest = expand_weekly(prefs.rest_windows, tz, range_)
@@ -194,6 +230,7 @@ def compute_availability(
         busy=sorted(busy, key=lambda b: (b.interval, b.event_id)),
         days=days,
         warnings=warnings,
+        conflicts=conflicts,
     )
 
 

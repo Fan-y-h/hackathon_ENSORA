@@ -50,14 +50,29 @@ class NodeIn(_Strict):
     parent_key: str | None = Field(default=None, pattern=KEY_PATTERN)
     kind: NodeKind
     title: str = Field(min_length=1, max_length=200)
-    weight: Decimal = Field(default=Decimal(1), description="Relative to siblings")
+    weight: Decimal | None = Field(default=Decimal(1), description="Academic coefficient or fraction relative to siblings; null = unknown")
     weight_mode: Literal["coefficient", "fraction"] = Field(
         default="coefficient", description="How this node's children weights are interpreted"
     )
+    weight_provenance: Literal["official", "manual", "unknown"] = "manual"
+    ects: Decimal | None = Field(default=None, ge=0, description="ECTS credits, kept separate from academic coefficient")
     scale_min: Decimal = Decimal(0)
     scale_max: Decimal = Decimal(20)
     subject_id: str | None = None
     event_id: str | None = None
+
+
+class NodePatch(_Strict):
+    """Persistent manual update of a single node (e.g. setting an unknown Pamplemousse coefficient)."""
+
+    expected_revision: int | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    weight: Decimal | None = None
+    weight_mode: Literal["coefficient", "fraction"] | None = None
+    ects: Decimal | None = Field(default=None, ge=0)
+    scale_min: Decimal | None = None
+    scale_max: Decimal | None = None
+    subject_id: str | None = None
 
 
 class NodeOut(BaseModel):
@@ -66,15 +81,18 @@ class NodeOut(BaseModel):
     parent_key: str | None
     kind: NodeKind
     title: str
-    weight: Dec
+    weight: Dec | None
     weight_mode: str
+    weight_status: Literal["known", "unknown"] = "known"
+    weight_provenance: str = "manual"
+    ects: Dec | None = None
     scale_min: Dec
     scale_max: Dec
     subject_id: str | None
     event_id: str | None
     is_leaf: bool
     weight_in_parent: Dec | None
-    weight_in_root: Dec
+    weight_in_root: Dec | None
 
 
 class CurriculumPut(_Strict):
@@ -89,16 +107,22 @@ class CurriculumOut(BaseModel):
     removed_records: int = 0
 
 
+GradeKind = Literal["actual", "estimated", "retake"]
+GradeStatus = Literal["graded", "absent_unjustified", "dispensed"]
+
+
 class RecordCreate(_Strict):
     node_id: str
-    kind: Literal["actual", "estimated"] = "actual"
-    value: Decimal
+    kind: GradeKind = "actual"
+    value: Decimal = Decimal(0)
+    grade_status: GradeStatus = "graded"
     observed_at: UtcDatetime | None = None
 
 
 class RecordPatch(_Strict):
     expected_revision: int | None = None
-    value: Decimal
+    value: Decimal | None = None
+    grade_status: GradeStatus | None = None
 
 
 class RecordOut(BaseModel):
@@ -106,9 +130,10 @@ class RecordOut(BaseModel):
     program_id: str
     node_id: str
     node_key: str
-    kind: Literal["actual", "estimated"]
+    kind: GradeKind
     value: Dec
     value_on_20: Dec
+    grade_status: GradeStatus = "graded"
     provenance: str
     observed_at: UtcDatetime | None
     revision: int
@@ -152,6 +177,8 @@ class SummaryOut(BaseModel):
     remaining_weight: Dec
     bound_min: Dec
     bound_max: Dec
+    weight_complete: bool = True
+    unknown_weight_keys: list[str] = []
     official_status: Literal["unknown"] = "unknown"
 
 

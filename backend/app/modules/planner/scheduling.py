@@ -126,10 +126,18 @@ def _local_date(dt: datetime, tz: ZoneInfo) -> date:
 
 
 class _Budget:
-    def __init__(self, limits: Limits, kept: Sequence[Kept], tz: ZoneInfo) -> None:
+    def __init__(
+        self,
+        limits: Limits,
+        kept: Sequence[Kept],
+        tz: ZoneInfo,
+        prior_week_min: dict[tuple[int, int], int] | None = None,
+    ) -> None:
         self.limits, self.tz = limits, tz
         self.day: dict[date, int] = defaultdict(int)
         self.week: dict[tuple[int, int], int] = defaultdict(int)
+        for wk, mins in (prior_week_min or {}).items():
+            self.week[wk] += mins
         for k in kept:
             d = _local_date(k.interval.start, tz)
             self.day[d] += k.counted_min
@@ -154,6 +162,7 @@ class _Cursor:
     remaining: int
     hi: datetime
     per_day: dict[date, int] = field(default_factory=lambda: defaultdict(int))
+    day_intervals: dict[date, list[Interval]] = field(default_factory=lambda: defaultdict(list))
     capped: bool = False
 
 
@@ -165,15 +174,24 @@ class _Placer:
         self.available, self.budget, self.limits, self.tz = available, budget, limits, tz
         self.prios, self.pad = prios, pad
         self.placed: list[Placed] = []
+        self.subject_day: dict[tuple[str, date], int] = defaultdict(int)
 
-    def place(self, cur: _Cursor, start: datetime, limit_end: datetime) -> int:
+    def place(self, cur: _Cursor, start: datetime, limit_end: datetime, *, allow_same_day_extra: bool = False) -> int:
         """Place one session for ``cur`` starting at ``start``; returns minutes placed (0 = none)."""
         lim, need = self.limits, cur.need
         d = _local_date(start, self.tz)
         day_end = local_day_interval(d, self.tz).end
         span = int((min(limit_end, day_end, cur.hi) - start).total_seconds() // 60)
         room = self.budget.room(d)  # daily + weekly caps
-        need_room = lim.max_session_min - cur.per_day[d]  # spread one need over days
+        if allow_same_day_extra:
+            need_room = lim.max_session_min
+            # Never glue two sessions of the same need back-to-back into a block > max_session_min.
+            min_gap = timedelta(minutes=max(lim.break_min, 15))
+            for prev_iv in cur.day_intervals[d]:
+                if start < prev_iv.end + min_gap and start + timedelta(minutes=lim.min_session_min) > prev_iv.start - min_gap:
+                    return 0
+        else:
+            need_room = lim.max_session_min - cur.per_day[d]  # spread one need over days
         if room < lim.min_session_min or need_room < lim.min_session_min:
             cur.capped = True
             return 0
@@ -198,6 +216,9 @@ class _Placer:
         self.placed.append(Placed(need.key, iv, self.prios[need.key]))
         self.budget.take(d, length)
         cur.per_day[d] += length
+        cur.day_intervals[d].append(iv)
+        if need.subject_id:
+            self.subject_day[(need.subject_id, d)] += 1
         cur.remaining -= length
         self.available = subtract(self.available, [Interval(iv.start - self.pad, iv.end + self.pad)])
         return length
@@ -211,6 +232,7 @@ def schedule(
     now: datetime,
     horizon: Interval,
     previous: dict[str, list[Interval]] | None = None,
+    prior_week_min: dict[tuple[int, int], int] | None = None,
 ) -> ScheduleResult:
     tz = ZoneInfo(limits.timezone)
     pad = timedelta(minutes=limits.break_min)
@@ -222,18 +244,38 @@ def schedule(
     # Free time minus kept sessions (with breaks), clipped to the horizon and the future.
     window = Interval(max(horizon.start, now), horizon.end) if now < horizon.end else None
     available = subtract(clip(free, window), [padded(k.interval) for k in kept]) if window else []
-    budget = _Budget(limits, kept, tz)
+    budget = _Budget(limits, kept, tz, prior_week_min)
     warnings: list[str] = []
 
     initial = list(available)
 
     def feasible_before(deadline: datetime | None, earliest: datetime | None) -> int:
-        """Free minutes in the need's window before any placement (stable for ranking)."""
-        lo = max(earliest or now, now)
+        """Free minutes in the need's window before any placement, bounded by daily/weekly caps."""
+        lo = max(earliest or now, now, horizon.start)
         hi = min(deadline or horizon.end, horizon.end)
         if hi <= lo:
             return 0
-        return sum(iv.minutes for iv in clip(initial, Interval(lo, hi)))
+        clipped = clip(initial, Interval(lo, hi))
+        if not clipped:
+            return 0
+        by_day: dict[date, int] = defaultdict(int)
+        for iv in clipped:
+            d = _local_date(iv.start, tz)
+            while True:
+                day_iv = local_day_interval(d, tz)
+                for part in clip([iv], day_iv):
+                    by_day[d] += part.minutes
+                if day_iv.end >= iv.end:
+                    break
+                d += timedelta(days=1)
+        by_week: dict[tuple[int, int], int] = defaultdict(int)
+        for d, mins in by_day.items():
+            capped_day = min(mins, budget.room(d))
+            by_week[_week_key(d)] += capped_day
+        return sum(
+            min(mins, max(0, limits.weekly_max_min - budget.week[wk]))
+            for wk, mins in by_week.items()
+        )
 
     prios = {n.key: priority(n, now, feasible_before(n.deadline, n.earliest)) for n in needs}
 
@@ -270,7 +312,14 @@ def schedule(
         prereq_ends = [p.interval.end for p in placed if p.need_key in prereqs]
         if prereq_ends:
             lo = max(lo, max(prereq_ends))
+        if hi <= lo:
+            blocked.add(need.key)
+            reason = "NO_FREE_TIME_BEFORE_DEADLINE" if need.report_unscheduled else "AFTER_HORIZON"
+            unscheduled.append(Unscheduled(need.key, remaining, reason))
+            continue
         cur = _Cursor(need=need, remaining=remaining, hi=hi)
+        need_slack = feasible_before(need.deadline, need.earliest) - remaining
+        prefer_balance = bool(need.subject_id) and need_slack >= limits.daily_max_min
 
         # 1) Sticky placement: keep previous slots that are still valid (minimal churn).
         for prev in previous.get(need.key, []):
@@ -281,17 +330,36 @@ def schedule(
             host = next((a for a in placer.available if a.start <= prev.start and prev.end <= a.end), None)
             if host is not None and prev.minutes <= cur.remaining + limits.min_session_min:
                 placer.place(cur, prev.start, prev.end)
-        # 2) Earliest feasible slots.
+        # 2) Pass 1: earliest feasible slots with daily spacing & soft subject balance.
         progress = True
         while cur.remaining > 0 and progress:
             progress = False
-            for iv in list(placer.available):
-                if iv.end <= lo or iv.start >= hi:
-                    continue
+            candidates = [iv for iv in placer.available if iv.end > lo and iv.start < hi]
+            if prefer_balance and need.subject_id:
+                candidates.sort(
+                    key=lambda iv: (
+                        1 if placer.subject_day[(need.subject_id, _local_date(max(iv.start, lo), tz))] > 0 else 0,
+                        iv.start,
+                    )
+                )
+            for iv in candidates:
                 start = max(iv.start, lo)
                 if placer.place(cur, start, iv.end):
                     progress = True
                     break
+        # 3) Pass 2 (deadline rescue): if urgent work with a deadline in the horizon still remains,
+        # allow a second spaced session on the same day while preserving all hard caps and breaks.
+        if cur.remaining > 0 and need.splittable and need.deadline is not None and need.deadline <= horizon.end:
+            progress = True
+            while cur.remaining > 0 and progress:
+                progress = False
+                for iv in list(placer.available):
+                    if iv.end <= lo or iv.start >= hi:
+                        continue
+                    start = max(iv.start, lo)
+                    if placer.place(cur, start, iv.end, allow_same_day_extra=True):
+                        progress = True
+                        break
         remaining = cur.remaining
         if remaining > 0:
             blocked.add(need.key)
@@ -341,28 +409,48 @@ def check_invariants(
     kept: Sequence[Kept],
     limits: Limits,
     now: datetime,
+    horizon: Interval | None = None,
+    prior_week_min: dict[tuple[int, int], int] | None = None,
 ) -> list[str]:
     """Independent re-check of every hard constraint. Empty list = valid plan."""
     tz = ZoneInfo(limits.timezone)
     by_key = {n.key: n for n in needs}
     errors: list[str] = []
     free_m = merge(free)
-    all_iv = sorted([(p.interval, f"need:{p.need_key}") for p in result.placed] + [(k.interval, f"kept:{k.session_id}") for k in kept])
-    for (a, la), (b, lb) in zip(all_iv, all_iv[1:], strict=False):
-        if a.overlaps(b):
-            errors.append(f"OVERLAP {la} {lb}")
+    pad = timedelta(minutes=limits.break_min)
+    all_iv = sorted(
+        [(p.interval, f"need:{p.need_key}", True) for p in result.placed]
+        + [(k.interval, f"kept:{k.session_id}", False) for k in kept],
+        key=lambda item: (item[0], item[1]),
+    )
+    for i, (a, la, a_placed) in enumerate(all_iv):
+        for b, lb, b_placed in all_iv[i + 1 :]:
+            if b.start >= a.end + pad:
+                break
+            if not a_placed and not b_placed:
+                continue  # pre-existing kept-vs-kept conflicts are reported as warnings, not solver failures
+            if a.overlaps(b):
+                errors.append(f"OVERLAP {la} {lb}")
+            elif limits.break_min > 0 and b.start < a.end + pad:
+                errors.append(f"BREAK_VIOLATION {la} {lb}")
     day: dict[date, int] = defaultdict(int)
     week: dict[tuple[int, int], int] = defaultdict(int)
+    for wk, mins in (prior_week_min or {}).items():
+        week[wk] += mins
     for k in kept:
         d = _local_date(k.interval.start, tz)
         day[d] += k.counted_min
         week[_week_key(d)] += k.counted_min
     placed_day: dict[date, int] = defaultdict(int)
+    session_counts: dict[str, int] = defaultdict(int)
     for p in result.placed:
         n = by_key[p.need_key]
         iv = p.interval
+        session_counts[p.need_key] += 1
         if iv.start < now:
             errors.append(f"PAST {p.need_key}")
+        if horizon is not None and (iv.start < horizon.start or iv.end > horizon.end):
+            errors.append(f"OUTSIDE_HORIZON {p.need_key}")
         if not any(f.start <= iv.start and iv.end <= f.end for f in free_m):
             errors.append(f"OUTSIDE_FREE_TIME {p.need_key}")
         if not limits.min_session_min <= iv.minutes <= limits.max_session_min:
@@ -377,6 +465,9 @@ def check_invariants(
         day[d] += iv.minutes
         placed_day[d] += iv.minutes
         week[_week_key(d)] += iv.minutes
+    for key, cnt in session_counts.items():
+        if not by_key[key].splittable and cnt > 1:
+            errors.append(f"SPLIT_NON_SPLITTABLE {key}")
     ends: dict[str, datetime] = {}
     for p in result.placed:
         ends[p.need_key] = max(ends.get(p.need_key, p.interval.end), p.interval.end)

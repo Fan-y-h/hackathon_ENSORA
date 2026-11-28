@@ -337,20 +337,27 @@ class PlannerService:
         return out
 
     def _existing(self, user_id: str, now: datetime, tz: ZoneInfo):
-        today = local_day_interval(now.astimezone(tz).date(), tz).start
+        today_date = now.astimezone(tz).date()
+        today = local_day_interval(today_date, tz).start
+        week_monday = today_date - timedelta(days=today_date.weekday())
+        week_start = local_day_interval(week_monday, tz).start
         sessions = list(self.db.scalars(
             select(StudySession).where(
                 StudySession.user_id == user_id, StudySession.status.notin_(("cancelled", "skipped")),
-                StudySession.end_at > today - timedelta(days=7),
             ).order_by(StudySession.start_at, StudySession.id)
         ))
         kept, previous, movable, missed = [], defaultdict(list), [], []
+        prior_week_min: dict[tuple[int, int], int] = defaultdict(int)
         for s in sessions:
             iv = Interval(s.start_at, s.end_at)
             if s.status in KEPT_STATUSES:
+                counted = s.actual_min if s.status in DONE_STATUSES and s.actual_min is not None else iv.minutes
                 if s.end_at > today:
-                    counted = s.actual_min if s.status in DONE_STATUSES and s.actual_min is not None else iv.minutes
                     kept.append((s, scheduling.Kept(s.id, iv, counted, s.locked)))
+                elif s.start_at >= week_start:
+                    # Completed earlier in the same ISO week: counts toward weekly_max_min.
+                    wk = scheduling._week_key(s.start_at.astimezone(tz).date())
+                    prior_week_min[wk] += counted
             elif s.status == "planned":
                 if s.start_at < now:
                     missed.append(s)  # never started: its work is rescheduled
@@ -359,7 +366,74 @@ class PlannerService:
                 else:
                     previous[s.need_key].append(iv)
                     movable.append(s)
-        return kept, dict(previous), movable, missed
+        return kept, dict(previous), movable, missed, dict(prior_week_min)
+
+    @staticmethod
+    def _explain_unscheduled(reason: str, remaining_min: int) -> str:
+        explanations = {
+            "DEADLINE_PASSED": "L'échéance est déjà dépassée : aucune session ne peut être placée dans le passé.",
+            "NO_FREE_TIME_BEFORE_DEADLINE": (
+                f"Aucun créneau libre disponible avant l'échéance ({remaining_min} min restantes)."
+            ),
+            "CAPACITY": (
+                f"Capacité quotidienne ou hebdomadaire insuffisante avant l'échéance ({remaining_min} min en déficit)."
+            ),
+            "EXCEEDS_MAX_SESSION": (
+                f"Tâche non fractionnable ({remaining_min} min) dépassant la durée maximale d'une session."
+            ),
+            "PREREQUISITE_NOT_SCHEDULED": (
+                "Un prérequis n'a pas pu être planifié avant cette notion."
+            ),
+        }
+        return explanations.get(reason, f"Non planifié ({reason.lower()}, {remaining_min} min restantes).")
+
+    @staticmethod
+    def _build_recommendations(
+        warnings: list[str],
+        deficit_min: int,
+        unscheduled: list[scheduling.Unscheduled],
+        has_conflicts: bool,
+        solver_status: str,
+    ) -> list[str]:
+        recs: list[str] = []
+        if "NO_WORK_WINDOWS" in warnings:
+            recs.append("Définissez vos plages de travail disponibles dans Profil > Préférences.")
+        if deficit_min > 0:
+            hours, mins = divmod(deficit_min, 60)
+            span = f"{hours}h{mins:02d}" if hours else f"{mins} min"
+            recs.append(
+                f"Déficit de temps de {span} ({deficit_min} min) : ajoutez des créneaux de travail, "
+                "ajustez votre plafond quotidien/hebdomadaire ou replanifiez les tâches moins prioritaires."
+            )
+        if any(u.reason == "EXCEEDS_MAX_SESSION" for u in unscheduled):
+            recs.append(
+                "Autorisez le découpage (splittable) des tâches longues ou augmentez la durée maximale de session."
+            )
+        if any(u.reason == "DEADLINE_PASSED" for u in unscheduled):
+            recs.append("Mettez à jour ou clôturez les tâches dont l'échéance est dépassée.")
+        if has_conflicts:
+            recs.append(
+                "Conflit détecté entre événements de l'agenda : vérifiez les horaires en conflit "
+                "(aucun cours officiel n'a été supprimé)."
+            )
+        if any(w.startswith("LOCK_CONFLICT:") for w in warnings):
+            recs.append(
+                "Une ou plusieurs sessions verrouillées chevauchent un événement de l'agenda : "
+                "déverrouillez-les ou déplacez-les."
+            )
+        if any(w.startswith("SCOPE_UNCONFIRMED:") for w in warnings):
+            recs.append(
+                "Confirmez le périmètre (notions) des évaluations à venir pour planifier des révisions ciblées."
+            )
+        if solver_status == "FALLBACK_GREEDY":
+            recs.append(
+                "Solution calculée via le moteur greedy de secours (faisable, non prouvée optimale par CP-SAT)."
+            )
+        elif solver_status == "FEASIBLE":
+            recs.append(
+                "Solution CP-SAT faisable trouvée dans la limite de temps (optimalité globale non prouvée)."
+            )
+        return recs
 
     # ================================================================ preview ====
     def preview(
@@ -371,38 +445,58 @@ class PlannerService:
         horizon = Interval(now, now + timedelta(days=horizon_days))
         snap, _, pending = self.agenda.availability_snapshot(user_id, horizon.start, horizon.end)
         needs, warnings = self._build_needs(user_id, now, horizon)
-        kept_pairs, previous, movable, missed = self._existing(user_id, now, tz)
+        kept_pairs, previous, movable, missed, prior_week_min = self._existing(user_id, now, tz)
         kept = [k for _, k in kept_pairs]
+        # Detect pre-existing overlaps among kept sessions without failing the planner.
+        sorted_kept = sorted(kept_pairs, key=lambda sk: (sk[1].interval, sk[0].id))
+        for i, (sa, ka) in enumerate(sorted_kept):
+            for sb, kb in sorted_kept[i + 1 :]:
+                if kb.interval.start >= ka.interval.end:
+                    break
+                if ka.interval.overlaps(kb.interval):
+                    warnings.append(f"KEPT_SESSION_CONFLICT:{sa.id}:{sb.id}")
         # Locked / in-progress sessions already reserve work for their need.
         reserved: dict[str, int] = defaultdict(int)
         for s, k in kept_pairs:
             if s.status in ("planned", "in_progress"):
                 reserved[s.need_key] += k.counted_min
         needs = [replace(n, remaining_min=max(0, n.remaining_min - reserved[n.key])) for n in needs]
-        limits =scheduling.Limits(prefs.timezone, prefs.daily_max_min, prefs.weekly_max_min,
+        limits = scheduling.Limits(prefs.timezone, prefs.daily_max_min, prefs.weekly_max_min,
                                    prefs.min_session_min, prefs.max_session_min)
         # First slot on the next 5-minute boundary (>= 1 min ahead) so a preview accepted a
         # few seconds later does not already contain a session that started in the past.
         start_at = _ceil_minutes(now + timedelta(minutes=1), 5)
-        result = scheduling.schedule(needs, snap.free, kept, limits, start_at, horizon, previous)
-        violations = scheduling.check_invariants(result, needs, snap.free, kept, limits, start_at)
+        result = scheduling.schedule(
+            needs, snap.free, kept, limits, start_at, horizon, previous, prior_week_min=prior_week_min
+        )
+        violations = scheduling.check_invariants(
+            result, needs, snap.free, kept, limits, start_at, horizon=horizon, prior_week_min=prior_week_min
+        )
         if violations:  # pragma: no cover - defensive: the greedy placement must never violate
             raise RuntimeError(f"planner invariant violated: {violations}")
         algorithm_version = scheduling.ALGORITHM_VERSION
+        solver_status = "GREEDY"
         chosen = prefs.planner_algorithm if algorithm == "auto" else algorithm
         if chosen == "cpsat":
             if not cpsat.available():
                 warnings.append("CPSAT_UNAVAILABLE_FALLBACK_GREEDY")
+                solver_status = "FALLBACK_GREEDY"
             else:
-                alt, status = cpsat.schedule_cpsat(needs, snap.free, kept, limits, start_at, horizon, previous)
-                ok = alt is not None and not scheduling.check_invariants(alt, needs, snap.free, kept, limits, start_at)
+                alt, status = cpsat.schedule_cpsat(
+                    needs, snap.free, kept, limits, start_at, horizon, previous, prior_week_min=prior_week_min
+                )
+                ok = alt is not None and not scheduling.check_invariants(
+                    alt, needs, snap.free, kept, limits, start_at, horizon=horizon, prior_week_min=prior_week_min
+                )
                 if ok and cpsat.weighted_coverage(alt) >= cpsat.weighted_coverage(result):  # type: ignore[arg-type]
                     warnings.append(f"SOLVER:{status}")
+                    solver_status = status if status in ("OPTIMAL", "FEASIBLE") else "FEASIBLE"
                     if status != "OPTIMAL":
                         warnings.append("SOLVER_TIME_LIMIT_NOT_PROVEN_OPTIMAL")
                     result, algorithm_version = alt, cpsat.ALGORITHM_VERSION  # type: ignore[assignment]
                 else:
                     warnings.append(f"SOLVER:{status};FALLBACK_GREEDY_BASELINE")
+                    solver_status = "FALLBACK_GREEDY"
 
         warnings += snap.warnings
         if pending:
@@ -434,23 +528,48 @@ class PlannerService:
             ))
         reported = [u for u in result.unscheduled if u.reason != "AFTER_HORIZON"]
         deferred = sum(u.remaining_min for u in result.unscheduled if u.reason == "AFTER_HORIZON")
+        deficit_min = sum(u.remaining_min for u in reported)
         if reported:
             warnings.append("INSUFFICIENT_CAPACITY" if any(u.reason == "CAPACITY" for u in reported) else "UNSCHEDULED_WORK")
         diff = self._diff(movable, sessions)
         input_revision = self.input_revision(user_id, horizon_days)
+        sorted_warnings = sorted(set(warnings))
+        recommendations = self._build_recommendations(
+            sorted_warnings, deficit_min, reported, bool(snap.conflicts), solver_status
+        )
+        conflicts_out = [
+            {
+                "event_id_a": c.event_id_a,
+                "event_id_b": c.event_id_b,
+                "start_at": c.overlap.start,
+                "end_at": c.overlap.end,
+                "minutes": c.overlap.minutes,
+            }
+            for c in snap.conflicts
+        ]
 
         out = PlanPreviewOut(
             preview_id=new_id(), input_revision=input_revision, algorithm_version=algorithm_version,
+            solver_status=solver_status,
             horizon_start=horizon.start, horizon_end=horizon.end, sessions=sessions,
             kept_sessions=[self.session_out(s) for s, _ in kept_pairs],
             unscheduled=[
-                {"need_id": u.need_key, "title": by_key[u.need_key].title, "remaining_min": u.remaining_min,
-                 "reason": u.reason} for u in reported
+                {
+                    "need_id": u.need_key,
+                    "title": by_key[u.need_key].title,
+                    "remaining_min": u.remaining_min,
+                    "reason": u.reason,
+                    "explanation": self._explain_unscheduled(u.reason, u.remaining_min),
+                }
+                for u in reported
             ],
-            warnings=sorted(set(warnings)),
+            conflicts=conflicts_out,
+            recommendations=recommendations,
+            warnings=sorted_warnings,
             summary={
                 "scheduled_min": sum(p.minutes for p in result.placed),
-                "unscheduled_min": sum(u.remaining_min for u in reported),
+                "unscheduled_min": deficit_min,
+                "deficit_min": deficit_min,
                 "deferred_min": deferred,
                 "kept_min": sum(k.counted_min for k in kept),
                 "per_day": [{"date": d, "planned_min": m, "daily_max_min": prefs.daily_max_min}
@@ -510,7 +629,7 @@ class PlannerService:
             raise Conflict("Preview contains sessions in the past; request a new preview", code="preview_expired")
 
         prefs = get_planning_preferences(self.db, user_id)
-        _, _, movable, missed = self._existing(user_id, now, ZoneInfo(prefs.timezone))
+        _, _, movable, missed, _ = self._existing(user_id, now, ZoneInfo(prefs.timezone))
         for s in movable:  # unstarted, unlocked, future: replaced by the new plan
             self.db.delete(s)
         for s in missed:
@@ -647,6 +766,20 @@ class PlannerService:
                    for o in others) + minutes
         if load > prefs.daily_max_min:
             errors.append({"code": "DAILY_CAP", "message": "daily study limit exceeded"})
+        week_monday = day - timedelta(days=day.weekday())
+        week_start = local_day_interval(week_monday, tz).start
+        week_end = local_day_interval(week_monday + timedelta(days=6), tz).end
+        week_others = list(self.db.scalars(select(StudySession).where(
+            StudySession.user_id == user_id, StudySession.id != s.id,
+            StudySession.status.in_(("planned", *KEPT_STATUSES)),
+            StudySession.start_at < week_end, StudySession.end_at > week_start,
+        )))
+        week_load = sum(
+            (o.actual_min if o.status in DONE_STATUSES and o.actual_min is not None else o.estimated_min)
+            for o in week_others
+        ) + minutes
+        if week_load > prefs.weekly_max_min:
+            errors.append({"code": "WEEKLY_CAP", "message": "weekly study limit exceeded"})
         if errors:
             raise ValidationFailed("Session move violates a hard constraint", details=errors, code="constraint_violation")
 

@@ -94,6 +94,8 @@ class EventImportItem(_Strict):
     room: str | None = None
     teacher: str | None = None
     group: str | None = None
+    busy: bool | None = None
+    status: EventStatus | None = None
     confirmation_required: bool = False
     recurrence_key: str | None = None
 
@@ -248,6 +250,11 @@ class BusyOut(IntervalOut):
     event_id: str
 
 
+class EventConflictOut(IntervalOut):
+    event_id_a: str
+    event_id_b: str
+
+
 class DayOut(BaseModel):
     date: date
     free_min: int
@@ -262,6 +269,7 @@ class AvailabilityOut(BaseModel):
     end_at: UtcDatetime
     free: list[IntervalOut]
     busy: list[BusyOut]
+    conflicts: list[EventConflictOut] = []
     days: list[DayOut]
     total_free_min: int
     weekly_max_min: int
@@ -336,6 +344,7 @@ class UnscheduledOut(BaseModel):
     title: str
     remaining_min: int
     reason: str
+    explanation: str = ""
 
 
 class DiffMove(BaseModel):
@@ -370,6 +379,7 @@ class DayLoadOut(BaseModel):
 class PlanSummaryOut(BaseModel):
     scheduled_min: int
     unscheduled_min: int
+    deficit_min: int = 0
     deferred_min: int
     kept_min: int
     per_day: list[DayLoadOut]
@@ -379,11 +389,14 @@ class PlanPreviewOut(BaseModel):
     preview_id: str
     input_revision: str
     algorithm_version: str
+    solver_status: str = "GREEDY"
     horizon_start: UtcDatetime
     horizon_end: UtcDatetime
     sessions: list[PreviewSessionOut]
     kept_sessions: list[SessionOut]
     unscheduled: list[UnscheduledOut]
+    conflicts: list[EventConflictOut] = []
+    recommendations: list[str] = []
     warnings: list[str]
     summary: PlanSummaryOut
     diff: PlanDiffOut

@@ -95,7 +95,13 @@ def test_prerequisites_order_planning_and_reject_cycles(client):
     assert "PREREQUISITE_OUT_OF_SCOPE:x-out->a-base" in p["warnings"]
     assert any("AFTER_PREREQUISITES" in s["reason"] for s in p["sessions"])
     cp = client.post(f"{API}/planner/preview", json={"algorithm": "cpsat"}).json()
-    assert any("PREREQUISITES_USE_GREEDY" in w for w in cp["warnings"]) or "CPSAT_UNAVAILABLE_FALLBACK_GREEDY" in cp["warnings"]
+    cp_order = [s["need_key"].split(":")[-1] for s in cp["sessions"]]
+    assert cp_order.index("z-adv") < cp_order.index("a-base")
+    assert "PREREQUISITE_OUT_OF_SCOPE:x-out->a-base" in cp["warnings"]
+    from app.modules.planner import cpsat
+
+    if cpsat.available():
+        assert cp["algorithm_version"] == cpsat.ALGORITHM_VERSION
 
 
 def test_self_assessment_shifts_ranking_prior_only(client):

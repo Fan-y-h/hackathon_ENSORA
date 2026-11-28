@@ -14,7 +14,7 @@ Supported rule types:
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -68,7 +68,10 @@ class NodeEvaluation:
 
 
 def evaluate(
-    tree: CurriculumTree, actual: Mapping[str, Decimal], rules: Sequence[Rule]
+    tree: CurriculumTree,
+    actual: Mapping[str, Decimal],
+    rules: Sequence[Rule],
+    dispensed: AbstractSet[str] = frozenset(),
 ) -> dict[str, NodeEvaluation]:
     """Evaluate every node that carries a rule (and the children of compensation groups)."""
     by_node: dict[str, dict[str, Decimal]] = {}
@@ -78,7 +81,9 @@ def evaluate(
     targets = set(by_node) | set(comp_children)
 
     def raw(key: str) -> NodeEvaluation:
-        s = summarize(tree, actual, key)
+        s = summarize(tree, actual, key, dispensed=dispensed)
+        if not s.weight_complete:
+            return NodeEvaluation(key, "pending", "n/a", "medium", None, s.bound_min, s.bound_max, ("MISSING_COEFFICIENT",))
         decided = s.remaining_weight <= FRACTION_TOLERANCE
         mean = s.final if decided else s.provisional
         reasons: list[str] = []
@@ -125,7 +130,9 @@ def evaluate(
         if "compensation" not in kinds:
             continue
         g_threshold = kinds["compensation"]
-        g = summarize(tree, actual, group)
+        g = summarize(tree, actual, group, dispensed=dispensed)
+        if not g.weight_complete:
+            continue
         g_decided = g.remaining_weight <= FRACTION_TOLERANCE
         children = tree.children[group]
         eliminated = [c for c in children if "ELIMINATED" in evals[c].reason_codes]
@@ -138,9 +145,12 @@ def evaluate(
             elif g_decided and g.final is not None and g.final >= g_threshold:
                 evals[c] = _with(e, status="validated_by_compensation", risk="low",
                                  reasons=(*e.reason_codes, "VALIDATED_BY_COMPENSATION"))
-            elif not g_decided:
+            elif not g_decided and g.bound_max >= g_threshold:
                 evals[c] = _with(e, status="pending", outlook="possible",
                                  reasons=(*e.reason_codes, "COMPENSATION_STILL_POSSIBLE"))
+            elif not g_decided:
+                evals[c] = _with(e, outlook="impossible", risk="high",
+                                 reasons=(*e.reason_codes, "COMPENSATION_IMPOSSIBLE"))
         if group not in by_node or "pass_threshold" not in by_node[group]:
             ge = evals.get(group)
             if ge is not None and ge.computed_status == "pending" and g_decided and g.final is not None:

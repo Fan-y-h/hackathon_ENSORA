@@ -140,7 +140,8 @@ class AcademicService(GradesService):
         tree = self._require_tree(ld)
         rs = self._latest_rules(program_id)
         verified = rs is not None and rs.verification_status == "verified"
-        evals = validation_rules.evaluate(tree, self._marks(ld, "actual"), self._rules(ld, rs))
+        actual, dispensed = self._effective_marks(ld)
+        evals = validation_rules.evaluate(tree, actual, self._rules(ld, rs), dispensed=dispensed)
         nodes = []
         for k in tree.walk():
             if k not in evals:
@@ -428,35 +429,101 @@ class AcademicService(GradesService):
                            calibrated=model.calibrated, forecasts=items, notes=notes)
 
     def allocate_time(self, user_id: str, body: AllocationRequest) -> AllocationOut:
+        from app.modules.learning.models import Mastery
+        from app.modules.planner.models import Assessment
+
         ld = self._load(user_id, body.program_id)
         tree = self._require_tree(ld)
-        actual = self._marks(ld, "actual")
+        actual, dispensed = self._effective_marks(ld)
         sigs = {s.node_key: s for s in domain.academic_signals(
-            tree, actual, [o for _, o in self._objectives(ld)], self._verified_risk(ld))}
+            tree, actual, [o for _, o in self._objectives(ld)], self._verified_risk(ld), dispensed=dispensed)}
         risk = self._verified_risk(ld)
-        weights, basis = {}, {}
+        # Read-only learning mastery per subject (supplied by Agent 04 / learning module).
+        mastery_rows = list(self.db.scalars(select(Mastery).where(Mastery.user_id == user_id)))
+        mastery_by_subject: dict[str, list[float]] = {}
+        for m in mastery_rows:
+            if m.subject_id and m.score is not None:
+                mastery_by_subject.setdefault(m.subject_id, []).append(float(m.score))
+        avg_mastery = {sid: sum(vals) / len(vals) for sid, vals in mastery_by_subject.items() if vals}
+
+        # Read-only upcoming assessments per subject (deadline urgency + difficulty).
+        now = self.clock.now() if self.clock else None
+        assessments = list(self.db.scalars(
+            select(Assessment).where(Assessment.user_id == user_id, Assessment.status == "active")
+        ))
+        nearest_exam: dict[str, tuple[float, str | None]] = {}
+        for a in assessments:
+            if not a.subject_id or a.deadline_at is None or now is None or a.deadline_at <= now:
+                continue
+            days = max(0.0, (a.deadline_at - now).total_seconds() / 86400)
+            prev = nearest_exam.get(a.subject_id)
+            if prev is None or days < prev[0]:
+                nearest_exam[a.subject_id] = (days, a.difficulty)
+
+        diff_mult = {"easy": 0.9, "medium": 1.0, "hard": 1.2, None: 1.0}
+        weights, basis, meta = {}, {}, {}
         for k, s in sigs.items():
             if s.remaining_weight <= domain.FRACTION_TOLERANCE:
                 continue
             gap = 0.0 if s.required_mean is None or s.provisional is None else max(0.0, float(s.required_mean - s.provisional)) / 20
             if s.feasibility in ("guaranteed", "achieved"):
                 gap = 0.0
-            w = float(s.remaining_weight) * (1 + gap) * (1 + float(risk.get(k, 0)))
+            subj_id = ld.by_key[k].subject_id
+            m_score = avg_mastery.get(subj_id) if subj_id else None
+            mastery_gap = (1.0 - m_score) if m_score is not None else 0.0
+            exam_info = nearest_exam.get(subj_id) if subj_id else None
+            days_to_exam = round(exam_info[0], 1) if exam_info else None
+            difficulty = exam_info[1] if exam_info else None
+            urgency = (1.0 / (1.0 + exam_info[0])) if exam_info else 0.0
+            w = (
+                float(s.remaining_weight)
+                * (1 + gap)
+                * (1 + float(risk.get(k, 0)))
+                * (1 + 0.5 * mastery_gap)
+                * (1 + 0.5 * urgency)
+                * diff_mult.get(difficulty, 1.0)
+            )
+            reasons = list(s.reason_codes)
+            parts = [f"poids restant {float(s.remaining_weight):.0%}"]
+            if gap > 0:
+                parts.append(f"écart à l'objectif (+{gap * 20:.1f} pts)")
+            if float(risk.get(k, 0)) > 0:
+                parts.append("risque de validation")
+            if m_score is not None:
+                parts.append(f"maîtrise {m_score:.0%}")
+                if m_score < 0.5:
+                    reasons.append("LOW_MASTERY")
+            if days_to_exam is not None:
+                parts.append(f"échéance dans {days_to_exam} j")
+                if days_to_exam <= 7:
+                    reasons.append("UPCOMING_EXAM")
             weights[k], basis[k] = w, float(s.remaining_weight)
+            meta[k] = {
+                "mastery_score": round(m_score, 4) if m_score is not None else None,
+                "days_to_exam": days_to_exam,
+                "difficulty": difficulty,
+                "reason_codes": list(dict.fromkeys(reasons)),
+                "explanation": "Priorisé selon : " + ", ".join(parts) + " (heuristique indicative, non garantie).",
+            }
         optimized = forecast.allocate(weights, body.available_min, body.min_per_subject)
         baseline = forecast.proportional(basis, body.available_min)
         rows = [
             {"node_id": ld.by_key[k].id, "node_key": k, "title": ld.by_key[k].title,
              "subject_id": ld.by_key[k].subject_id, "weight": round(weights[k], 6),
              "optimized_min": optimized.get(k, 0), "baseline_min": baseline.get(k, 0),
-             "feasibility": sigs[k].feasibility, "reason_codes": list(sigs[k].reason_codes)}
-            for k in sorted(weights)
+             "feasibility": sigs[k].feasibility,
+             "mastery_score": meta[k]["mastery_score"],
+             "days_to_exam": meta[k]["days_to_exam"],
+             "difficulty": meta[k]["difficulty"],
+             "reason_codes": meta[k]["reason_codes"],
+             "explanation": meta[k]["explanation"]}
+            for k in sorted(weights, key=lambda key: (-weights[key], key))
         ]
         return AllocationOut(
             program_id=body.program_id, available_min=body.available_min, method="concave-sqrt-allocation-v1",
             allocations=rows,
-            notes=["Weights = remaining effective weight × (1 + target gap) × (1 + verified risk).",
-                   "Diminishing returns (√minutes) is an assumption; no grade gain per hour is predicted.",
+            notes=["Weights = remaining effective weight × (1 + target gap) × (1 + verified risk) × mastery × exam urgency.",
+                   "Diminishing returns (√minutes) is an assumption; no grade gain per hour is predicted and this heuristic is not a guarantee of success.",
                    "Baseline = allocation proportional to remaining weight only."],
         )
 

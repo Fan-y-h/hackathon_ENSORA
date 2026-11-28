@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import math
 import random
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass
 from decimal import Decimal
 
 from app.modules.grades.domain import (
     FRACTION_TOLERANCE,
     CurriculumTree,
-    leaf_weights,
+    leaf_weights_exact,
     to_twenty,
 )
 
@@ -70,9 +70,13 @@ def forecast_node(
     model: MarkModel,
     samples: int = 2000,
     seed: int = 0,
+    dispensed: AbstractSet[str] = frozenset(),
 ) -> Forecast:
     rng = random.Random(f"{seed}:{node_key}")
-    weights = {k: float(v) for k, v in leaf_weights(tree, node_key).items()}
+    weights_exact, unknown = leaf_weights_exact(tree, node_key, dispensed)
+    if unknown:
+        return Forecast(node_key, None if target is None else float(target), None, 0.0, 10.0, 20.0, 0.0, 20.0, 1.0)
+    weights = {k: float(v) for k, v in weights_exact.items()}
     known = sum(w * float(to_twenty(tree.nodes[k], actual[k])) for k, w in weights.items() if k in actual)
     remaining = [(k, w) for k, w in weights.items() if k not in actual]
     rem_w = sum(w for _, w in remaining)

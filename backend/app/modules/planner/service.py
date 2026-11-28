@@ -304,6 +304,30 @@ class AgendaService:
             if ev is not None and ev.source_hash == digest:
                 unchanged += 1
                 continue
+            if item.status == "cancelled":
+                if ev is None:
+                    continue
+                if ev.status == "cancelled" and not ev.busy:
+                    ev.source_hash = digest
+                    unchanged += 1
+                    continue
+                ev.status = "cancelled"
+                ev.busy = False
+                ev.confirmation_required = False
+                ev.source_hash = digest
+                ev.revision += 1
+                self.db.flush()
+                self._sync_assessment(user_id, ev)
+                self._emit(
+                    user_id,
+                    "EventChanged",
+                    ev.id,
+                    ev.revision,
+                    action="source_cancelled",
+                    source=source,
+                )
+                updated += 1
+                continue
             is_new = ev is None
             if ev is None:
                 ev = Event(user_id=user_id, source=source, external_id=item.external_id)
@@ -314,9 +338,9 @@ class AgendaService:
             ev.start_at, ev.end_at, ev.all_day_date = item.start_at, item.end_at, item.all_day_date
             ev.room, ev.teacher, ev.group_name = item.room, item.teacher, item.group
             ev.recurrence_key = item.recurrence_key
-            ev.busy = domain.default_busy(item.type)
+            ev.busy = domain.default_busy(item.type) if item.busy is None else item.busy
             ev.confirmation_required = item.confirmation_required
-            ev.status = "tentative" if item.confirmation_required else "confirmed"
+            ev.status = "tentative" if item.confirmation_required else (item.status or "confirmed")
             ev.source_hash = digest
             self.db.flush()
             self._sync_assessment(user_id, ev)
@@ -652,6 +676,16 @@ class AgendaService:
                     "minutes": b.interval.minutes,
                 }
                 for b in snap.busy
+            ],
+            conflicts=[
+                {
+                    "event_id_a": c.event_id_a,
+                    "event_id_b": c.event_id_b,
+                    "start_at": c.overlap.start,
+                    "end_at": c.overlap.end,
+                    "minutes": c.overlap.minutes,
+                }
+                for c in snap.conflicts
             ],
             days=[
                 {

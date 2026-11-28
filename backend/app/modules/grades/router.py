@@ -25,6 +25,8 @@ from app.modules.grades.schemas import (
     FeedbackPatch,
     ForecastOut,
     ForecastRequest,
+    NodeOut,
+    NodePatch,
     ObjectiveCreate,
     ObjectiveOut,
     ObjectivePatch,
@@ -79,6 +81,11 @@ def get_curriculum(program_id: str, svc: Svc, user_id: User):
 @router.put("/programs/{program_id}/curriculum", response_model=CurriculumOut)
 def put_curriculum(program_id: str, body: CurriculumPut, svc: Svc, user_id: User):
     return svc.put_curriculum(user_id, program_id, body)
+
+
+@router.patch("/nodes/{node_id}", response_model=NodeOut)
+def patch_node(node_id: str, body: NodePatch, svc: Svc, user_id: User):
+    return svc.patch_node(user_id, node_id, body)
 
 
 @router.get("/records", response_model=list[RecordOut])

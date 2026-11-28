@@ -45,10 +45,14 @@ class AcademicNode(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     weight: Mapped[str] = mapped_column(String(40), nullable=False)
     weight_mode: Mapped[str] = mapped_column(String(12), nullable=False)
+    weight_status: Mapped[str] = mapped_column(String(16), default="known", server_default="known", nullable=False)
+    weight_provenance: Mapped[str] = mapped_column(String(32), default="manual", server_default="manual", nullable=False)
+    ects: Mapped[str | None] = mapped_column(String(40), nullable=True)
     scale_min: Mapped[str] = mapped_column(String(40), nullable=False)
     scale_max: Mapped[str] = mapped_column(String(40), nullable=False)
     subject_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     event_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class GradeRecord(TimestampMixin, Base):
@@ -61,8 +65,9 @@ class GradeRecord(TimestampMixin, Base):
         ForeignKey("academic_programs.id", ondelete="CASCADE"), nullable=False
     )
     node_id: Mapped[str] = mapped_column(ForeignKey("academic_nodes.id", ondelete="CASCADE"), nullable=False)
-    kind: Mapped[str] = mapped_column(String(10), nullable=False)  # actual | estimated
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)  # actual | estimated | retake
     value: Mapped[str] = mapped_column(String(40), nullable=False)
+    grade_status: Mapped[str] = mapped_column(String(24), default="graded", server_default="graded", nullable=False)
     provenance: Mapped[str] = mapped_column(String(32), default="manual", nullable=False)
     observed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
