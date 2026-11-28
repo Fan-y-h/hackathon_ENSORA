@@ -21,8 +21,9 @@ import {
   weekdayOfKey,
 } from "../../lib/time";
 import { BlockDialog } from "./BlockDialog";
-import { buildBlocks, warningLabel, type Block, type BlockKind } from "./calendar";
+import { buildBlocks, listConflictPairs, ORIGIN_LABEL, warningLabel, type Block, type BlockKind, type SourceOrigin } from "./calendar";
 import { KIND_ICON } from "./CalendarBlock";
+import { EventFormDialog } from "./EventFormDialog";
 import { PreviewDialog } from "./PreviewDialog";
 import { reasonLabels } from "./reasons";
 import { TimeGrid } from "./TimeGrid";
@@ -48,22 +49,39 @@ export function PlannerPage() {
   const defaultDate = view === "week" && weekdayOfKey(today) > 4 ? addDays(mondayOf(today), 7) : today;
   const selected = params.get("date") ?? defaultDate;
   const monday = mondayOf(selected);
-  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(monday, i)), [monday]);
 
-  const range = dayRange(monday, addDays(monday, 7), tz);
+  const range = useMemo(() => dayRange(monday, addDays(monday, 7), tz), [monday, tz]);
+  const dayAvail = useMemo(() => dayRange(selected, addDays(selected, 1), tz), [selected, tz]);
+
   const events = useEvents(range.start, range.end);
   const plan = usePlan();
   const status = usePlannerStatus();
   const profile = useProfile();
-  const dayAvail = dayRange(selected, addDays(selected, 1), tz);
   const availability = useAvailability(dayAvail.start, dayAvail.end);
   const previewMutation = usePreviewPlan();
+
+  const [horizonDays, setHorizonDays] = useState(7);
+  const [originFilter, setOriginFilter] = useState<SourceOrigin | "all">("all");
   const [preview, setPreview] = useState<PlanPreview | null>(null);
   const [open, setOpen] = useState<Block | null>(null);
+  const [addingEvent, setAddingEvent] = useState(false);
 
-  const blocks = useMemo(
+  const allBlocks = useMemo(
     () => buildBlocks(events.data?.items ?? [], plan.data?.sessions ?? [], tz),
     [events.data, plan.data, tz],
+  );
+
+  const blocks = useMemo(
+    () => (originFilter === "all" ? allBlocks : allBlocks.filter((b) => b.sourceOrigin === originFilter)),
+    [allBlocks, originFilter],
+  );
+
+  const visibleWeekBlocks = useMemo(() => allBlocks.filter((b) => weekDays.includes(b.day)), [allBlocks, weekDays]);
+  const conflicts = useMemo(() => listConflictPairs(visibleWeekBlocks), [visibleWeekBlocks]);
+  const unconfirmed = useMemo(
+    () => visibleWeekBlocks.filter((b) => b.event?.confirmation_required),
+    [visibleWeekBlocks],
   );
 
   // Hide the weekend in week view when nothing happens then, as in the mock-ups.
@@ -80,14 +98,16 @@ export function PlannerPage() {
   const compute = () => {
     const current = plan.data;
     previewMutation.mutate(
-      current ? { replan: { baseRevision: current.revision, reason: "manual" } } : {},
+      current
+        ? { horizonDays, replan: { baseRevision: current.revision, reason: "manual" } }
+        : { horizonDays },
       { onSuccess: setPreview },
     );
   };
 
   const dailyMax = profile.data?.preferences.daily_max_min ?? 240;
   const planned = (day: string) =>
-    blocks.filter((b) => b.origin === "planner" && b.day === day).reduce((sum, b) => sum + (b.endMin - b.startMin), 0);
+    allBlocks.filter((b) => b.origin === "planner" && b.day === day).reduce((sum, b) => sum + (b.endMin - b.startMin), 0);
   const weekPlannedMin = weekDays.reduce((s, d) => s + planned(d), 0);
   const weekReasons = [
     ...new Set(
@@ -96,6 +116,9 @@ export function PlannerPage() {
         .flatMap((s) => reasonLabels(s.reason)),
     ),
   ];
+
+  const selectedDayFreeMin =
+    availability.data?.days.find((d) => d.date === selected)?.free_min ?? availability.data?.days[0]?.free_min;
 
   const title = view === "week" ? `Semaine du ${formatShortDate(weekDays[0])}` : formatLongDate(selected);
 
@@ -106,6 +129,20 @@ export function PlannerPage() {
         title={title}
         actions={
           <>
+            <button type="button" className="btn" onClick={() => setAddingEvent(true)}>
+              <Icon name="plus" /> Événement
+            </button>
+            <select
+              className="select"
+              style={{ width: "auto" }}
+              aria-label="Horizon de planification"
+              value={horizonDays}
+              onChange={(e) => setHorizonDays(Number(e.target.value))}
+            >
+              <option value={7}>Horizon 7 j</option>
+              <option value={14}>Horizon 14 j</option>
+              <option value={21}>Horizon 21 j</option>
+            </select>
             <nav className="segmented" aria-label="Vue">
               <button type="button" aria-pressed={view === "day"} onClick={() => go({ view: "day" })}>
                 Jour
@@ -153,19 +190,40 @@ export function PlannerPage() {
             <Icon name="chevronRight" />
           </button>
         </nav>
-        <div className="legend" aria-label="Légende">
-          {LEGEND.map(({ kind, label }) => (
-            <span key={kind} className="legend__item">
-              <span className={kind === "deadline" ? "legend__swatch cal-marker__flag" : `legend__swatch cal-block cal-block--${kind}`} style={kind === "deadline" ? { position: "static" } : undefined}>
-                <Icon name={KIND_ICON[kind]} size={10} />
-              </span>
-              {label}
-            </span>
-          ))}
-          <span className="legend__item" title="Posé par le planner : vous pouvez le déplacer">
-            <span className="cal-block__grip" aria-hidden="true" style={{ opacity: 1 }}>⋮⋮</span> déplaçable
-          </span>
+
+        <div className="row" style={{ gap: 12 }}>
+          <div className="segmented" role="group" aria-label="Filtrer par origine">
+            {(
+              [
+                ["all", "Tous"],
+                ["imported", "Importés"],
+                ["personal", "Perso"],
+                ["generated", "Générés"],
+              ] as const
+            ).map(([k, label]) => (
+              <button key={k} type="button" aria-pressed={originFilter === k} onClick={() => setOriginFilter(k)}>
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
+      </div>
+
+      <div className="legend" aria-label="Légende">
+        {LEGEND.map(({ kind, label }) => (
+          <span key={kind} className="legend__item">
+            <span
+              className={kind === "deadline" ? "legend__swatch cal-marker__flag" : `legend__swatch cal-block cal-block--${kind}`}
+              style={kind === "deadline" ? { position: "static" } : undefined}
+            >
+              <Icon name={KIND_ICON[kind]} size={10} />
+            </span>
+            {label}
+          </span>
+        ))}
+        <span className="legend__item" title="Posé par le planner : cliquez pour déplacer ou verrouiller">
+          <span className="cal-block__grip" aria-hidden="true" style={{ opacity: 1 }}>⋮⋮</span> session générée
+        </span>
       </div>
 
       {previewMutation.error && <ErrorPanel error={previewMutation.error} />}
@@ -193,6 +251,43 @@ export function PlannerPage() {
         </div>
 
         <aside className="split__side">
+          {conflicts.length > 0 && (
+            <Card title={`Conflits horaires (${conflicts.length})`} tone="warning">
+              <ul className="diff-list small">
+                {conflicts.map((pair) => (
+                  <li key={pair.id} style={{ flexDirection: "column", gap: 4 }}>
+                    <span className="strong" style={{ color: "var(--critical-text)" }}>
+                      <Icon name="warning" size={13} /> {formatShortDate(pair.day)} · {formatClock(pair.a.startAt, tz)}
+                    </span>
+                    <span>
+                      <button type="button" className="library__open" onClick={() => setOpen(pair.a)}>
+                        {pair.a.title} ({ORIGIN_LABEL[pair.a.sourceOrigin]})
+                      </button>{" "}
+                      chevauche{" "}
+                      <button type="button" className="library__open" onClick={() => setOpen(pair.b)}>
+                        {pair.b.title} ({ORIGIN_LABEL[pair.b.sourceOrigin]})
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
+          {unconfirmed.length > 0 && (
+            <Card tone="warning" title={`À confirmer (${unconfirmed.length})`}>
+              <ul className="diff-list small">
+                {unconfirmed.map((b) => (
+                  <li key={b.id}>
+                    <button type="button" className="library__open" onClick={() => setOpen(b)}>
+                      {b.title} · {formatShortDate(b.day)} {formatClock(b.startAt, tz)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
           {status.data?.dirty && (
             <Card tone="warning">
               <div className="row" style={{ justifyContent: "space-between" }}>
@@ -245,12 +340,19 @@ export function PlannerPage() {
               )}
             </>
           ) : (
-            <DaySidebar day={selected} blocks={blocks.filter((b) => b.day === selected)} dailyMax={dailyMax} freeMin={availability.data?.days[0]?.free_min} />
+            <DaySidebar
+              day={selected}
+              blocks={blocks.filter((b) => b.day === selected)}
+              dailyMax={dailyMax}
+              freeMin={selectedDayFreeMin}
+              onOpen={setOpen}
+            />
           )}
         </aside>
       </div>
 
       {open && <BlockDialog block={open} onClose={() => setOpen(null)} />}
+      {addingEvent && <EventFormDialog initialDay={selected} onClose={() => setAddingEvent(false)} />}
       {preview && (
         <PreviewDialog
           preview={preview}
@@ -266,15 +368,27 @@ export function PlannerPage() {
   );
 }
 
-function DaySidebar({ day, blocks, dailyMax, freeMin }: { day: string; blocks: Block[]; dailyMax: number; freeMin?: number }) {
+function DaySidebar({
+  day,
+  blocks,
+  dailyMax,
+  freeMin,
+  onOpen,
+}: {
+  day: string;
+  blocks: Block[];
+  dailyMax: number;
+  freeMin?: number;
+  onOpen: (b: Block) => void;
+}) {
   const subjects = useSubjects();
   const tz = subjects.timezone;
   const nowMin = dayKey(new Date(), tz) === day ? minutesOfDay(new Date(), tz) : -1;
   const sorted = [...blocks].sort((a, b) => a.startMin - b.startMin);
-  const next = sorted.find((b) => b.origin === "planner" && b.endMin > nowMin && b.session?.status === "planned");
-  const courseMin = sorted.filter((b) => b.kind === "course").reduce((s, b) => s + b.endMin - b.startMin, 0);
+  const next = sorted.find((b) => b.origin === "planner" && b.endMin > nowMin && (b.session?.status === "planned" || b.session?.status === "in_progress"));
+  const courseMin = sorted.filter((b) => b.kind === "course" && !b.allDay).reduce((s, b) => s + b.endMin - b.startMin, 0);
   const personalMin = sorted.filter((b) => b.origin === "planner").reduce((s, b) => s + b.endMin - b.startMin, 0);
-  const last = sorted.at(-1);
+  const last = sorted.filter((b) => !b.allDay).at(-1);
 
   return (
     <>
@@ -322,17 +436,26 @@ function DaySidebar({ day, blocks, dailyMax, freeMin }: { day: string; blocks: B
             {sorted.map((b) => (
               <li key={b.id}>
                 <span className="tabular">
-                  <strong>{formatClock(b.startAt, tz)}</strong>
-                  <br />
-                  <span className="muted">{formatClock(b.endAt, tz)}</span>
+                  {b.allDay ? (
+                    <span className="muted">Journée</span>
+                  ) : (
+                    <>
+                      <strong>{formatClock(b.startAt, tz)}</strong>
+                      <br />
+                      <span className="muted">{formatClock(b.endAt, tz)}</span>
+                    </>
+                  )}
                 </span>
                 <span>
-                  <span className="timeline__title">
-                    <Icon name={KIND_ICON[b.kind]} size={13} />
+                  <button type="button" className="library__open timeline__title" onClick={() => onOpen(b)}>
+                    <Icon name={b.conflict ? "warning" : KIND_ICON[b.kind]} size={13} />
                     <strong>{b.title}</strong>
                     <SubjectBadge acronym={subjects.acronym(b.subjectId)} color={subjects.color(b.subjectId)} />
+                  </button>
+                  <span className="small muted">
+                    {ORIGIN_LABEL[b.sourceOrigin]} · {b.allDay ? "Toute la journée" : b.kind === "deadline" ? "Rendu" : formatDuration(b.endMin - b.startMin)}
+                    {b.conflict && " · Conflit"}
                   </span>
-                  <span className="small muted">{b.kind === "deadline" ? "Rendu" : formatDuration(b.endMin - b.startMin)}</span>
                 </span>
               </li>
             ))}
@@ -342,4 +465,3 @@ function DaySidebar({ day, blocks, dailyMax, freeMin }: { day: string; blocks: B
     </>
   );
 }
-

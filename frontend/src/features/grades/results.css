@@ -43,8 +43,15 @@
 .ue__input--bad { border-color: var(--critical); color: var(--critical-text); }
 .btn--on { background: var(--navy); border-color: var(--navy); color: var(--surface); }
 .ue__detail { background: var(--surface-sunken); margin: 0 16px 12px; border-radius: 8px; padding: 6px 12px 10px; }
-.ue__sub { display: grid; grid-template-columns: minmax(0, 1fr) 80px 60px 60px; gap: 6px; align-items: center; margin-top: 6px; font-size: 14px; }
+.ue__sub { display: grid; grid-template-columns: minmax(0, 1fr) 80px 60px 72px; gap: 6px; align-items: center; margin-top: 6px; font-size: 14px; }
 .ue__sub.ue__row--head span:not(:first-child) { text-align: right; }
+
+.grade-node { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
+.grade-node--semester, .grade-node--year { background: var(--surface-sunken); }
+.grade-node__row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+.grade-node__title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.grade-node__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.grade-inline-field { display: inline-flex; align-items: center; gap: 6px; }
 
 @media (max-width: 640px) {
   .results__grid { grid-template-columns: 1fr; }

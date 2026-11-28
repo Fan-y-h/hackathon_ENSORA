@@ -2,7 +2,7 @@ import { useSubjects } from "../../app/subjects";
 import { Icon, type IconName } from "../../components/Icon";
 import { SubjectBadge } from "../../components/ui";
 import { formatClock, formatDuration } from "../../lib/time";
-import { KIND_LABEL, type Block, type BlockKind } from "./calendar";
+import { KIND_LABEL, ORIGIN_LABEL, type Block, type BlockKind } from "./calendar";
 
 export const KIND_ICON: Record<BlockKind, IconName> = {
   course: "book",
@@ -25,7 +25,8 @@ function stateOf(block: Block, isNext: boolean): State {
 
 /**
  * One calendar item. Type = shape + icon + word; subject = left stripe + acronym;
- * "movable" = grip ⋮⋮ (planner items), lock when locked; "now" = coral ring.
+ * "movable" = grip ⋮⋮ (planner items), lock when locked; "now" = coral ring;
+ * "conflict" = explicit warning badge & outline (never masked by side-by-side lanes).
  */
 export function CalendarBlock({
   block,
@@ -53,7 +54,7 @@ export function CalendarBlock({
         className="cal-marker"
         style={{ top }}
         onClick={() => onOpen(block)}
-        aria-label={`Échéance : ${block.title}, ${formatClock(block.startAt, tz)}`}
+        aria-label={`Échéance (${ORIGIN_LABEL[block.sourceOrigin]}) : ${block.title}, ${formatClock(block.startAt, tz)}`}
       >
         <span className="cal-marker__flag" style={{ borderColor: color }}>
           <Icon name="flag" size={12} />
@@ -73,7 +74,9 @@ export function CalendarBlock({
   return (
     <button
       type="button"
-      className={`cal-block cal-block--${block.kind}${block.tentative ? " cal-block--tentative" : ""} cal-block--${state}`}
+      className={`cal-block cal-block--${block.kind}${block.tentative ? " cal-block--tentative" : ""}${
+        block.conflict ? " cal-block--conflict" : ""
+      } cal-block--${state}`}
       style={{
         top,
         height: Math.max(height, 22),
@@ -82,18 +85,29 @@ export function CalendarBlock({
         borderLeftColor: block.kind === "personal" ? undefined : color,
       }}
       onClick={() => onOpen(block)}
-      aria-label={`${KIND_LABEL[block.kind]}${block.tentative ? " à confirmer" : ""} : ${block.title}, ${time}${
-        block.locked && movable ? ", verrouillée" : ""
-      }${state === "done" ? ", faite" : state === "missed" ? ", non faite" : state === "now" ? ", maintenant" : ""}`}
+      aria-label={`${KIND_LABEL[block.kind]} (${ORIGIN_LABEL[block.sourceOrigin]})${block.tentative ? " à confirmer" : ""}${
+        block.conflict ? ", en conflit horaire" : ""
+      } : ${block.title}, ${time}${block.locked && movable ? ", verrouillée" : ""}${
+        state === "done" ? ", faite" : state === "missed" ? ", non faite" : state === "now" ? ", maintenant" : ""
+      }`}
     >
       <span className="cal-block__tagline">
-        {state === "done" ? <Icon name="check" size={12} strokeWidth={3} /> : <Icon name={KIND_ICON[block.kind]} size={12} />}
+        {block.conflict ? (
+          <Icon name="warning" size={12} label="Conflit horaire" />
+        ) : state === "done" ? (
+          <Icon name="check" size={12} strokeWidth={3} />
+        ) : (
+          <Icon name={KIND_ICON[block.kind]} size={12} />
+        )}
         <span className={compact ? "cal-block__tag cal-block__tag--short" : "cal-block__tag"}>
-          {block.tentative && !compact ? `${block.tag} · À CONFIRMER` : block.tag}
+          {block.conflict && !compact
+            ? `CONFLIT · ${block.tag}`
+            : block.tentative && !compact
+              ? `${block.tag} · À CONFIRMER`
+              : block.tag}
         </span>
-        {/* Short blocks: the title joins the tag line instead of being clipped. */}
         {compact && <span className="cal-block__title cal-block__title--inline">{block.title}</span>}
-        {acronym && <SubjectBadge acronym={acronym} color={color} />}
+        {acronym && acronym !== "—" && <SubjectBadge acronym={acronym} color={color} />}
         {movable && (block.locked ? <Icon name="lock" size={12} /> : <span className="cal-block__grip" aria-hidden="true">⋮⋮</span>)}
       </span>
       {!compact && <span className="cal-block__title">{block.title}</span>}

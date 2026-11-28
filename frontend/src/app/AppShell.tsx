@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { useExamMode, useNotifications, useProfile } from "../api/queries";
 import { BrandLogo } from "../components/BrandLogo";
@@ -8,16 +8,14 @@ import "./shell.css";
 interface NavItem {
   to: string;
   label: string;
-  planned?: boolean;
 }
 
-/** Same three groups as the mock-up sidebar; planned modules stay visible but labelled. */
 export const NAV: { title: string; items: NavItem[] }[] = [
   {
     title: "Organisation",
     items: [
       { to: "/", label: "Dashboard" },
-      { to: "/subjects", label: "Mes matières", planned: true },
+      { to: "/subjects", label: "Mes matières" },
       { to: "/library", label: "Bibliothèque" },
       { to: "/planner", label: "Smart Planner" },
       { to: "/tasks", label: "Mes tâches" },
@@ -26,11 +24,11 @@ export const NAV: { title: string; items: NavItem[] }[] = [
   {
     title: "Apprentissage",
     items: [
-      { to: "/tutor", label: "AI Tutor", planned: true },
-      { to: "/studio", label: "Learning Studio", planned: true },
+      { to: "/tutor", label: "AI Tutor" },
+      { to: "/studio", label: "Learning Studio" },
       { to: "/flashcards", label: "Flashcards" },
       { to: "/quiz", label: "Quiz" },
-      { to: "/exams", label: "Exam Trainer", planned: true },
+      { to: "/exams", label: "Exam Trainer" },
       { to: "/notes", label: "Mes notes" },
     ],
   },
@@ -44,7 +42,10 @@ export const NAV: { title: string; items: NavItem[] }[] = [
   },
 ];
 
+const examRestricted = ["/notes", "/library", "/tutor", "/studio", "/flashcards"];
+
 export function AppShell() {
+  const { pathname } = useLocation();
   const notifications = useNotifications();
   const profile = useProfile();
   const exam = useExamMode();
@@ -63,10 +64,8 @@ export function AppShell() {
         {NAV.map((group) => (
           <div key={group.title} className="sidebar__group">
             <div className="sidebar__title">{group.title}</div>
-            {group.items
-              .filter((item) => !item.planned)
-              .map((item) => {
-                const locked = examActive && ["/notes"].includes(item.to);
+            {group.items.map((item) => {
+                const locked = examActive && examRestricted.includes(item.to);
                 return (
                   <NavLink
                     key={item.to}
@@ -84,20 +83,6 @@ export function AppShell() {
               })}
           </div>
         ))}
-        {/* Modules without a backend yet: one collapsed entry instead of five "à venir" tags. */}
-        <details className="sidebar__soon">
-          <summary className="sidebar__title">
-            Bientôt <Icon name="chevronDown" size={12} />
-          </summary>
-          {NAV.flatMap((g) => g.items)
-            .filter((item) => item.planned)
-            .map((item) => (
-              <NavLink key={item.to} to={item.to} className="sidebar__link sidebar__link--soon">
-                <span className="sidebar__dot" aria-hidden="true" />
-                <span>{item.label}</span>
-              </NavLink>
-            ))}
-        </details>
         <div className="sidebar__group sidebar__footer">
           <NavLink to="/notifications" className="sidebar__link">
             <Icon name="bell" />
@@ -115,12 +100,15 @@ export function AppShell() {
         </div>
       </nav>
       <main id="main" className="shell__main" tabIndex={-1}>
+        {import.meta.env.VITE_DEMO_MODE === "true" && <p className="exam-banner">Démonstration · Données synthétiques</p>}
         {examActive && (
           <div className="exam-banner" role="status">
             <Icon name="clock" /> Mode examen : notes et corrigés bloqués
           </div>
         )}
-        <Outlet />
+        {examRestricted.some((path) => pathname === path || pathname.startsWith(`${path}/`)) && (examActive || exam.isPending || exam.isError)
+          ? <h1>{examActive ? "Accès bloqué pendant l’examen" : "Vérification du mode examen"}</h1>
+          : <Outlet />}
       </main>
     </div>
   );

@@ -3,6 +3,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { AnalyticsPage } from "../features/analytics/AnalyticsPage";
+import { StudioPage, SubjectsPage, TutorPage } from "../features/ai/StudyTools";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { FocusPage } from "../features/focus/FocusPage";
 import { GradesPage } from "../features/grades/GradesPage";
@@ -49,11 +50,11 @@ const router = createBrowserRouter([
       { path: "notifications", element: <NotificationsPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "profile", element: <SettingsPage /> },
-      { path: "subjects", element: <PlannedPage module="subjects" /> },
+      { path: "subjects", element: <SubjectsPage /> },
       { path: "library", element: <LibraryPage /> },
-      { path: "tutor", element: <PlannedPage module="tutor" /> },
-      { path: "studio", element: <PlannedPage module="studio" /> },
-      { path: "exams", element: <PlannedPage module="exams" /> },
+      { path: "tutor", element: <TutorPage /> },
+      { path: "studio", element: <StudioPage /> },
+      { path: "exams", element: <QuizPage exams /> },
       { path: "*", element: <PlannedPage module="notFound" /> },
     ],
   },

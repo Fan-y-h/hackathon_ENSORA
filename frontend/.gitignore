@@ -3,3 +3,5 @@ dist/
 coverage/
 *.local
 .env
+!/src/lib/
+!/src/lib/*.ts

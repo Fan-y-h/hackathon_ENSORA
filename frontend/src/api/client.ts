@@ -3,7 +3,7 @@
  *
  * - The user is resolved server-side: no identity is ever sent in a body.
  * - Errors follow the `{error:{code,message,details,request_id}}` envelope and are
- *   surfaced as `ApiError` so screens can show distinct 409 / 422 / 503 states.
+ *   surfaced as `ApiError` so screens can show distinct 409 / 422 / 403 / 503 states.
  * - No secrets live in the bundle: the base URL is a public value (VITE_API_BASE_URL).
  */
 
@@ -38,6 +38,16 @@ export class ApiError extends Error {
   /** 409: the data changed since it was read (stale preview, revision mismatch). */
   get isConflict(): boolean {
     return this.status === 409;
+  }
+
+  /** 403 exam_mode_active: feature disabled during an active exam attempt. */
+  get isExamBlocked(): boolean {
+    return this.status === 403 && this.code === "exam_mode_active";
+  }
+
+  /** 404/503: optional module or backend endpoint not yet mounted/running. */
+  get isUnavailable(): boolean {
+    return this.status === 404 || this.status === 503;
   }
 
   /** The backend could not be reached at all. */
@@ -128,7 +138,7 @@ export const api = {
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, { body }),
   put: <T>(path: string, body: unknown) => request<T>("PUT", path, { body }),
   upload: <T>(path: string, form: FormData) => request<T>("POST", path, { form }),
-  delete: <T>(path: string, query?: Query) => request<T>("DELETE", path, { query }),
+  delete: <T>(path: string, query?: Query, body?: unknown) => request<T>("DELETE", path, { query, body }),
 };
 
 export function newIdempotencyKey(): string {
@@ -139,6 +149,7 @@ export function newIdempotencyKey(): string {
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.isNetwork) return error.message;
+    if (error.isExamBlocked) return "Accès bloqué pendant un examen en cours.";
     if (error.status === 409) return "Les données ont changé entre-temps. Rechargez puis réessayez.";
     if (error.status === 422) return `Données invalides : ${error.message}`;
     if (error.status === 503) return "Service momentanément indisponible.";

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { errorMessage } from "../../api/client";
-import { useQuizzes, useSaveResponses, useStartAttempt, useSubmitAttempt } from "../../api/queries";
+import { useAttempt, useCatalogSubjects, useExamMode, useGenerateMockExam, useQuizzes, useSaveResponses, useStartAttempt, useSubmitAttempt } from "../../api/queries";
 import type { Attempt, AttemptResult, Question } from "../../api/types";
 import { useSubjects } from "../../app/subjects";
 import { Icon } from "../../components/Icon";
@@ -10,21 +10,46 @@ import "./learning.css";
 
 type Answers = Record<string, unknown>;
 
-export function QuizPage() {
+export function QuizPage({ exams = false }: { exams?: boolean }) {
   const quizzes = useQuizzes();
   const subjects = useSubjects();
   const start = useStartAttempt();
-  const [attempt, setAttempt] = useState<Attempt | null>(null);
+  const [startedAttempt, setAttempt] = useState<Attempt | null>(null);
+  const [examSubject, setExamSubject] = useState("");
+  const exam = useExamMode();
+  const resume = useAttempt(startedAttempt ? null : exam.data?.attempt_id);
+  const attempt = startedAttempt ?? resume.data;
+  const catalog = useCatalogSubjects();
+  const generate = useGenerateMockExam();
   const [result, setResult] = useState<AttemptResult | null>(null);
 
   if (result && attempt) {
     return <ResultView attempt={attempt} result={result} onBack={() => (setAttempt(null), setResult(null))} />;
   }
-  if (attempt) return <AttemptView attempt={attempt} onSubmitted={setResult} />;
+  if (attempt) return <AttemptView key={attempt.id} attempt={attempt} onSubmitted={(value) => { setAttempt(attempt); setResult(value); }} />;
 
   return (
     <div className="page">
-      <PageHeader title="Quiz" />
+      <PageHeader title={exams ? "Examens" : "Quiz"} />
+      {resume.error && <p role="alert">{errorMessage(resume.error)}</p>}
+      {exams && (
+        <Card title="Créer un examen blanc">
+          <form className="stack" onSubmit={(event) => {
+            event.preventDefault();
+            if (examSubject) generate.mutate({ subject_id: examSubject, question_count: 10, time_limit_min: 60 });
+          }}>
+            <label>
+              Matière
+              <select value={examSubject} onChange={(event) => setExamSubject(event.target.value)} required>
+                <option value="">Choisir une matière</option>
+                {catalog.data?.items.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+              </select>
+            </label>
+            <button className="btn btn--primary" disabled={!examSubject || generate.isPending}>Créer depuis la banque de questions</button>
+          </form>
+          {generate.error && <p role="alert">{errorMessage(generate.error)}</p>}
+        </Card>
+      )}
       {start.error && <div className="status status--critical">{errorMessage(start.error)}</div>}
       <Card>
         <QueryState query={quizzes}>
@@ -43,10 +68,12 @@ export function QuizPage() {
                         {q.time_limit_min ? ` · ${q.time_limit_min} min` : ""}
                       </span>
                     </div>
-                    <button type="button" className="btn btn--small" disabled={start.isPending} onClick={() => start.mutate({ quizId: q.id, mode: "practice" }, { onSuccess: setAttempt })}>
-                      S'entraîner
-                    </button>
-                    <button type="button" className="btn btn--small" disabled={start.isPending} onClick={() => start.mutate({ quizId: q.id, mode: "exam" }, { onSuccess: setAttempt })}>
+                    {q.type !== "exam" && !exams && (
+                      <button type="button" className="btn btn--small" disabled={start.isPending} onClick={() => start.mutate({ quizId: q.id, mode: "practice" }, { onSuccess: setAttempt })}>
+                        S'entraîner
+                      </button>
+                    )}
+                    <button type="button" className="btn btn--small" disabled={start.isPending || !q.time_limit_min} onClick={() => start.mutate({ quizId: q.id, mode: "exam" }, { onSuccess: setAttempt })}>
                       <Icon name="clock" size={14} /> Mode examen
                     </button>
                   </li>
@@ -80,13 +107,17 @@ function AttemptView({ attempt, onSubmitted }: { attempt: Attempt; onSubmitted: 
 
   const set = (id: string, value: unknown) => setAnswers((a) => ({ ...a, [id]: value }));
 
-  const doSubmit = async () => {
+  const saveAnswers = (onSuccess?: () => void) => {
     const responses = Object.entries(answers)
-      .filter(([, v]) => v !== undefined && v !== "")
-      .map(([question_id, response]) => ({ question_id, response }));
-    if (responses.length) await save.mutateAsync({ attemptId: attempt.id, responses });
-    submit.mutate(attempt.id, { onSuccess: onSubmitted });
+      .filter(([, value]) => value !== undefined)
+      .map(([question_id, value]) => ({ question_id, response: value === "" ? null : value }));
+    if (responses.length && remaining !== 0) {
+      save.mutate({ attemptId: attempt.id, responses }, { onSuccess });
+    } else {
+      onSuccess?.();
+    }
   };
+  const doSubmit = () => saveAnswers(() => submit.mutate(attempt.id, { onSuccess: onSubmitted }));
 
   return (
     <div className="page" style={{ maxWidth: 820 }}>
@@ -104,13 +135,18 @@ function AttemptView({ attempt, onSubmitted }: { attempt: Attempt; onSubmitted: 
         className="card"
         onSubmit={(e) => {
           e.preventDefault();
-          void doSubmit();
+          doSubmit();
         }}
       >
         {questions.map((q, i) => (
           <QuestionField key={q.id} index={i} question={q} value={answers[q.id]} onChange={(v) => set(q.id, v)} />
         ))}
         {(save.error || submit.error) && <div className="status status--critical">{errorMessage(save.error ?? submit.error)}</div>}
+        {remaining !== 0 && (
+          <button type="button" className="btn" disabled={save.isPending || submit.isPending} onClick={() => saveAnswers()}>
+            Enregistrer les réponses
+          </button>
+        )}
         <button type="submit" className="btn btn--primary" disabled={save.isPending || submit.isPending}>
           Remettre ma copie
         </button>

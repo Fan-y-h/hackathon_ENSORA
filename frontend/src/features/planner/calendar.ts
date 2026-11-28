@@ -11,6 +11,7 @@ import { dayKey, minutesOfDay } from "../../lib/time";
  * A deadline is an instant: drawn as a marker (line + flag), never as a block.
  */
 export type BlockKind = "course" | "revision" | "task" | "exam" | "deadline" | "personal";
+export type SourceOrigin = "imported" | "personal" | "generated";
 
 export interface Block {
   id: string;
@@ -25,15 +26,28 @@ export interface Block {
   endMin: number;
   locked: boolean;
   origin: "agenda" | "planner";
+  sourceOrigin: SourceOrigin;
+  busy: boolean;
+  allDay?: boolean;
   event?: CalendarEvent;
   session?: StudySession;
   /** Lane index and lane count when blocks overlap. */
   lane: number;
   lanes: number;
+  /** True when this busy block genuinely overlaps another busy block (never masked by lanes). */
+  conflict: boolean;
+  conflictWith: string[];
   /** Short uppercase word shown on the block ("PARTIEL", "CM", "RAPPEL ACTIF"). */
   tag: string;
   /** Exam slot imported but not yet confirmed by the student. */
   tentative: boolean;
+}
+
+export interface ConflictPair {
+  id: string;
+  day: string;
+  a: Block;
+  b: Block;
 }
 
 export const KIND_LABEL: Record<BlockKind, string> = {
@@ -43,6 +57,12 @@ export const KIND_LABEL: Record<BlockKind, string> = {
   exam: "Évaluation",
   deadline: "Échéance",
   personal: "Personnel",
+};
+
+export const ORIGIN_LABEL: Record<SourceOrigin, string> = {
+  imported: "Importé",
+  personal: "Personnel",
+  generated: "Session générée",
 };
 
 export const ACTIVITY_LABEL: Record<string, string> = {
@@ -97,10 +117,35 @@ function base(startAt: string, endAt: string, tz: string) {
 }
 
 export function buildBlocks(events: CalendarEvent[], sessions: StudySession[], tz: string): Block[] {
-  const blocks: Omit<Block, "lane" | "lanes">[] = [];
+  const blocks: Omit<Block, "lane" | "lanes" | "conflict" | "conflictWith">[] = [];
 
   for (const ev of events) {
-    if (!ev.start_at || !ev.end_at || ev.status === "cancelled") continue;
+    if (ev.status === "cancelled") continue;
+    if (!ev.start_at || !ev.end_at) {
+      if (ev.all_day_date) {
+        blocks.push({
+          id: `event:${ev.id}`,
+          kind: eventKind(ev.type),
+          title: ev.title,
+          subtitle: ev.room ?? "Toute la journée",
+          tag: EVENT_TAG[ev.type],
+          tentative: ev.confirmation_required || ev.status === "tentative",
+          subjectId: ev.subject_id ?? null,
+          startAt: `${ev.all_day_date}T00:00:00Z`,
+          endAt: `${ev.all_day_date}T23:59:00Z`,
+          day: ev.all_day_date,
+          startMin: 0,
+          endMin: 0,
+          locked: ev.read_only,
+          origin: "agenda",
+          sourceOrigin: ev.source === "manual" ? "personal" : "imported",
+          busy: Boolean(ev.busy),
+          allDay: true,
+          event: ev,
+        });
+      }
+      continue;
+    }
     blocks.push({
       id: `event:${ev.id}`,
       kind: eventKind(ev.type),
@@ -113,6 +158,8 @@ export function buildBlocks(events: CalendarEvent[], sessions: StudySession[], t
       endAt: ev.end_at,
       locked: ev.read_only,
       origin: "agenda",
+      sourceOrigin: ev.source === "manual" ? "personal" : "imported",
+      busy: ev.busy ?? ev.type !== "deadline",
       event: ev,
       ...base(ev.start_at, ev.end_at, tz),
     });
@@ -132,26 +179,33 @@ export function buildBlocks(events: CalendarEvent[], sessions: StudySession[], t
       endAt: s.end_at,
       locked: s.locked,
       origin: "planner",
+      sourceOrigin: "generated",
+      busy: s.status !== "skipped",
       session: s,
       ...base(s.start_at, s.end_at, tz),
     });
   }
 
-  return assignLanes(blocks);
+  return annotateConflicts(assignLanes(blocks));
 }
 
-/** Day-level highlights for the column header: exams and hand-in deadlines. */
+/** Day-level highlights for the column header: exams, hand-in deadlines, and all-day events. */
 export function dayHighlights(blocks: Block[], day: string): Block[] {
-  return blocks.filter((b) => b.day === day && (b.kind === "exam" || b.kind === "deadline")).sort((a, b) => a.startMin - b.startMin);
+  return blocks
+    .filter((b) => b.day === day && (b.kind === "exam" || b.kind === "deadline" || b.allDay))
+    .sort((a, b) => a.startMin - b.startMin);
 }
 
 /** Greedy interval partitioning per day so overlapping blocks sit side by side. */
-export function assignLanes(blocks: Omit<Block, "lane" | "lanes">[]): Block[] {
-  const byDay = new Map<string, Omit<Block, "lane" | "lanes">[]>();
+export function assignLanes(blocks: Omit<Block, "lane" | "lanes" | "conflict" | "conflictWith">[]): Block[] {
+  const byDay = new Map<string, Omit<Block, "lane" | "lanes" | "conflict" | "conflictWith">[]>();
   const out: Block[] = [];
   for (const b of blocks) {
-    if (b.kind === "deadline") out.push({ ...b, lane: 0, lanes: 1 });
-    else byDay.set(b.day, [...(byDay.get(b.day) ?? []), b]);
+    if (b.kind === "deadline" || b.allDay) {
+      out.push({ ...b, lane: 0, lanes: 1, conflict: false, conflictWith: [] });
+    } else {
+      byDay.set(b.day, [...(byDay.get(b.day) ?? []), b]);
+    }
   }
 
   for (const dayBlocks of byDay.values()) {
@@ -175,7 +229,7 @@ export function assignLanes(blocks: Omit<Block, "lane" | "lanes">[]): Block[] {
       } else {
         laneEnds[lane] = b.endMin;
       }
-      cluster.push({ ...b, lane, lanes: 1 });
+      cluster.push({ ...b, lane, lanes: 1, conflict: false, conflictWith: [] });
       clusterEnd = Math.max(clusterEnd, b.endMin);
     }
     flush();
@@ -183,15 +237,54 @@ export function assignLanes(blocks: Omit<Block, "lane" | "lanes">[]): Block[] {
   return out;
 }
 
+/** Marks genuine time conflicts between busy timed blocks so lanes never hide clashes. */
+export function annotateConflicts(blocks: Block[]): Block[] {
+  const timedBusy = blocks.filter((b) => b.busy && !b.allDay && b.kind !== "deadline");
+  const byDay = new Map<string, Block[]>();
+  for (const b of timedBusy) {
+    byDay.set(b.day, [...(byDay.get(b.day) ?? []), b]);
+  }
+  for (const list of byDay.values()) {
+    for (let i = 0; i < list.length; i += 1) {
+      for (let j = i + 1; j < list.length; j += 1) {
+        const a = list[i];
+        const b = list[j];
+        if (a.startMin < b.endMin && b.startMin < a.endMin) {
+          a.conflict = true;
+          b.conflict = true;
+          if (!a.conflictWith.includes(b.title)) a.conflictWith.push(b.title);
+          if (!b.conflictWith.includes(a.title)) b.conflictWith.push(a.title);
+        }
+      }
+    }
+  }
+  return blocks;
+}
+
+export function listConflictPairs(blocks: Block[]): ConflictPair[] {
+  const pairs: ConflictPair[] = [];
+  const timedBusy = blocks.filter((b) => b.busy && !b.allDay && b.kind !== "deadline");
+  for (let i = 0; i < timedBusy.length; i += 1) {
+    for (let j = i + 1; j < timedBusy.length; j += 1) {
+      const a = timedBusy[i];
+      const b = timedBusy[j];
+      if (a.day === b.day && a.startMin < b.endMin && b.startMin < a.endMin) {
+        pairs.push({ id: `${a.id}__${b.id}`, day: a.day, a, b });
+      }
+    }
+  }
+  return pairs.sort((x, y) => x.day.localeCompare(y.day) || x.a.startMin - y.a.startMin);
+}
+
 /**
- * Visible hour window: at least 8 h–20 h, widened to fit every block.
- * Deadlines do not widen it: a 23:59 hand-in is already announced in the column banner.
+ * Visible hour window: at least 8 h–20 h, widened to fit every timed block.
+ * Deadlines and all-day events do not widen it.
  */
 export function hourWindow(blocks: Block[]): { from: number; to: number } {
   let from = 8 * 60;
   let to = 20 * 60;
   for (const b of blocks) {
-    if (b.kind === "deadline") continue;
+    if (b.kind === "deadline" || b.allDay) continue;
     from = Math.min(from, Math.floor(b.startMin / 60) * 60);
     to = Math.max(to, Math.ceil(b.endMin / 60) * 60);
   }
@@ -210,6 +303,8 @@ export function warningLabel(code: string): string {
     CAPACITY: "Temps disponible insuffisant avant l'échéance.",
     PENDING_CONFIRMATIONS: "Des créneaux importés attendent votre confirmation dans l'agenda.",
     LEARNED_DURATION_FACTOR: "Durées ajustées d'après vos séances passées.",
+    AGENDA_CONFLICT: "Des événements occupés se chevauchent dans l'agenda.",
+    OFFICIAL_CONFLICT: "Conflit horaire entre événements importés.",
   };
   return map[kind] ?? kind.replace(/_/g, " ").toLowerCase();
 }

@@ -1,9 +1,11 @@
 import { ApiError, errorMessage } from "../../api/client";
 import { useAcceptPlan } from "../../api/queries";
 import type { PlanPreview } from "../../api/types";
-import { Dialog, StatusLine } from "../../components/ui";
-import { formatDuration, formatShortDate } from "../../lib/time";
+import { useSubjects } from "../../app/subjects";
+import { Dialog, StatusLine, SubjectBadge } from "../../components/ui";
+import { dayKey, formatClock, formatDuration, formatShortDate } from "../../lib/time";
 import { unscheduledReason, warningLabel } from "./calendar";
+import { reasonLabels } from "./reasons";
 
 /**
  * Plan preview: nothing is committed until "Accepter" (docs/SMART_PLANNER.md).
@@ -19,20 +21,21 @@ export function PreviewDialog({
   onRecompute: () => void;
 }) {
   const accept = useAcceptPlan();
+  const subjects = useSubjects();
+  const tz = subjects.timezone;
   const stale = accept.error instanceof ApiError && accept.error.isConflict;
   const { summary, diff } = preview;
   const warnings = [...new Set(preview.warnings.map(warningLabel))];
 
   return (
     <Dialog title="Proposition de planning" onClose={onClose}>
-
       <div className="row" style={{ gap: 16 }}>
         <div className="stat">
           <span className="stat__label">Planifié</span>
           <span className="stat__value" style={{ fontSize: 24 }}>{formatDuration(summary.scheduled_min)}</span>
         </div>
         <div className="stat">
-          <span className="stat__label">Hors limites</span>
+          <span className="stat__label">Non planifiable</span>
           <span className="stat__value" style={{ fontSize: 24 }}>{formatDuration(summary.unscheduled_min)}</span>
         </div>
         <div className="stat">
@@ -61,13 +64,36 @@ export function PreviewDialog({
         })}
       </div>
 
+      {preview.sessions.length > 0 && (
+        <details className="disclosure" open={preview.sessions.length <= 8}>
+          <summary className="small strong">Séances proposées ({preview.sessions.length})</summary>
+          <ul className="diff-list" style={{ marginTop: 8 }}>
+            {preview.sessions.map((s) => {
+              const reasons = reasonLabels(s.reason);
+              return (
+                <li key={`${s.need_key}-${s.start_at}`} style={{ flexDirection: "column", gap: 2, padding: "6px 0", borderTop: "1px solid var(--grid)" }}>
+                  <div className="row" style={{ gap: 6 }}>
+                    <SubjectBadge acronym={subjects.acronym(s.subject_id)} color={subjects.color(s.subject_id)} />
+                    <strong className="small">{s.title}</strong>
+                    <span className="xsmall muted tabular">
+                      {formatShortDate(dayKey(s.start_at, tz))} · {formatClock(s.start_at, tz)}–{formatClock(s.end_at, tz)}
+                    </span>
+                  </div>
+                  {reasons.length > 0 && <span className="xsmall muted">Pourquoi : {reasons.join(" · ")}</span>}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      )}
+
       {preview.unscheduled.length > 0 && (
         <div className="card card--warning" style={{ padding: 14 }}>
-          <StatusLine tone="warning" label="Non planifiable dans l'horizon" />
+          <StatusLine tone="warning" label={`Tâches/révisions impossibles à planifier (${preview.unscheduled.length})`} />
           <ul className="diff-list">
             {preview.unscheduled.map((u) => (
               <li key={u.need_id}>
-                <span>{formatDuration(u.remaining_min)}</span>
+                <span className="tabular strong">{formatDuration(u.remaining_min)}</span>
                 <span className="muted">
                   {u.title} — {unscheduledReason(u.reason)}
                 </span>
@@ -99,7 +125,12 @@ export function PreviewDialog({
         <button type="button" className="btn" onClick={stale ? onRecompute : onClose}>
           {stale ? "Recalculer" : "Annuler"}
         </button>
-        <button type="button" className="btn btn--primary" disabled={accept.isPending || stale} onClick={() => accept.mutate(preview, { onSuccess: onClose })}>
+        <button
+          type="button"
+          className="btn btn--primary"
+          disabled={accept.isPending || stale}
+          onClick={() => accept.mutate(preview, { onSuccess: onClose })}
+        >
           {accept.isPending ? "Enregistrement…" : "Accepter ce planning"}
         </button>
       </div>

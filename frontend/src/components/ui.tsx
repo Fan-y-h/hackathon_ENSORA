@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 
 import { ApiError, errorMessage } from "../api/client";
 import { Icon } from "./Icon";
@@ -8,7 +9,9 @@ export function PageHeader({ eyebrow, title, actions }: { eyebrow?: ReactNode; t
     <header className="page-header">
       <div className="page-header__titles">
         {eyebrow && <div className="page-header__eyebrow">{eyebrow}</div>}
-        <h1>{title}</h1>
+        <h1 id="page-title" tabIndex={-1}>
+          {title}
+        </h1>
       </div>
       {actions && <div className="page-header__actions">{actions}</div>}
     </header>
@@ -104,7 +107,7 @@ export function Loading({ label = "Chargement…", lines = 3 }: { label?: string
     <div className="stack" aria-busy="true" aria-live="polite">
       <span className="sr-only">{label}</span>
       {Array.from({ length: lines }, (_, i) => (
-        <div key={i} className="skeleton" style={{ width: `${90 - i * 15}%` }} />
+        <div key={i} className="skeleton" style={{ width: `${Math.max(30, 90 - i * 15)}%` }} />
       ))}
     </div>
   );
@@ -177,29 +180,134 @@ export function StatusLine({ tone, label, children }: { tone: "good" | "warning"
   );
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    ref.current?.querySelector<HTMLElement>("input, select, textarea, button")?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const container = ref.current;
+    const initial = container?.querySelector<HTMLElement>("input, select, textarea, button");
+    initial?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key === "Tab" && container) {
+        const focusables = [...container.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
       previous?.focus();
     };
-  }, [onClose]);
+  }, []);
+
   return (
-    <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" ref={ref}>
+    <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCloseRef.current()}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={ref}>
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h2 id="dialog-title">{title}</h2>
-          <button type="button" className="btn btn--ghost btn--small" onClick={onClose} aria-label="Fermer">
+          <h2 id={titleId}>{title}</h2>
+          <button type="button" className="btn btn--ghost btn--small" onClick={() => onCloseRef.current()} aria-label="Fermer">
             <Icon name="close" />
           </button>
         </div>
         {children}
       </div>
+    </div>
+  );
+}
+
+export function ConfirmDialog({
+  title,
+  message,
+  confirmLabel = "Confirmer",
+  danger = false,
+  requireText,
+  pending = false,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  message: ReactNode;
+  confirmLabel?: string;
+  danger?: boolean;
+  requireText?: string;
+  pending?: boolean;
+  error?: unknown;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const canConfirm = !pending && (!requireText || typed.trim() === requireText);
+  return (
+    <Dialog title={title} onClose={onClose}>
+      <p className="small">{message}</p>
+      {requireText && (
+        <label className="field">
+          <span>
+            Tapez <code>{requireText}</code> pour confirmer
+          </span>
+          <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
+        </label>
+      )}
+      {Boolean(error) && <div className="status status--critical">{errorMessage(error)}</div>}
+      <div className="row" style={{ justifyContent: "flex-end" }}>
+        <button type="button" className="btn" onClick={onClose} disabled={pending}>
+          Annuler
+        </button>
+        <button
+          type="button"
+          className={danger ? "btn btn--danger" : "btn btn--primary"}
+          disabled={!canConfirm}
+          onClick={onConfirm}
+        >
+          {pending ? "En cours…" : confirmLabel}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
+export function ExamBlockedCard({ feature }: { feature: string }) {
+  return (
+    <div className="page" style={{ maxWidth: 760 }}>
+      <PageHeader eyebrow="Mode examen actif" title={feature} />
+      <Card tone="warning" title="Accès suspendu pendant l'examen">
+        <p className="small">
+          Pour garantir l'intégrité de l'épreuve en cours (règle R21), les notes, corrigés, documents et assistants IA sont
+          désactivés jusqu'à la remise de votre copie.
+        </p>
+        <div className="row">
+          <Link className="btn btn--primary" to="/quiz">
+            Retourner à mon examen
+          </Link>
+          <Link className="btn" to="/">
+            Dashboard
+          </Link>
+        </div>
+      </Card>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   useAnalytics,
   useDueCards,
   useEvents,
+  useExamMode,
   useHeatmap,
   useMastery,
   usePlan,
@@ -35,7 +36,8 @@ export function DashboardPage() {
   const events = useEvents(todayRange.start, todayRange.end);
   const plan = usePlan();
   const status = usePlannerStatus();
-  const due = useDueCards();
+  const exam = useExamMode();
+  const due = useDueCards(undefined, exam.data?.active === false);
   const analytics = useAnalytics(weekRange.start, weekRange.end);
   const heatmap = useHeatmap(heatRange.start, heatRange.end);
   const readiness = useReadiness();

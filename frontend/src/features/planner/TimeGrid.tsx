@@ -52,11 +52,17 @@ export function TimeGrid({
   const ticks: number[] = [];
   for (let m = from; m <= to; m += step) ticks.push(m);
   const nextId = nextSessionId(blocks, today, nowMin);
-  const showBanners = !detailed && days.some((d) => dayHighlights(visible, d).length > 0);
+  const showBanners = days.some((d) => dayHighlights(visible, d).length > 0);
 
   return (
     <section className="cal" aria-label={label}>
-      <div className="cal__grid" style={{ gridTemplateColumns: `${detailed ? 64 : 48}px repeat(${days.length}, minmax(0, 1fr))` }}>
+      <div
+        className="cal__grid"
+        style={{
+          gridTemplateColumns: `${detailed ? 64 : 48}px repeat(${days.length}, minmax(0, 1fr))`,
+          minWidth: detailed ? 0 : 720,
+        }}
+      >
         <span />
         {days.map((d) => {
           const isToday = d === today;
@@ -87,13 +93,13 @@ export function TimeGrid({
                   <button
                     key={b.id}
                     type="button"
-                    className={`cal__banner cal__banner--${b.kind}${b.tentative ? " cal__banner--tentative" : ""}`}
+                    className={`cal__banner cal__banner--${b.allDay ? "allday" : b.kind}${b.tentative ? " cal__banner--tentative" : ""}`}
                     onClick={() => onOpen(b)}
                     title={b.title}
                   >
-                    <Icon name={b.kind === "exam" ? "clock" : "flag"} size={11} />
+                    <Icon name={b.kind === "exam" ? "clock" : b.kind === "deadline" ? "flag" : "book"} size={11} />
                     <span>
-                      {b.tag} · {formatClock(b.startAt, timezone)}
+                      {b.allDay ? `${b.tag} · ${b.title}` : `${b.tag} · ${formatClock(b.startAt, timezone)}`}
                     </span>
                   </button>
                 ))}
@@ -116,7 +122,7 @@ export function TimeGrid({
               <span key={m} className="cal__line" style={{ top: (m - from) * pxPerMin, opacity: m % 60 === 0 ? 1 : 0.5 }} />
             ))}
             {visible
-              .filter((b) => b.day === d && (b.kind !== "deadline" || (b.startMin >= from && b.startMin <= to)))
+              .filter((b) => b.day === d && !b.allDay && (b.kind !== "deadline" || (b.startMin >= from && b.startMin <= to)))
               .map((b) => (
                 <CalendarBlock
                   key={b.id}
