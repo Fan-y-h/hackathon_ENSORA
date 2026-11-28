@@ -26,7 +26,7 @@ import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
 
@@ -54,6 +54,7 @@ from ..contracts import (
     ValueStatus,
     utc_now_iso,
 )
+from ..resolution.entity_resolver import match_curriculum_subject, normalize_text_key
 from .base import (
     AuthenticationRequiredError,
     PermissionDeniedError,
@@ -66,7 +67,21 @@ from .base import (
 PARIS_TZ = ZoneInfo("Europe/Paris")
 
 _EXAM_KEYWORDS = ("partiel", "examen", "exam", "contrôle", "controle", "ds ", "épreuve", "epreuve")
-_PRESENTATION_KEYWORDS = ("sout.", "soutenance", "oral", "présentation", "presentation", "défense")
+_DEFENSE_LABEL_RE = re.compile(r"\bsout\.|\b(?:soutenance|oral|défense|defense)\b", re.IGNORECASE)
+_EXAM_PREFIX_RE = re.compile(r"^\s*(?:\[(?:annul[ée]e?|cancelled)\]\s*)?ex\.", re.IGNORECASE)
+_SAS_PRESENTATION_RE = re.compile(r"^\s*pr[ée]sentation\b.{0,120}\bsas\b", re.IGNORECASE)
+_ASSESSMENT_LABEL_RE = re.compile(r"\b(?:[ée]valuation|[ée]valu[ée]e?|jury|not[ée]e?)\b", re.IGNORECASE)
+_EVENT_SUBJECT_PREFIX_RE = re.compile(
+    r"^(?:(?:annule|cancelled)\s+)?(?:cm|td\s+tp|td|tp|cours|examen|exam|ex|partiel|soutenance|sout)(?:\s+|$)",
+)
+_EVENT_SUBJECT_SUFFIX_RE = re.compile(r"\s+(?:groupe|group)\s+[a-z0-9 ]+$")
+_EVENT_COHORT_SUFFIX_RE = re.compile(r"\s+[123]a(?:\s+.+)?$")
+_EVENT_DESCRIPTION_CATEGORY_RE = re.compile(
+    r"^\s*(?:type|nature|format|cat[ée]gorie)(?:\s+d['’]activit[ée]|\s+de\s+(?:cours|l['’]activit[ée]))?\s*:\s*([^\r\n]+)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
 _PROJECT_KEYWORDS = ("projet", "project", "statapp", "fil rouge")
 _SPORT_KEYWORDS = ("sport", "eps", "bds", "gymnase", "natation")
 _TP_KEYWORDS = ("tp ", "tp-", "travaux pratiques", "lab", "atelier")
@@ -172,6 +187,7 @@ def classify_timetable_event(
     category_hint: str | None = None,
     color_hint: str | None = None,
     group: str | None = None,
+    description: str | None = None,
 ) -> tuple[CalendarEventType, bool, str | None]:
     """Classify timetable event type and flag ambiguities per docs/DATA_ENGINEERING.md.
 
@@ -179,21 +195,35 @@ def classify_timetable_event(
     Flags `Sout.ID` / presentations or multi-slot ambiguous events for confirmation.
     """
     low_title = f" {title.lower()} "
-    low_cat = f" {(category_hint or '').lower()} "
+    description_category = _EVENT_DESCRIPTION_CATEGORY_RE.search(description or "")
+    source_category = description_category.group(1) if description_category else ""
+    low_cat = f" {(category_hint or '').lower()} {source_category.lower()} "
     combined = f"{low_title} {low_cat}"
 
     confirmation_required = False
     reason: str | None = None
 
-    if any(k in combined for k in _PRESENTATION_KEYWORDS):
+    explicit_exam = any(_EXAM_PREFIX_RE.match(label) for label in (title, category_hint or "", source_category))
+    explicit_exam = explicit_exam or any(k in combined for k in _EXAM_KEYWORDS)
+    defense = bool(_DEFENSE_LABEL_RE.search(combined))
+    sas_introduction = bool(_SAS_PRESENTATION_RE.search(title)) and not (
+        explicit_exam or defense or _ASSESSMENT_LABEL_RE.search(combined)
+    )
+    if defense:
         event_type = CalendarEventType.PRESENTATION
         confirmation_required = True
         reason = "Presentation/defense slot detected (e.g. Sout.); confirm personal group/slot."
-    elif any(k in combined for k in _EXAM_KEYWORDS):
+    elif explicit_exam:
         event_type = CalendarEventType.EXAM
         if not group:
             confirmation_required = True
             reason = "Assessment detected without explicit student group; confirm scope and slot."
+    elif sas_introduction:
+        event_type = CalendarEventType.CLASS
+    elif "présentation" in combined or "presentation" in combined:
+        event_type = CalendarEventType.PRESENTATION
+        confirmation_required = True
+        reason = "Presentation slot detected; confirm its format and personal group."
     elif any(k in combined for k in _PROJECT_KEYWORDS):
         event_type = CalendarEventType.PROJECT
     elif any(k in combined for k in _SPORT_KEYWORDS):
@@ -210,7 +240,9 @@ def classify_timetable_event(
         # reserve confirmation_required for presentations, ungrouped exams, and red-color hints.
 
     # Red color hint is explicitly NOT proof of a written exam (S2 PPDP requirement)
-    if color_hint and color_hint.strip().lower() in {"red", "#ff0000", "#e53935", "rouge", "danger"}:
+    if not sas_introduction and color_hint and color_hint.strip().lower() in {
+        "red", "#ff0000", "#e53935", "rouge", "danger",
+    }:
         if event_type not in (CalendarEventType.EXAM, CalendarEventType.PRESENTATION):
             confirmation_required = True
             reason = (
@@ -222,6 +254,31 @@ def classify_timetable_event(
             reason = "Highlighted assessment event; confirm official format and student slot."
 
     return event_type, confirmation_required, reason
+
+
+def resolve_timetable_subject_code(
+    title: str,
+    source_code: str | None,
+    subjects: Sequence[tuple[str, str, str]],
+    subject_hint: str | None = None,
+) -> str | None:
+    """Return the official code when title and source evidence agree on one enrolled subject."""
+    key = normalize_text_key(title)
+    key = _EVENT_SUBJECT_PREFIX_RE.sub("", key).strip()
+    key = _EVENT_SUBJECT_SUFFIX_RE.sub("", key).strip()
+    title_match, title_reason = match_curriculum_subject(key, "", subjects)
+    if title_reason == "unmatched":
+        without_cohort = _EVENT_COHORT_SUFFIX_RE.sub("", key)
+        if without_cohort != key:
+            title_match, title_reason = match_curriculum_subject(without_cohort, "", subjects)
+    hint_match, hint_reason = match_curriculum_subject(subject_hint or "", "", subjects)
+    code_match, code_reason = match_curriculum_subject("", source_code or "", subjects)
+    if "ambiguous" in (title_reason, hint_reason, code_reason):
+        return None
+    matched = {m for m in (title_match, hint_match, code_match) if m}
+    if len(matched) != 1:
+        return None
+    return next((code for sid, _, code in subjects if sid in matched and code), None)
 
 
 def parse_decimal_strict(value: Any, *, allow_grade_scale: bool = False) -> Decimal | None:
@@ -449,6 +506,7 @@ def parse_ics_events(
                 summary,
                 category_hint=categories,
                 group=group,
+                description=description,
             )
         else:
             ev_type = CalendarEventType.PERSONAL
@@ -1118,6 +1176,7 @@ def parse_fullcalendar_json_events(
             category_hint=str(cat_hint) if cat_hint else None,
             color_hint=str(color_hint) if color_hint else None,
             group=str(group) if group else None,
+            description=desc,
         )
         duration_min = _compute_duration_minutes(start_utc, end_utc)
         raw_id = entry.get("id")
@@ -3919,8 +3978,13 @@ class PamplemousseConnector(SourceConnector):
         known_versions: dict[str, str] = dict(opts.get("known_versions") or {})
         all_records: list[SourceRecord] = []
         unchanged_skipped = 0
+        curriculum = opts.get("eligible_subjects")
         for ev in dedup_events:
             d = ev.to_dict()
+            if curriculum:
+                d["course_id"] = resolve_timetable_subject_code(
+                    ev.title, ev.course_id, curriculum, ev.subject_hint,
+                )
             d["record_kind"] = "event"
             rec = self.normalize(d)
             if (

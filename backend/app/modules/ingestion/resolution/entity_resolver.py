@@ -190,6 +190,7 @@ _INTRO_WRAPPER_RE = re.compile(
 _BILINGUAL_EQUIVALENTS: tuple[tuple[str, ...], ...] = (
     ("apprentissage automatique", "apprentissage statistique", "machine learning"),
     ("apprentissage profond", "deep learning"),
+    ("apprentissage supervise", "supervised learning"),
     ("series temporelles", "serie temporelle", "series chronologiques", "time series"),
     ("base de donnees", "bases de donnees", "databases", "database", "bdd"),
     ("probabilite", "probabilites", "probability", "proba"),
@@ -255,15 +256,24 @@ def match_curriculum_subject(
         return (next(iter(codes)), "official_code") if len(codes) == 1 else (None, "ambiguous")
     clean_title = re.sub(r"\b20\d{2}\s*[-/–]\s*(?:20)?\d{2}\b", "", title).strip(" ()[]-–")
     normalized = normalize_text_key(clean_title)
+    if not normalized:
+        return None, "unmatched"
     tokens = significant_stemmed_tokens(clean_title)
     titles = {
         subject_id for subject_id, title, _ in subjects
         if normalized == normalize_text_key(title)
         or (len(tokens) >= 2 and tokens == significant_stemmed_tokens(title))
     }
-    if len(titles) == 1:
-        return next(iter(titles)), "complete_title"
-    return None, "ambiguous" if titles else "unmatched"
+    if titles:
+        return (next(iter(titles)), "complete_title") if len(titles) == 1 else (None, "ambiguous")
+    translations = {alias for group in _BILINGUAL_EQUIVALENTS if normalized in group for alias in group}
+    translated_titles = {
+        subject_id for subject_id, title, _ in subjects
+        if normalize_text_key(title) in translations
+    } if translations else set()
+    if len(translated_titles) == 1:
+        return next(iter(translated_titles)), "bilingual_title"
+    return None, "ambiguous" if translated_titles else "unmatched"
 
 
 def _extract_subject_core_variants(title: str, code: str | None = None) -> tuple[list[str], str | None]:

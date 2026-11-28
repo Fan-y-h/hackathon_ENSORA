@@ -32,10 +32,20 @@ def test_catalog_uses_consented_current_subjects_and_joins_canonical_documents(t
                 metadata_json={"title": doc_id, "subject_id": subject, "access_status": state},
             ))
 
+        for doc_id, manual in (("wrong-chapter-match", False), ("manual-subject", True)):
+            db.execute(documents.insert().values(
+                id=doc_id, connection_id="moodle", external_id=doc_id, active_version_id=f"{doc_id}:version",
+                metadata_json={
+                    "title": "An unrelated chapter title", "course_id": "1", "subject_id": "academic:old",
+                    "match": {"subject_id": "academic:old", "confirmed": True},
+                    "user_override": {"subject_id": "academic:old"} if manual else {},
+                },
+            ))
+
     subjects, docs, aliases = _read_p1_subjects_and_docs(engine, "2026-2027")
     assert list(subjects) == ["academic:new"]
     assert aliases["CODE"] == aliases["moodle:course:1"] == "academic:new"
-    assert {doc.id for doc in docs["academic:new"]} == {"current-first", "current-legacy"}
+    assert {doc.id for doc in docs["academic:new"]} == {"current-first", "current-legacy", "wrong-chapter-match"}
 
     with engine.begin() as db:
         db.execute(consents.insert().values(

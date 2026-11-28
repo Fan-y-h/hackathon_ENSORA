@@ -1135,6 +1135,10 @@ class CodexConnectorBridge:
         self.last_page_errors: tuple[str, ...] = ()
         self.last_checkpoint_blocked: bool = False
 
+    def set_calendar_availability_only(self, enabled: bool) -> None:
+        """Apply the current local display preference to subsequent calendar reads."""
+        self._calendar_availability_only = enabled
+
     def list_changes(self, scope: SyncScope, cursor: str | None) -> CodexChangePage:
         """Translate Codex's ``SyncScope`` into connector scope and convert returned records.
 
@@ -1196,8 +1200,9 @@ class CodexConnectorBridge:
                     scope_dict["cohorts"] = [cohort.upper()]
             elif year:
                 scope_dict["academic_year"] = year
-            if self._connector.source_kind == InternalSourceKind.MOODLE:
+            if self._connector.source_kind in (InternalSourceKind.MOODLE, InternalSourceKind.PAMPLEMOUSSE):
                 scope_dict["eligible_subjects"] = curriculum
+            if self._connector.source_kind == InternalSourceKind.MOODLE:
                 scope_dict["selected_subject_id"] = scope.subject_id if not scope_dict.get("course_ids") else None
         if getattr(scope, "window_start", None) is not None:
             ws = scope.window_start
@@ -2196,6 +2201,16 @@ class CodexEntityMatcherBridge:
             source_url=document.provenance.source_url,
         )
         res = self._resolver.resolve_record(internal_rec)
+        if (
+            res.matched_by != "manual_override"
+            and resolved_source in {InternalSourceKind.MOODLE, InternalSourceKind.ENSORA_DRIVE}
+            and (document.subject_id or "").startswith("pamplemousse:subject:")
+        ):
+            # The connector already matched the enrolled course; a chapter title cannot rebind it.
+            return EntityMatch(
+                subject_id=document.subject_id, chapter_id=document.chapter_id,
+                teaching_unit_id=document.teaching_unit_id, confidence=1, confirmed=True,
+            )
         return EntityMatch(
             teaching_unit_id=res.teaching_unit or document.teaching_unit_id,
             subject_id=res.canonical_subject_id or document.subject_id,

@@ -523,3 +523,30 @@ units:
 """
     with pytest.raises(ValueError):
         importer.import_yaml_text(bad_yaml)
+
+
+def test_pamplemousse_assessment_markers_and_exact_curriculum_guard():
+    from backend.app.modules.ingestion.connectors.pamplemousse import (
+        classify_timetable_event, resolve_timetable_subject_code,
+    )
+
+    kind, confirmation, _ = classify_timetable_event("Sout.ID PPDP", group="G1")
+    assert kind.value == "presentation" and confirmation
+    kind, confirmation, _ = classify_timetable_event("Présentation des débouchés du logiciel SAS", color_hint="red")
+    assert kind.value == "class" and not confirmation
+    kind, confirmation, _ = classify_timetable_event("Ex. Cloud computing")
+    assert kind.value == "exam" and confirmation
+    assert classify_timetable_event("Cloud computing", description="Type de cours : Ex.")[0].value == "exam"
+    assert classify_timetable_event("Cours Cloud computing", description="Préparation à l'examen")[0].value == "class"
+
+    curriculum = [
+        ("deep", "Apprentissage profond", "DL01"),
+        ("stat", "Apprentissage statistique", "ST01"),
+        ("large", "Apprentissage statistique à grande échelle", "ST02"),
+        ("supervised", "Apprentissage supervisé", "SUP1"),
+    ]
+    assert resolve_timetable_subject_code("Deep Learning 3A groupe commun", None, curriculum) == "DL01"
+    assert resolve_timetable_subject_code("CM Apprentissage statistique à grande échelle 3A ID", None, curriculum) == "ST02"
+    assert resolve_timetable_subject_code("Supervised Learning", None, curriculum) == "SUP1"
+    assert resolve_timetable_subject_code("Apprentissage statistique", "DL01", curriculum) is None
+    assert resolve_timetable_subject_code("Deep Learning / Apprentissage supervisé", None, curriculum) is None

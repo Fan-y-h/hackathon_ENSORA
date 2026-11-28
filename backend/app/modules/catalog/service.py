@@ -88,7 +88,15 @@ def _read_p1_subjects_and_docs(
         ):
             data = meta or {}
             match = data.get("match") or {}
-            raw_subject = match.get("subject_id") or data.get("subject_id")
+            override = data.get("user_override") or {}
+            course_id = data.get("course_id")
+            course_subject = aliases.get(f"moodle:course:{course_id}") if source == "moodle" and course_id else None
+            raw_subject = (
+                override.get("subject_id")
+                or course_subject
+                or (match.get("subject_id") if match.get("confirmed") else None)
+                or data.get("subject_id")
+            )
             if not raw_subject:
                 continue
             raw_subject = str(raw_subject).strip()

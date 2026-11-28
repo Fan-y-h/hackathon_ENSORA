@@ -145,10 +145,23 @@ def _canonical_subject(
     return aliases.get((year, key.upper()), aliases.get((None, key.upper()), key))
 
 
-def _document_subject(meta: dict[str, Any]) -> str | None:
+def _document_subject(
+    meta: dict[str, Any], source: str, aliases: Mapping[tuple[str | None, str], str], year: str | None,
+) -> str | None:
     override = meta.get("user_override") or {}
     match = meta.get("match") or {}
-    return override.get("subject_id") or (match.get("subject_id") if match.get("confirmed") else None) or meta.get("subject_id")
+    course_id = meta.get("course_id")
+    course_subject = None
+    if source == "moodle" and course_id:
+        key = f"moodle:course:{course_id}".upper()
+        course_subject = aliases.get((year, key), aliases.get((None, key)))
+    raw_subject = (
+        override.get("subject_id")
+        or course_subject
+        or (match.get("subject_id") if match.get("confirmed") else None)
+        or meta.get("subject_id")
+    )
+    return _canonical_subject(raw_subject, aliases, year)
 
 
 def _document_chapter(meta: dict[str, Any]) -> str | None:
@@ -233,7 +246,7 @@ def _read_p1_authorized_state(
             override = meta.get("user_override") or {}
             clf = meta.get("classification") or {}
             year = prov.get("academic_year")
-            subject_id = _canonical_subject(_document_subject(meta), aliases, year)
+            subject_id = _document_subject(meta, source, aliases, year)
             chapter_id = _document_chapter(meta)
             resource_type = override.get("resource_type") or clf.get("resource_type") or meta.get("resource_kind")
             authorized[str(row["document_id"])] = {
@@ -1421,7 +1434,7 @@ class LocalRagIndexStore:
             ver_id = str(row["version_id"]) if row["version_id"] else None
             ext_rev = json.dumps([row["parser_version"], row["parse_status"]]) if ver_id else None
             idx_row = indexed_map.get(doc_id)
-            subject_id = _canonical_subject(_document_subject(meta), aliases, prov.get("academic_year"))
+            subject_id = _document_subject(meta, source, aliases, prov.get("academic_year"))
             chapter_id = _document_chapter(meta)
 
             if not read_granted or access_status != "active":
