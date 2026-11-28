@@ -96,3 +96,18 @@ class ErrorEntry(TimestampMixin, Base):
     last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     dedupe_key: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class Annotation(TimestampMixin, Base):
+    __tablename__ = "annotations"
+    __table_args__ = (Index("ix_annotations_user_doc", "user_id", "document_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    note_id: Mapped[str | None] = mapped_column(ForeignKey("notes.id", ondelete="SET NULL"), nullable=True)
+    document_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    document_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chunk_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    locator: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)

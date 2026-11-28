@@ -203,6 +203,178 @@
         "title": "AnalyticsOut",
         "type": "object"
       },
+      "AnnotationCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 5000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "document_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Document Id",
+            "type": "string"
+          },
+          "document_version_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Version Id"
+          },
+          "excerpt": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "locator": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locator"
+          },
+          "note_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Id"
+          }
+        },
+        "required": [
+          "document_id",
+          "excerpt"
+        ],
+        "title": "AnnotationCreate",
+        "type": "object"
+      },
+      "AnnotationOut": {
+        "properties": {
+          "chunk_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "document_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Version Id"
+          },
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "locator": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locator"
+          },
+          "note_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Id"
+          }
+        },
+        "required": [
+          "id",
+          "document_id",
+          "document_version_id",
+          "chunk_id",
+          "locator",
+          "excerpt",
+          "comment",
+          "note_id",
+          "created_at"
+        ],
+        "title": "AnnotationOut",
+        "type": "object"
+      },
       "AssessmentPatch": {
         "additionalProperties": false,
         "properties": {
@@ -3341,6 +3513,87 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HeatmapDayOut": {
+        "properties": {
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "evidence": {
+            "title": "Evidence",
+            "type": "integer"
+          },
+          "focus_min": {
+            "title": "Focus Min",
+            "type": "integer"
+          },
+          "reviews": {
+            "title": "Reviews",
+            "type": "integer"
+          },
+          "study_min": {
+            "title": "Study Min",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date",
+          "study_min",
+          "focus_min",
+          "reviews",
+          "evidence"
+        ],
+        "title": "HeatmapDayOut",
+        "type": "object"
+      },
+      "HeatmapOut": {
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/HeatmapDayOut"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "regularity": {
+            "$ref": "#/components/schemas/HeatmapRegularityOut"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "timezone",
+          "days",
+          "regularity"
+        ],
+        "title": "HeatmapOut",
+        "type": "object"
+      },
+      "HeatmapRegularityOut": {
+        "properties": {
+          "active_days": {
+            "title": "Active Days",
+            "type": "integer"
+          },
+          "days_in_range": {
+            "title": "Days In Range",
+            "type": "integer"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "active_days",
+          "days_in_range",
+          "value"
+        ],
+        "title": "HeatmapRegularityOut",
+        "type": "object"
+      },
       "ImportResult": {
         "properties": {
           "agenda_revision": {
@@ -3560,6 +3813,96 @@
           }
         },
         "title": "LogErrorsRequest",
+        "type": "object"
+      },
+      "MasteryCellOut": {
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "next_due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Due At"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "confidence"
+        ],
+        "title": "MasteryCellOut",
+        "type": "object"
+      },
+      "MasteryConceptRowOut": {
+        "properties": {
+          "concept_id": {
+            "title": "Concept Id",
+            "type": "string"
+          },
+          "dimensions": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MasteryCellOut"
+            },
+            "title": "Dimensions",
+            "type": "object"
+          }
+        },
+        "required": [
+          "concept_id",
+          "dimensions"
+        ],
+        "title": "MasteryConceptRowOut",
+        "type": "object"
+      },
+      "MasteryMapOut": {
+        "properties": {
+          "concepts": {
+            "items": {
+              "$ref": "#/components/schemas/MasteryConceptRowOut"
+            },
+            "title": "Concepts",
+            "type": "array"
+          },
+          "dimensions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dimensions",
+            "type": "array"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dimensions",
+          "concepts",
+          "note"
+        ],
+        "title": "MasteryMapOut",
         "type": "object"
       },
       "MasteryOut": {
@@ -6662,6 +7005,150 @@
         "title": "QuizOut",
         "type": "object"
       },
+      "ReadinessAssessmentOut": {
+        "properties": {
+          "assessment_id": {
+            "title": "Assessment Id",
+            "type": "string"
+          },
+          "days_left": {
+            "title": "Days Left",
+            "type": "number"
+          },
+          "deadline_at": {
+            "title": "Deadline At",
+            "type": "string"
+          },
+          "historical_exam_weighted": {
+            "title": "Historical Exam Weighted",
+            "type": "boolean"
+          },
+          "planned_min_remaining": {
+            "title": "Planned Min Remaining",
+            "type": "integer"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/ReadinessScoreOut"
+          },
+          "scope_status": {
+            "title": "Scope Status",
+            "type": "string"
+          },
+          "studied_min": {
+            "title": "Studied Min",
+            "type": "integer"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "weakest_concepts": {
+            "items": {
+              "$ref": "#/components/schemas/WeakConceptOut"
+            },
+            "title": "Weakest Concepts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "assessment_id",
+          "deadline_at",
+          "days_left",
+          "scope_status",
+          "readiness",
+          "planned_min_remaining",
+          "studied_min",
+          "weakest_concepts",
+          "historical_exam_weighted"
+        ],
+        "title": "ReadinessAssessmentOut",
+        "type": "object"
+      },
+      "ReadinessOut": {
+        "properties": {
+          "assessments": {
+            "items": {
+              "$ref": "#/components/schemas/ReadinessAssessmentOut"
+            },
+            "title": "Assessments",
+            "type": "array"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "assessments",
+          "notes"
+        ],
+        "title": "ReadinessOut",
+        "type": "object"
+      },
+      "ReadinessScoreOut": {
+        "properties": {
+          "concepts": {
+            "default": 0,
+            "title": "Concepts",
+            "type": "integer"
+          },
+          "coverage": {
+            "default": 0.0,
+            "title": "Coverage",
+            "type": "number"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate"
+          },
+          "high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High"
+          },
+          "known": {
+            "default": 0,
+            "title": "Known",
+            "type": "integer"
+          },
+          "low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low"
+          }
+        },
+        "title": "ReadinessScoreOut",
+        "type": "object"
+      },
       "RecordCreate": {
         "additionalProperties": false,
         "properties": {
@@ -8391,6 +8878,290 @@
         "title": "StudyNeedOut",
         "type": "object"
       },
+      "SubjectArtifactOut": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "stale": {
+            "default": false,
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "title"
+        ],
+        "title": "SubjectArtifactOut",
+        "type": "object"
+      },
+      "SubjectAssessmentOut": {
+        "properties": {
+          "deadline_at": {
+            "format": "date-time",
+            "title": "Deadline At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "scope_status": {
+            "title": "Scope Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "deadline_at",
+          "scope_status"
+        ],
+        "title": "SubjectAssessmentOut",
+        "type": "object"
+      },
+      "SubjectConceptOut": {
+        "properties": {
+          "concept_id": {
+            "title": "Concept Id",
+            "type": "string"
+          },
+          "next_due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Due At"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "concept_id",
+          "status"
+        ],
+        "title": "SubjectConceptOut",
+        "type": "object"
+      },
+      "SubjectDeckOut": {
+        "properties": {
+          "due_count": {
+            "title": "Due Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "due_count"
+        ],
+        "title": "SubjectDeckOut",
+        "type": "object"
+      },
+      "SubjectDetailOut": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectArtifactOut"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "assessments": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectAssessmentOut"
+            },
+            "title": "Assessments",
+            "type": "array"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "concepts": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectConceptOut"
+            },
+            "title": "Concepts",
+            "type": "array"
+          },
+          "decks": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectDeckOut"
+            },
+            "title": "Decks",
+            "type": "array"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectDocumentOut"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectNoteOut"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "quizzes": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectQuizOut"
+            },
+            "title": "Quizzes",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "documents",
+          "assessments",
+          "concepts",
+          "quizzes",
+          "decks",
+          "notes",
+          "artifacts"
+        ],
+        "title": "SubjectDetailOut",
+        "type": "object"
+      },
+      "SubjectDocumentOut": {
+        "properties": {
+          "active_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Version Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "resource_type": {
+            "default": "other",
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "source": {
+            "default": "local",
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "SubjectDocumentOut",
+        "type": "object"
+      },
+      "SubjectListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectSummaryOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SubjectListOut",
+        "type": "object"
+      },
+      "SubjectNoteOut": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "revision"
+        ],
+        "title": "SubjectNoteOut",
+        "type": "object"
+      },
       "SubjectOut": {
         "properties": {
           "assessments": {
@@ -8463,6 +9234,96 @@
           "assessments"
         ],
         "title": "SubjectOut",
+        "type": "object"
+      },
+      "SubjectQuizOut": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "question_count": {
+            "title": "Question Count",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "question_count"
+        ],
+        "title": "SubjectQuizOut",
+        "type": "object"
+      },
+      "SubjectSummaryOut": {
+        "properties": {
+          "assessment_count": {
+            "default": 0,
+            "title": "Assessment Count",
+            "type": "integer"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "document_count": {
+            "default": 0,
+            "title": "Document Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mastery_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mastery Mean"
+          },
+          "next_deadline_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Deadline At"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "source"
+        ],
+        "title": "SubjectSummaryOut",
         "type": "object"
       },
       "SubtasksCreate": {
@@ -9285,6 +10146,30 @@
         "title": "ValidationOut",
         "type": "object"
       },
+      "WeakConceptOut": {
+        "properties": {
+          "concept_id": {
+            "title": "Concept Id",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          }
+        },
+        "required": [
+          "concept_id"
+        ],
+        "title": "WeakConceptOut",
+        "type": "object"
+      },
       "app__modules__grades__source_results__AssessmentOut": {
         "properties": {
           "coefficient": {
@@ -9762,7 +10647,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HeatmapOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -9809,7 +10696,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MasteryMapOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -9838,7 +10727,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -9847,6 +10738,114 @@
         "summary": "Readiness",
         "tags": [
           "analytics"
+        ]
+      }
+    },
+    "/api/v1/annotations": {
+      "get": {
+        "operationId": "list_annotations_api_v1_annotations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "document_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Document Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "note_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Note Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AnnotationOut"
+                  },
+                  "title": "Response List Annotations Api V1 Annotations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Annotations",
+        "tags": [
+          "notes"
+        ]
+      },
+      "post": {
+        "operationId": "create_annotation_api_v1_annotations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnnotationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnnotationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Annotation",
+        "tags": [
+          "notes"
         ]
       }
     },
@@ -14233,6 +15232,69 @@
         "summary": "Study Needs",
         "tags": [
           "learning"
+        ]
+      }
+    },
+    "/api/v1/subjects": {
+      "get": {
+        "operationId": "list_subjects_api_v1_subjects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Subjects",
+        "tags": [
+          "catalog"
+        ]
+      }
+    },
+    "/api/v1/subjects/{subject_id}": {
+      "get": {
+        "operationId": "get_subject_api_v1_subjects__subject_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subject_id",
+            "required": true,
+            "schema": {
+              "title": "Subject Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Subject",
+        "tags": [
+          "catalog"
         ]
       }
     },

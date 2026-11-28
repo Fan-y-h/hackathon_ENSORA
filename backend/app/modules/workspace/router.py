@@ -9,8 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.core.common import Clock, get_clock
 from app.core.db import get_db
+from app.core.exam_guard import require_not_exam_mode
 from app.core.identity import get_current_user_id
 from app.modules.workspace.schemas import (
+    AnnotationCreate,
+    AnnotationOut,
     ErrorCreate,
     ErrorOut,
     ErrorPatch,
@@ -63,46 +66,56 @@ def finish_focus(focus_id: str, body: FocusFinish, svc: Svc, user_id: User):
     return svc.finish_focus(user_id, focus_id, body)
 
 
-@router.get("/notebooks", response_model=list[NotebookOut], tags=["notes"])
+@router.get("/notebooks", response_model=list[NotebookOut], tags=["notes"], dependencies=[Depends(require_not_exam_mode)])
 def list_notebooks(svc: Svc, user_id: User):
     return svc.list_notebooks(user_id)
 
 
-@router.post("/notebooks", response_model=NotebookOut, status_code=201, tags=["notes"])
+@router.post("/notebooks", response_model=NotebookOut, status_code=201, tags=["notes"], dependencies=[Depends(require_not_exam_mode)])
 def create_notebook(body: NotebookCreate, svc: Svc, user_id: User):
     return svc.create_notebook(user_id, body)
 
 
-@router.get("/notes", response_model=list[NoteOut], tags=["notes"])
+@router.get("/notes", response_model=list[NoteOut], tags=["notes"], dependencies=[Depends(require_not_exam_mode)])
 def list_notes(svc: Svc, user_id: User, notebook_id: str | None = None, concept_id: str | None = None,
                q: str | None = None):
     return svc.list_notes(user_id, notebook_id, concept_id, q)
 
 
-@router.post("/notes", response_model=NoteOut, status_code=201, tags=["notes"])
+@router.post("/notes", response_model=NoteOut, status_code=201, tags=["notes"], dependencies=[Depends(require_not_exam_mode)])
 def create_note(body: NoteCreate, svc: Svc, user_id: User):
     return svc.create_note(user_id, body)
 
 
-@router.get("/notes/{note_id}", response_model=NoteOut, tags=["notes"])
+@router.get("/notes/{note_id}", response_model=NoteOut, tags=["notes"], dependencies=[Depends(require_not_exam_mode)])
 def get_note(note_id: str, svc: Svc, user_id: User):
     return svc.get_note(user_id, note_id)
 
 
-@router.patch("/notes/{note_id}", response_model=NoteOut, tags=["notes"])
+@router.patch("/notes/{note_id}", response_model=NoteOut, tags=["notes"], dependencies=[Depends(require_not_exam_mode)])
 def patch_note(note_id: str, body: NotePatch, svc: Svc, user_id: User):
     return svc.patch_note(user_id, note_id, body)
 
 
-@router.delete("/notes/{note_id}", status_code=204, tags=["notes"])
+@router.delete("/notes/{note_id}", status_code=204, tags=["notes"], dependencies=[Depends(require_not_exam_mode)])
 def delete_note(note_id: str, svc: Svc, user_id: User):
     svc.delete_note(user_id, note_id)
     return Response(status_code=204)
 
 
-@router.get("/notes/{note_id}/versions", response_model=list[NoteVersionOut], tags=["notes"])
+@router.get("/notes/{note_id}/versions", response_model=list[NoteVersionOut], tags=["notes"], dependencies=[Depends(require_not_exam_mode)])
 def note_versions(note_id: str, svc: Svc, user_id: User):
     return svc.note_versions(user_id, note_id)
+
+
+@router.get("/annotations", response_model=list[AnnotationOut], tags=["notes"], dependencies=[Depends(require_not_exam_mode)])
+def list_annotations(svc: Svc, user_id: User, document_id: str | None = None, note_id: str | None = None):
+    return svc.list_annotations(user_id, document_id, note_id)
+
+
+@router.post("/annotations", response_model=AnnotationOut, status_code=201, tags=["notes"], dependencies=[Depends(require_not_exam_mode)])
+def create_annotation(body: AnnotationCreate, svc: Svc, user_id: User):
+    return svc.create_annotation(user_id, body)
 
 
 @router.get("/errors", response_model=list[ErrorOut], tags=["errors"])

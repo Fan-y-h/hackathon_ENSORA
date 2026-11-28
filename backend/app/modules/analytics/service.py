@@ -50,6 +50,76 @@ class AnalyticsOut(BaseModel):
     notes: list[str]
 
 
+class ReadinessScoreOut(BaseModel):
+    estimate: float | None = None
+    low: float | None = None
+    high: float | None = None
+    coverage: float = 0.0
+    concepts: int = 0
+    known: int = 0
+
+
+class WeakConceptOut(BaseModel):
+    concept_id: str
+    score: float | None = None
+
+
+class ReadinessAssessmentOut(BaseModel):
+    assessment_id: str
+    title: str | None = None
+    deadline_at: str
+    days_left: float
+    scope_status: str
+    readiness: ReadinessScoreOut
+    planned_min_remaining: int
+    studied_min: int
+    weakest_concepts: list[WeakConceptOut]
+    historical_exam_weighted: bool
+
+
+class ReadinessOut(BaseModel):
+    assessments: list[ReadinessAssessmentOut]
+    notes: list[str]
+
+
+class HeatmapDayOut(BaseModel):
+    date: str
+    study_min: int
+    focus_min: int
+    reviews: int
+    evidence: int
+
+
+class HeatmapRegularityOut(BaseModel):
+    active_days: int
+    days_in_range: int
+    value: float
+
+
+class HeatmapOut(BaseModel):
+    timezone: str
+    days: list[HeatmapDayOut]
+    regularity: HeatmapRegularityOut
+
+
+class MasteryCellOut(BaseModel):
+    score: float | None = None
+    status: str
+    confidence: float
+    next_due_at: str | None = None
+
+
+class MasteryConceptRowOut(BaseModel):
+    concept_id: str
+    dimensions: dict[str, MasteryCellOut]
+
+
+class MasteryMapOut(BaseModel):
+    dimensions: list[str]
+    concepts: list[MasteryConceptRowOut]
+    note: str
+
+
 def _ratio(num: int, den: int) -> Ratio:
     return Ratio(value=None if den == 0 else round(num / den, 4), numerator=num, denominator=den)
 

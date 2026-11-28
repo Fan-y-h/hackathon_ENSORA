@@ -8,6 +8,9 @@ from app.core.identity import get_current_user_id
 from app.modules.analytics.service import (
     AnalyticsOut,
     AnalyticsService,
+    HeatmapOut,
+    MasteryMapOut,
+    ReadinessOut,
     heatmap_report,
     mastery_map,
     readiness_report,
@@ -28,19 +31,19 @@ def analytics(
     return AnalyticsService(db, clock).build(user_id, start, end, subject_id)
 
 
-@router.get("/analytics/readiness")
+@router.get("/analytics/readiness", response_model=ReadinessOut)
 def readiness(db: Session = Depends(get_db), clock: Clock = Depends(get_clock),
               user_id: str = Depends(get_current_user_id)):
     return readiness_report(db, clock, user_id)
 
 
-@router.get("/analytics/heatmap")
+@router.get("/analytics/heatmap", response_model=HeatmapOut)
 def heatmap(start: AwareDatetime, end: AwareDatetime, db: Session = Depends(get_db),
             clock: Clock = Depends(get_clock), user_id: str = Depends(get_current_user_id)):
     return heatmap_report(db, clock, user_id, start, end)
 
 
-@router.get("/analytics/mastery-map")
+@router.get("/analytics/mastery-map", response_model=MasteryMapOut)
 def mastery_map_endpoint(subject_id: str | None = None, db: Session = Depends(get_db),
                          clock: Clock = Depends(get_clock), user_id: str = Depends(get_current_user_id)):
     return mastery_map(db, clock, user_id, subject_id)

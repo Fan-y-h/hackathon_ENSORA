@@ -29,6 +29,7 @@ from app.core.db import Database
 from app.core.errors import install_error_handlers
 from app.modules.account.router import router as account_router
 from app.modules.analytics.router import router as analytics_router
+from app.modules.catalog.router import router as catalog_router
 from app.modules.grades.router import router as grades_router
 from app.modules.grades.source_results import router as source_results_router
 from app.modules.learning.router import router as learning_router
@@ -110,7 +111,7 @@ def create_app(
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.frontend_origin],
+        allow_origins=list(settings.cors_origins),
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "If-Match", "Idempotency-Key", "X-Request-ID"],
         allow_credentials=True,
@@ -136,6 +137,7 @@ def create_app(
         return {"status": "ok" if db_ok else "degraded", "database": db_ok, "sources": sources_ready}
 
     api.include_router(account_router)
+    api.include_router(catalog_router)
     api.include_router(planner_router)
     api.include_router(source_bridge_router)
     api.include_router(learning_router)

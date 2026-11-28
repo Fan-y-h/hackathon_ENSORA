@@ -18,6 +18,7 @@ from app.core.db import new_id
 from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.core.events import record_event
 from app.modules.workspace.models import (
+    Annotation,
     ErrorEntry,
     FocusSession,
     Note,
@@ -26,6 +27,8 @@ from app.modules.workspace.models import (
     WorkInterval,
 )
 from app.modules.workspace.schemas import (
+    AnnotationCreate,
+    AnnotationOut,
     ErrorCreate,
     ErrorOut,
     ErrorPatch,
@@ -317,6 +320,50 @@ class WorkspaceService:
             e.resolved_at = self.clock.now() if body.resolved else None
         e.revision += 1
         return self._error_out(e)
+
+    # ================================================================ annotations ====
+    @staticmethod
+    def _annotation_out(a: Annotation) -> AnnotationOut:
+        return AnnotationOut(
+            id=a.id,
+            document_id=a.document_id,
+            document_version_id=a.document_version_id,
+            chunk_id=a.chunk_id,
+            locator=a.locator,
+            excerpt=a.excerpt,
+            comment=a.comment,
+            note_id=a.note_id,
+            created_at=a.created_at,
+        )
+
+    def list_annotations(
+        self, user_id: str, document_id: str | None = None, note_id: str | None = None
+    ) -> list[AnnotationOut]:
+        q = select(Annotation).where(Annotation.user_id == user_id)
+        if document_id:
+            q = q.where(Annotation.document_id == document_id)
+        if note_id:
+            q = q.where(Annotation.note_id == note_id)
+        rows = self.db.scalars(q.order_by(Annotation.created_at.desc(), Annotation.id))
+        return [self._annotation_out(a) for a in rows]
+
+    def create_annotation(self, user_id: str, body: AnnotationCreate) -> AnnotationOut:
+        if body.note_id is not None:
+            self._owned(Note, body.note_id, user_id)
+        a = Annotation(
+            id=new_id(),
+            user_id=user_id,
+            note_id=body.note_id,
+            document_id=body.document_id,
+            document_version_id=body.document_version_id,
+            chunk_id=body.chunk_id,
+            locator=body.locator,
+            excerpt=body.excerpt,
+            comment=body.comment,
+        )
+        self.db.add(a)
+        self.db.flush()
+        return self._annotation_out(a)
 
 
 # ---- interfaces used by other modules ---------------------------------------------------------

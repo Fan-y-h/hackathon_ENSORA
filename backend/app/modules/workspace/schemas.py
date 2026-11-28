@@ -169,3 +169,26 @@ class ErrorOut(BaseModel):
     last_seen_at: UtcDatetime
     resolved_at: UtcDatetime | None
     revision: int
+
+
+# --- annotations ----------------------------------------------------------------------
+class AnnotationCreate(_Strict):
+    document_id: str = Field(min_length=1, max_length=64)
+    document_version_id: str | None = Field(default=None, max_length=64)
+    chunk_id: str | None = Field(default=None, max_length=64)
+    locator: dict | None = None
+    excerpt: str = Field(min_length=1, max_length=5000)
+    comment: str | None = Field(default=None, max_length=5000)
+    note_id: str | None = None
+
+
+class AnnotationOut(BaseModel):
+    id: str
+    document_id: str
+    document_version_id: str | None
+    chunk_id: str | None
+    locator: dict | None
+    excerpt: str
+    comment: str | None
+    note_id: str | None
+    created_at: UtcDatetime
