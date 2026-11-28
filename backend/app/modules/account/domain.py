@@ -115,3 +115,10 @@ def check_preferences(
 
 def is_onboarding_complete(cohort: str | None, work_windows: Sequence[Any]) -> bool:
     return cohort is not None and len(work_windows) > 0
+
+
+# --------------------------------------------------------------- student status ----
+STUDENT_STATUS_LABELS: dict[str, str] = {
+    "civil_servant": "Élève fonctionnaire",
+    "engineer": "Élève ingénieur·e",
+}

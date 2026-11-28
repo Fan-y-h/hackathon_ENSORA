@@ -19,6 +19,7 @@ class Profile(TimestampMixin, Base):
     )
     cohort: Mapped[str | None] = mapped_column(String(4), nullable=True)
     track: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    student_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     academic_year: Mapped[str | None] = mapped_column(String(9), nullable=True)
     locale: Mapped[str] = mapped_column(String(5), default="fr", nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Paris", nullable=False)

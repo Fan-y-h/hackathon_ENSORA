@@ -17,6 +17,7 @@ from app.modules.account.domain import (
 )
 
 Cohort = Literal["1A", "2A", "3A"]
+StudentStatus = Literal["civil_servant", "engineer"]
 Locale = Literal["fr", "en"]
 StudyFormat = Literal[
     "revision_sheet",
@@ -147,6 +148,7 @@ class ProfileOut(BaseModel):
     display_name: str
     cohort: Cohort | None
     track: str | None
+    student_status: StudentStatus | None
     academic_year: str | None
     locale: Locale
     timezone: str
@@ -165,6 +167,7 @@ class ProfilePatch(_Strict):
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     cohort: Cohort | None = None
     track: str | None = Field(default=None, max_length=120)
+    student_status: StudentStatus | None = None
     academic_year: str | None = Field(default=None, examples=["2026-2027"])
     locale: Locale | None = None
     timezone: str | None = None
@@ -189,3 +192,8 @@ class ProfilePatch(_Strict):
         if v is not None and not is_valid_timezone(v):
             raise ValueError("unknown IANA timezone")
         return v
+
+
+class StudentStatusOptionOut(BaseModel):
+    status: StudentStatus
+    label: str

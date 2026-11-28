@@ -20,7 +20,7 @@ from app.modules.account.models import Preferences, Profile
 from app.modules.account.schemas import ProfileOut, ProfilePatch
 
 # Fields of the profile row that a PATCH may set directly.
-_PROFILE_FIELDS = ("cohort", "track", "academic_year", "locale", "timezone", "self_assessment")
+_PROFILE_FIELDS = ("cohort", "track", "student_status", "academic_year", "locale", "timezone", "self_assessment")
 _NON_NULLABLE = {"locale", "timezone", "display_name"}
 
 
@@ -187,6 +187,7 @@ class AccountService:
                 "display_name": user.display_name,
                 "cohort": profile.cohort,
                 "track": profile.track,
+                "student_status": profile.student_status,
                 "academic_year": profile.academic_year,
                 "locale": profile.locale,
                 "timezone": profile.timezone,

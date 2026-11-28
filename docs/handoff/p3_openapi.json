@@ -6004,6 +6004,21 @@
             "title": "Self Assessment",
             "type": "object"
           },
+          "student_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "civil_servant",
+                  "engineer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Status"
+          },
           "timezone": {
             "title": "Timezone",
             "type": "string"
@@ -6035,6 +6050,7 @@
           "display_name",
           "cohort",
           "track",
+          "student_status",
           "academic_year",
           "locale",
           "timezone",
@@ -6163,6 +6179,21 @@
             ],
             "description": "subject_id or concept_id → declared confidence 1–5",
             "title": "Self Assessment"
+          },
+          "student_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "civil_servant",
+                  "engineer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Status"
           },
           "timezone": {
             "anyOf": [
@@ -8233,6 +8264,28 @@
           "values"
         ],
         "title": "SimulateRequest",
+        "type": "object"
+      },
+      "StudentStatusOptionOut": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "civil_servant",
+              "engineer"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "label"
+        ],
+        "title": "StudentStatusOptionOut",
         "type": "object"
       },
       "StudyNeedOut": {
@@ -13291,6 +13344,31 @@
           }
         },
         "summary": "Patch Profile",
+        "tags": [
+          "profile"
+        ]
+      }
+    },
+    "/api/v1/profile/student-statuses": {
+      "get": {
+        "operationId": "list_student_statuses_api_v1_profile_student_statuses_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StudentStatusOptionOut"
+                  },
+                  "title": "Response List Student Statuses Api V1 Profile Student Statuses Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Student Statuses",
         "tags": [
           "profile"
         ]

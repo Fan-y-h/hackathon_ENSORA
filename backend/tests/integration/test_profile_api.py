@@ -124,3 +124,18 @@ def test_root_redirects_to_api_docs(client):
     r = client.get("/", follow_redirects=False)
     assert r.status_code == 307 and r.headers["location"] == "/docs"
     assert client.get("/docs").status_code == 200
+
+
+
+def test_student_status_options_and_patch(client):
+    options = client.get("/api/v1/profile/student-statuses").json()
+    assert options == [
+        {"status": "civil_servant", "label": "Élève fonctionnaire"},
+        {"status": "engineer", "label": "Élève ingénieur·e"},
+    ]
+    assert client.get("/api/v1/profile").json()["student_status"] is None
+    r = client.patch("/api/v1/profile", json={"student_status": "civil_servant"})
+    assert r.status_code == 200, r.text
+    assert r.json()["student_status"] == "civil_servant"
+    assert client.patch("/api/v1/profile", json={"student_status": "student"}).status_code == 422
+    assert client.patch("/api/v1/profile", json={"student_status": None}).json()["student_status"] is None

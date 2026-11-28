@@ -8,6 +8,7 @@
 | GET /health | service readiness, DB/index availability; no credentials |
 | POST /auth/login, POST /auth/logout | local credentials/session; logout invalidates; explicit demo mode only |
 | GET/PATCH /profile | Profile, Preferences; validate cohort and limits |
+| GET /profile/student-statuses | Student categories (`civil_servant`, `engineer`) with labels; set with PATCH /profile `student_status` |
 | GET/PATCH /settings | provider policy, sync preferences, notification channels; secrets write-only |
 | GET /connections; POST /connections | list/create source config; authorization handshake separately |
 | POST /connections/{id}/authorize; DELETE /connections/{id} | authorized OAuth flow or revoke locally |

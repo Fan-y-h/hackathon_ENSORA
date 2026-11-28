@@ -7,7 +7,8 @@ from app.core.db import get_db
 from app.core.errors import ValidationFailed
 from app.core.identity import get_current_user_id
 from app.modules.account.data_rights import CONFIRMATION, delete_user, export_user
-from app.modules.account.schemas import ProfileOut, ProfilePatch
+from app.modules.account.domain import STUDENT_STATUS_LABELS
+from app.modules.account.schemas import ProfileOut, ProfilePatch, StudentStatusOptionOut
 from app.modules.account.service import AccountService
 
 router = APIRouter(tags=["profile"])
@@ -25,6 +26,11 @@ def patch_profile(
     user_id: str = Depends(get_current_user_id),
 ):
     return AccountService(db).patch(user_id, body)
+
+
+@router.get("/profile/student-statuses", response_model=list[StudentStatusOptionOut])
+def list_student_statuses():
+    return [StudentStatusOptionOut(status=k, label=v) for k, v in STUDENT_STATUS_LABELS.items()]
 
 
 class DeleteAccount(BaseModel):
