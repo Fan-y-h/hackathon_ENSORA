@@ -28,7 +28,11 @@ def get_profile(request: Request, db: Session = Depends(get_db), user_id: str = 
 
 def initialize_profile(db: Session, user_id: str, runtime=None) -> ProfileOut:
     account = AccountService(db)
-    if runtime is not None and db.scalar(select(Profile.id).where(Profile.user_id == user_id)) is None:
+    existing = db.scalar(select(Profile).where(Profile.user_id == user_id))
+    fresh = existing is None or (
+        existing.revision == 1 and not any((existing.cohort, existing.track, existing.academic_year))
+    )
+    if runtime is not None and fresh:
         source = runtime.current_profile()
         fields = {}
         for key, value in (("display_name", source.display_name), ("cohort", (source.study_year or "").upper()),
