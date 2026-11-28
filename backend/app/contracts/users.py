@@ -16,6 +16,7 @@ class Profile(Contract):
 class Preferences(Contract):
     formats: list[Key] = Field(default_factory=list)
     daily_minutes: int = Field(default=120, ge=0, le=1440)
+    calendar_details: bool | None = None
     sync_schedule: SyncScheduleSettings = Field(default_factory=SyncScheduleSettings)
 
 

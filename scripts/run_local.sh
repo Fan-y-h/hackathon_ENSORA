@@ -33,7 +33,7 @@ fi
 export PYTHONPATH=backend:. VITE_API_BASE_URL= VITE_DEMO_MODE=false
 unset DATABASE_URL ENSORA_P1_TOKEN_FILE
 if [[ "$mode" == real ]]; then
-  real_store=${ENSORA_REAL_DIR:-/tmp/ensora-rescue-private/real}
+  real_store=${ENSORA_REAL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ensora-plus-real}
   if [[ ! -f "$real_store/sources/ensora.sqlite3" || ! -f "$real_store/runtime/ensora.db" ]]; then
     printf 'Set ENSORA_REAL_DIR to the prepared real-data copy. See README.md.\n' >&2
     exit 1

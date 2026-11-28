@@ -245,3 +245,48 @@ def test_numeric_moodle_scope_persists_course_before_its_assignment(client):
     assert report.errors == 0 and report.records == 2
     assert client.post("/api/v1/agenda/import-from-sources").is_success
     assert len(client.get("/api/v1/tasks").json()["items"]) == 1
+
+
+def test_connect_and_sync_uses_existing_read_session_and_returns_job(client, p1_settings):
+    from types import SimpleNamespace
+
+    from backend.app.contracts.authentication import AuthenticationResult, ConnectionStatus
+    from backend.app.contracts.sources import ChangePage, SourceKind
+
+    runtime = client.app.state.sources_app.state.runtime
+    source = SourceKind.GOOGLE_CALENDAR
+    verified = AuthenticationResult(status=ConnectionStatus.CONNECTED, service_access="verified")
+    runtime.auth.adapters = {source: SimpleNamespace(validate=lambda: verified)}
+    runtime.sync.connectors = {source: SimpleNamespace(
+        list_changes=lambda *_: ChangePage(items=[], complete=True),
+    )}
+    endpoint = f"/api/v1/sources/connections/{runtime.connection_ids[source]}/connect-and-sync"
+
+    assert client.post(endpoint).status_code == 401
+    result = client.post(endpoint, headers=_auth(p1_settings))
+    assert result.is_success
+    assert result.json()["status"] == "CONNECTED" and result.json()["job_id"]
+    assert runtime.consent.allowed(source, "read")
+    assert not runtime.consent.allowed(source, "automatic_sync")
+
+
+def test_calendar_details_are_opt_in_and_update_the_connector(client, p1_settings):
+    from types import SimpleNamespace
+
+    from backend.app.contracts.sources import SourceKind
+
+    endpoint = "/api/v1/sources/calendar/details"
+    headers = _auth(p1_settings)
+    runtime = client.app.state.sources_app.state.runtime
+    applied = []
+    source = SourceKind.GOOGLE_CALENDAR
+    runtime.sync.connectors = {source: SimpleNamespace(set_calendar_availability_only=applied.append)}
+
+    assert client.get(endpoint, headers=headers).json() == {"enabled": False}
+    assert client.put(endpoint, headers=headers, json={"enabled": True}).status_code == 403
+    runtime.consent.record(source, "read", True)
+    assert client.put(endpoint, headers=headers, json={"enabled": True}).json() == {"enabled": True}
+    assert client.get(endpoint, headers=headers).json() == {"enabled": True}
+    assert applied == [False]
+    assert client.put(endpoint, headers=headers, json={"enabled": False}).json() == {"enabled": False}
+    assert applied == [False, True]

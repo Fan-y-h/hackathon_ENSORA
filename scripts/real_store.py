@@ -58,9 +58,16 @@ def main() -> None:
         (target / "sources").mkdir(mode=0o700)
         backup(args.planner, target / "runtime" / "ensora.db")
         backup(args.source_store / "ensora.sqlite3", target / "sources" / "ensora.sqlite3")
-        files = args.source_store / "blobs"
-        if files.is_dir():
-            shutil.copytree(files, target / "sources" / "blobs")
+        rag_database = args.source_store / "rag_index.sqlite3"
+        if rag_database.is_file():
+            backup(rag_database, target / "sources" / rag_database.name)
+        workspace_rag = args.planner.with_name(f"{args.planner.stem}.rag.sqlite3")
+        if workspace_rag.is_file():
+            backup(workspace_rag, target / "runtime" / "ensora.rag.sqlite3")
+        for name in ("blobs", "documents"):
+            directory = args.source_store / name
+            if directory.is_dir():
+                shutil.copytree(directory, target / "sources" / name)
         return
 
     if args.remove_unlinked_fixture_events:

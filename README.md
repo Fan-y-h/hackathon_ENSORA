@@ -4,7 +4,7 @@ Ensora+ runs as a local, single-student workspace. Real mode uses the student's 
 
 ## Open or launch ENSORA+
 
-`bash scripts/run_local.sh real` checks the runtime mode through Vite before opening the real instance in Chrome. Use `bash scripts/run_local.sh demo` for the separate synthetic fallback. The real launcher uses the existing validation copy on this machine. Set `ENSORA_REAL_DIR` to reuse a different copy prepared below.
+`bash scripts/run_local.sh real` checks the runtime mode through Vite before opening the real instance in Chrome. Use `bash scripts/run_local.sh demo` for the separate synthetic fallback. The real launcher uses the private persistent store under `~/.local/share/ensora-plus-real` by default. Set `ENSORA_REAL_DIR` to reuse a different copy prepared below.
 
 ## Real mode
 
@@ -14,15 +14,15 @@ From the repository root, prepare a private copy of both existing stores. Stop a
 cd /home/ensai/ensora-final
 python3 scripts/real_store.py --planner data/runtime/ensora.db \
   --source-store "$HOME/.local/share/ensora-plus" \
-  --copy-to /tmp/ensora-real-store
+  --copy-to "$HOME/.local/share/ensora-plus-real"
 ```
 
 Use a new destination, or reuse an existing validation copy directly for subsequent launches. In the backend terminal:
 
 ```bash
 cd /home/ensai/ensora-final
-export DATA_DIR=/tmp/ensora-real-store/runtime
-export LOCAL_DATA_DIR=/tmp/ensora-real-store/sources
+export DATA_DIR="$HOME/.local/share/ensora-plus-real/runtime"
+export LOCAL_DATA_DIR="$HOME/.local/share/ensora-plus-real/sources"
 export ENSORA_PAUSE_BACKGROUND_SYNC=true ENSAI_AUTO_LOGIN=false
 unset DEMO_MODE ENSORA_DEMO_DIR DATABASE_URL
 PYTHONPATH=backend:. /home/ensai/hackathon_ENSORA/.venv/bin/python -m uvicorn \
@@ -34,7 +34,7 @@ In a second terminal, install the locked frontend dependencies if needed and sta
 ```bash
 cd /home/ensai/ensora-final
 npm --prefix frontend ci
-LOCAL_DATA_DIR=/tmp/ensora-real-store/sources VITE_API_PROXY_TARGET=http://127.0.0.1:18080 \
+LOCAL_DATA_DIR="$HOME/.local/share/ensora-plus-real/sources" VITE_API_PROXY_TARGET=http://127.0.0.1:18080 \
   npm --prefix frontend run dev -- --port 15180 --strictPort --bypass-lock
 ```
 

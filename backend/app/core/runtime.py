@@ -102,10 +102,33 @@ class Runtime:
         self.sync = SyncEngine(self.engine, self.pipeline, self.auth, selected.connectors,
                                self.settings.sync_concurrency, self.validate_local_import_path,
                                self.reconcile_academic_documents)
+        self._apply_calendar_details(self.calendar_details_enabled())
         self.sync.recover()
         self.stop = Event()
         self.scheduler = None
         return self
+
+    def calendar_details_enabled(self) -> bool:
+        with self.engine.connect() as db:
+            raw = db.scalar(select(users.c.preferences).where(users.c.id == LOCAL_USER))
+        details = Preferences.model_validate(raw or {}).calendar_details
+        return self.settings.google_calendar_include_personal_details if details is None else details
+
+    def _apply_calendar_details(self, enabled: bool) -> None:
+        connector = self.sync.connectors.get(SourceKind.GOOGLE_CALENDAR)
+        configure = getattr(connector, "set_calendar_availability_only", None)
+        if configure is not None:
+            configure(not enabled)
+
+    def update_calendar_details(self, enabled: bool) -> None:
+        with self.auth.locks[SourceKind.GOOGLE_CALENDAR]:
+            with self.engine.begin() as db:
+                raw = db.scalar(select(users.c.preferences).where(users.c.id == LOCAL_USER)) or {}
+                prefs = Preferences.model_validate(raw).model_copy(update={"calendar_details": enabled})
+                db.execute(users.update().where(users.c.id == LOCAL_USER).values(
+                    preferences=prefs.model_dump(mode="json")
+                ))
+            self._apply_calendar_details(enabled)
 
     def current_profile(self) -> Profile:
         with self.engine.connect() as db:

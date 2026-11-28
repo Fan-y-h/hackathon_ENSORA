@@ -23,6 +23,7 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func, insert, literal_column, select, tuple_, union_all, update
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from backend.app.contracts.authentication import AuthenticationResult, ConnectionStatus
 from backend.app.contracts.sources import Contract, Document, Key, ParsedContent, PersonalAvailability, Provenance, SourceKind, SourceRecord, SyncScope
 from backend.app.contracts.users import Preferences, Profile
 from backend.app.contracts.sync import SyncScheduleSettings
@@ -35,6 +36,18 @@ from backend.app.core.settings import ProtectedImportPath, Settings
 class ConsentInput(Contract):
     purpose: Literal["read", "automatic_sync"]
     granted: bool
+
+
+class CalendarDetailsInput(Contract):
+    enabled: bool
+
+
+class ConnectionSetupInput(Contract):
+    subject_id: Key | None = None
+
+
+class ConnectionSetupResult(AuthenticationResult):
+    job_id: str | None = None
 
 
 class SourceSelection(Contract):
@@ -193,7 +206,30 @@ def create_app(
         current = Preferences.model_validate(account(request, users.c.preferences) or {})
         if "sync_schedule" not in body.model_fields_set:
             body = body.model_copy(update={"sync_schedule": current.sync_schedule})
+        body = body.model_copy(update={"calendar_details": current.calendar_details})
         set_account(request, preferences=body.model_dump(mode="json"))
+        return body
+
+    @api.get("/calendar/details", response_model=CalendarDetailsInput)
+    def calendar_details(request: Request):
+        return CalendarDetailsInput(enabled=runtime(request).calendar_details_enabled())
+
+    @api.put("/calendar/details", response_model=CalendarDetailsInput)
+    def update_calendar_details(request: Request, body: CalendarDetailsInput):
+        ctx = runtime(request)
+        with ctx.auth.locks[SourceKind.GOOGLE_CALENDAR]:
+            if body.enabled and not ctx.consent.allowed(SourceKind.GOOGLE_CALENDAR, "read"):
+                raise HTTPException(403, "Calendar read consent is required")
+            with ctx.engine.connect() as db:
+                running = db.scalar(select(runs.c.id).where(
+                    runs.c.user_id == LOCAL_USER,
+                    runs.c.status.in_(("queued", "running")),
+                    func.coalesce(runs.c.scope["source"].as_string(), SourceKind.GOOGLE_CALENDAR.value)
+                        == SourceKind.GOOGLE_CALENDAR.value,
+                ).limit(1))
+            if running is not None:
+                raise HTTPException(409, "Wait for the calendar sync to finish")
+            ctx.update_calendar_details(body.enabled)
         return body
 
     @api.get("/sync/schedule")
@@ -249,13 +285,46 @@ def create_app(
         source = source_id(ctx, connection_id)
         with ctx.auth.locks[source]:
             if body.purpose == "automatic_sync" and body.granted:
-                from backend.app.contracts.authentication import ConnectionStatus
                 if ctx.auth.validate(source).status != ConnectionStatus.CONNECTED:
                     raise HTTPException(409, "Validate the source before enabling automatic sync")
             ctx.consent.record(source, body.purpose, body.granted)
             if body.purpose == "read" and not body.granted:
                 ctx.consent.record(source, "automatic_sync", False)
         return body
+
+    @api.post("/connections/{connection_id}/connect-and-sync", response_model=ConnectionSetupResult)
+    def connect_and_sync(request: Request, connection_id: str, body: ConnectionSetupInput | None = None):
+        """Save explicit read consent, use the official provider flow, then queue a read."""
+        ctx = runtime(request)
+        source = source_id(ctx, connection_id)
+        if source not in (SourceKind.PAMPLEMOUSSE, SourceKind.MOODLE, SourceKind.ENSORA_DRIVE,
+                          SourceKind.GOOGLE_CALENDAR):
+            raise HTTPException(422, "This source uses a separate import flow")
+        subject_id = body.subject_id if body else None
+        if subject_id and source not in (SourceKind.MOODLE, SourceKind.ENSORA_DRIVE):
+            raise HTTPException(422, "Choose a subject only for Moodle or Ensora Drive")
+        with ctx.auth.locks[source]:
+            was_granted = ctx.consent.allowed(source, "read")
+            if not was_granted:
+                ctx.consent.record(source, "read", True)
+            previous = ctx.auth.status(source)
+            # Reuse a valid stored connection without asking the student to sign in again.
+            result = ctx.auth.validate(source)
+            if result.status in (ConnectionStatus.NOT_CONFIGURED, ConnectionStatus.REAUTH_REQUIRED):
+                action = ctx.auth.reauthorize if was_granted and previous != ConnectionStatus.NOT_CONFIGURED else ctx.auth.authorize
+                result = action(source)
+            job_id = None
+            if result.status == ConnectionStatus.CONNECTED and source in ctx.sync.connectors:
+                with ctx.engine.connect() as db:
+                    job_id = db.scalar(select(runs.c.id).where(
+                        runs.c.user_id == LOCAL_USER,
+                        runs.c.status.in_(("queued", "running")),
+                        runs.c.scope["source"].as_string() == source.value,
+                        runs.c.scope["subject_id"].as_string() == subject_id,
+                    ).order_by(runs.c.started_at.desc()).limit(1))
+                if job_id is None:
+                    job_id = ctx.sync.submit(SyncScope(source=source, subject_id=subject_id))
+        return ConnectionSetupResult(**result.model_dump(), job_id=job_id)
 
     @api.post("/connections/{connection_id}/authorize")
     def authenticate(request: Request, connection_id: str):
