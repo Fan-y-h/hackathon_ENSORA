@@ -371,15 +371,25 @@ class GoogleCalendarConnector(SourceConnector):
         scope: dict[str, Any] | None = None,
         cursor: str | None = None,
     ) -> ChangePage:
-        """Synchronize Google Calendar events incrementally or by date range.
+        """Synchronize Google Calendar events incrementally or by explicit date window.
 
-        - Keeps `singleEvents=True` invariant across BOTH initial and incremental `syncToken`
-          requests per Google Calendar API v3 guidance (omitting only incompatible params
-          `timeMin`, `timeMax`, `orderBy` when `syncToken` is set).
-        - Uses compact `calpage:<16-hex>` handles so multi-page cursors never exceed
-          the 512-char shared `Key` bound even with two long opaque Google tokens.
-        - Tracks HTTP 410 Gone replacement runs via `self.last_resync_reset` so the bridge
-          can retire stale events absent from the complete replacement snapshot.
+        Preserves Google Calendar API v3's ``singleEvents=True`` invariant across both initial
+        and incremental ``syncToken`` runs (omitting incompatible ``timeMin``, ``timeMax``, and
+        ``orderBy`` parameters when ``syncToken`` is supplied). Multi-page cursors are encoded
+        as compact ``calpage:<16-hex>`` handles so opaque tokens remain bounded and out of logs.
+        When Google returns HTTP 410 Gone (expired ``syncToken``), performs a full replacement
+        run and sets ``self.last_resync_reset = True`` + ``self.last_snapshot_info`` so the
+        bridge attaches a ``CalendarSnapshot`` marker for stale-event retirement upon clean
+        completion.
+
+        Args:
+            scope: Optional scope dictionary supporting ``calendar_id``, ``time_min``/``time_max``,
+                ``availability_only``, ``include_descriptions``, ``max_results``, or offline ``ics_text``.
+            cursor: Optional opaque ``calpage:<16-hex>`` handle or Google ``syncToken``.
+
+        Returns:
+            ``ChangePage`` containing normalized calendar event records, continuation cursor or
+            terminal ``sync_token``, and warnings.
         """
         self.last_resync_reset = False
         self.last_snapshot_info: tuple[str, str | None, str | None] | None = None

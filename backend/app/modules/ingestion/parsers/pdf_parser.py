@@ -1,15 +1,20 @@
 """PDF document parser prioritizing page locators, headings, formulas, tables, and optional OCR.
 
 Extraction strategy chain (best available automatically selected):
-1. PyMuPDF (`fitz`) if installed
-2. `pypdf` if installed
-3. System `pdftotext` + `pdfinfo` (Poppler CLI) if installed
-4. Pure-Python PDF text-stream fallback (supports uncompressed & FlateDecode content streams)
-Optional OCR: invoked only for scanned/empty pages when `tesseract` CLI or `pytesseract` is installed.
+1. PyMuPDF (``fitz``) if explicitly installed in the user environment (note: AGPL-3.0, optional only).
+2. ``pypdfium2`` (Apache-2.0 / BSD-3-Clause, MIT-compatible) if installed.
+3. ``pypdf`` (BSD-3-Clause) if installed.
+4. System ``pdftotext`` (Poppler CLI) via in-memory ``stdin`` pipe (zero temp files, zero ``pdfinfo``
+   fork, automatic temporary-file fallback only if Poppler rejects stdin on a malformed xref table).
+5. Pure-Python PDF text-stream fallback (supports uncompressed and FlateDecode content streams).
+
+Optional OCR is never run systematically; missing text layers are explicitly flagged so
+scanned-heavy PDFs surface actionable warnings while mixed-media slide decks retain ``ready`` status.
 """
 
 from __future__ import annotations
 
+from functools import lru_cache
 import re
 import shutil
 import subprocess
@@ -27,6 +32,23 @@ _HEADING_RE = re.compile(
     re.IGNORECASE,
 )
 _FIGURE_RE = re.compile(r"^(?:figure|fig\.?)\s*[0-9]+(?:\.[0-9]+)?\s*[:\-–.]?\s*(.*)$", re.IGNORECASE)
+_PDF_TITLE_RE = re.compile(rb"/Title\s*\(([^)]{1,200})\)")
+_WS_TABLE_DETECT_RE = re.compile(r"\S\s{3,}\S")
+_WS_TABLE_SPLIT_RE = re.compile(r"\s{3,}")
+_ORIG_SHUTIL_WHICH = shutil.which
+
+
+@lru_cache(maxsize=8)
+def _cached_which(binary_name: str) -> str | None:
+    """Resolve an external CLI binary once per process."""
+    return _ORIG_SHUTIL_WHICH(binary_name)
+
+
+def _find_cli_binary(binary_name: str) -> str | None:
+    """Look up a CLI binary with process-lifetime caching while respecting test monkeypatches."""
+    if shutil.which is _ORIG_SHUTIL_WHICH:
+        return _cached_which(binary_name)
+    return shutil.which(binary_name)
 
 
 def _decode_pdf_literal(raw: bytes) -> str:
@@ -51,15 +73,35 @@ def _decode_pdf_literal(raw: bytes) -> str:
         return out.decode("latin-1", errors="replace")
 
 
+def _extract_title_from_pdf_bytes(content: bytes) -> str | None:
+    """Extract an ASCII/UTF-8 ``/Title (...)`` metadata string without spawning ``pdfinfo``.
+
+    Checks the document header and trailer windows first (where PDF Info dictionaries
+    almost always reside) before scanning the full buffer for small PDFs.
+    """
+    windows = (
+        (content,)
+        if len(content) <= 65536
+        else (content[:16384], content[-32768:])
+    )
+    for chunk in windows:
+        match = _PDF_TITLE_RE.search(chunk)
+        if match:
+            title = _decode_pdf_literal(match.group(1)).strip()
+            if title:
+                return title
+    return None
+
+
 def _extract_pdf_text_pure_python(content: bytes) -> tuple[list[str], dict[str, Any]]:
     """Lightweight pure-Python PDF text fallback for standard PDFs and synthetic fixtures."""
     if not content.lstrip().startswith(b"%PDF-"):
         raise ValueError("Invalid PDF header: file does not start with %PDF-.")
 
     meta: dict[str, Any] = {}
-    title_match = re.search(rb"/Title\s*\(([^)]{1,200})\)", content)
-    if title_match:
-        meta["pdf_title"] = _decode_pdf_literal(title_match.group(1)).strip()
+    pdf_title = _extract_title_from_pdf_bytes(content)
+    if pdf_title:
+        meta["pdf_title"] = pdf_title
 
     pages_text: list[str] = []
     stream_re = re.compile(rb"stream\r?\n(.*?)\r?\nendstream", re.DOTALL)
@@ -99,46 +141,65 @@ def _extract_pdf_text_pure_python(content: bytes) -> tuple[list[str], dict[str, 
 
 
 def _extract_pdf_via_pdftotext(content: bytes) -> tuple[list[str], dict[str, Any]] | None:
-    pdftotext_bin = shutil.which("pdftotext")
+    """Extract per-page layout-preserving text via Poppler ``pdftotext`` over stdin.
+
+    Pipes raw PDF bytes directly into ``pdftotext -layout - -`` to eliminate temporary
+    directory creation, disk writes, and the second ``pdfinfo`` subprocess fork. Falls
+    back once to a temporary file only if Poppler rejects non-seekable stdin on an
+    unusual PDF structure.
+
+    Args:
+        content: Raw PDF bytes starting with ``%PDF-``.
+
+    Returns:
+        Tuple of ``(pages, metadata)`` on success, or ``None`` if ``pdftotext`` is
+        unavailable or fails to decode the document.
+    """
+    pdftotext_bin = _find_cli_binary("pdftotext")
     if not pdftotext_bin:
         return None
+
     meta: dict[str, Any] = {}
-    with tempfile.TemporaryDirectory(prefix="ensora_pdf_") as tmpdir:
-        pdf_path = Path(tmpdir) / "doc.pdf"
-        pdf_path.write_bytes(content)
+    pdf_title = _extract_title_from_pdf_bytes(content)
+    if pdf_title:
+        meta["title"] = pdf_title
 
-        pdfinfo_bin = shutil.which("pdfinfo")
-        if pdfinfo_bin:
-            info_res = subprocess.run(
-                [pdfinfo_bin, str(pdf_path)],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=15,
-            )
-            if info_res.returncode == 0:
-                for line in info_res.stdout.splitlines():
-                    if ":" in line:
-                        k, v = line.split(":", 1)
-                        k_norm = k.strip().lower().replace(" ", "_")
-                        if k_norm in {"title", "author", "subject", "pages", "creator"} and v.strip():
-                            meta[k_norm] = v.strip()
-
+    try:
         txt_res = subprocess.run(
-            [pdftotext_bin, "-layout", str(pdf_path), "-"],
+            [pdftotext_bin, "-layout", "-", "-"],
+            input=content,
             capture_output=True,
-            text=True,
             check=False,
             timeout=30,
         )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    # Fallback once to a seekable temporary file if Poppler rejects stdin for a malformed xref
+    if txt_res.returncode != 0:
+        try:
+            with tempfile.TemporaryDirectory(prefix="ensora_pdf_") as tmpdir:
+                pdf_path = Path(tmpdir) / "doc.pdf"
+                pdf_path.write_bytes(content)
+                txt_res = subprocess.run(
+                    [pdftotext_bin, "-layout", str(pdf_path), "-"],
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                )
+        except (OSError, subprocess.SubprocessError):
+            return None
         if txt_res.returncode != 0:
             return None
-        raw_pages = txt_res.stdout.split("\x0c")
-        if raw_pages and raw_pages[-1] == "":
-            raw_pages.pop()
-        if not raw_pages:
-            raw_pages = [""]
-        return raw_pages, meta
+
+    stdout_text = txt_res.stdout.decode("utf-8", errors="replace")
+    raw_pages = stdout_text.split("\x0c")
+    if raw_pages and raw_pages[-1] == "":
+        raw_pages.pop()
+    if not raw_pages:
+        raw_pages = [""]
+    meta["pages"] = str(len(raw_pages))
+    return raw_pages, meta
 
 
 def _detect_table_rows(lines: list[str]) -> list[tuple[str, ...]]:
@@ -149,20 +210,58 @@ def _detect_table_rows(lines: list[str]) -> list[tuple[str, ...]]:
             cells = tuple(c.strip() for c in line.strip("|").split("|"))
             if any(cells) and not all(set(c) <= {"-", ":", "="} for c in cells if c):
                 rows.append(cells)
-        elif re.search(r"\S\s{3,}\S", line):
-            cells = tuple(c.strip() for c in re.split(r"\s{3,}", line.strip()) if c.strip())
+        elif _WS_TABLE_DETECT_RE.search(line):
+            cells = tuple(c.strip() for c in _WS_TABLE_SPLIT_RE.split(line.strip()) if c.strip())
             if len(cells) >= 2:
                 rows.append(cells)
     return rows if len(rows) >= 2 else []
 
 
 class PdfDocumentParser(DocumentParser):
-    """PDF text, structure, formula, table, figure, and optional OCR parser."""
+    """PDF text, structure, formula, table, figure, and optional OCR parser.
+
+    Preserves exact 1-based page locators, layout-aligned tables, LaTeX/Unicode
+    math expressions, and deterministic scanned-page diagnostics.
+    """
 
     name = "pdf_parser"
-    version = "1.0.0"
+    version = "1.1.0"
     supported_mimes = frozenset({"application/pdf"})
     supported_extensions = frozenset({".pdf"})
+
+    def __init__(self, *, enable_ocr: bool = False) -> None:
+        self._enable_ocr = enable_ocr
+        if enable_ocr:
+            self.version = f"{self.version}+ocr1"
+
+    def _ocr_pages(self, content: bytes, pages: list[str], candidates: list[int]) -> set[int]:
+        """Render and transcribe a bounded set of empty pages using local system tools."""
+        renderer = _find_cli_binary("pdftoppm")
+        tesseract = _find_cli_binary("tesseract")
+        if not renderer or not tesseract:
+            return set()
+        recovered: set[int] = set()
+        with tempfile.TemporaryDirectory(prefix="ensora-pdf-ocr-") as directory:
+            path = Path(directory) / "document.pdf"
+            path.write_bytes(content)
+            for page_number in candidates[:8]:
+                page_arg = str(page_number)
+                try:
+                    image = subprocess.run(
+                        [renderer, "-f", page_arg, "-l", page_arg, "-singlefile",
+                         "-scale-to", "2400", "-png", str(path)],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10, check=True,
+                    ).stdout
+                    output = subprocess.run(
+                        [tesseract, "stdin", "stdout", "-l", "fra+eng"], input=image,
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20, check=True,
+                    ).stdout.decode("utf-8", errors="replace").strip()
+                except (OSError, subprocess.SubprocessError):
+                    continue
+                if output:
+                    pages[page_number - 1] = output
+                    recovered.add(page_number)
+        return recovered
 
     def parse(
         self,
@@ -171,8 +270,23 @@ class PdfDocumentParser(DocumentParser):
         filename: str,
         mime_type: str,
         provenance: dict[str, Any] | None = None,
+        precomputed_sha256: str | None = None,
     ) -> ParsedDocument:
-        digest = sha256_bytes(content)
+        """Parse raw PDF bytes into structured page blocks with provenance locators.
+
+        Args:
+            content: Raw PDF byte payload.
+            filename: Original filename used for title fallback and metadata.
+            mime_type: Declared or sniffed MIME type.
+            provenance: Optional source provenance dictionary attached to output.
+            precomputed_sha256: Optional SHA-256 hex digest computed upstream to
+                avoid redundant hashing of large binaries.
+
+        Returns:
+            ``ParsedDocument`` containing page-located blocks, headings, math,
+            tables, figures, extraction quality score, and structured warnings.
+        """
+        digest = precomputed_sha256 or sha256_bytes(content)
         prov = dict(provenance or {})
         warnings: list[str] = []
         unsupported: list[str] = []
@@ -195,7 +309,7 @@ class PdfDocumentParser(DocumentParser):
                 error="Malformed PDF header",
             )
 
-        # 1. PyMuPDF (fitz) if available
+        # 1. PyMuPDF (fitz) if explicitly installed by user
         try:
             import fitz  # type: ignore
 
@@ -215,7 +329,35 @@ class PdfDocumentParser(DocumentParser):
         except Exception as exc:
             warnings.append(f"PyMuPDF failed ({type(exc).__name__}); attempting fallback backend.")
 
-        # 2. pypdf if available
+        # 2. pypdfium2 (Apache-2.0 / BSD-3-Clause, MIT-compatible) if installed
+        if pages is None:
+            try:
+                import pypdfium2 as pdfium  # type: ignore
+
+                pdf_doc = pdfium.PdfDocument(content)
+                try:
+                    extracted_pages: list[str] = []
+                    for idx in range(len(pdf_doc)):
+                        page = pdf_doc[idx]
+                        textpage = page.get_textpage()
+                        try:
+                            extracted_pages.append(textpage.get_text_bounded() or "")
+                        finally:
+                            textpage.close()
+                            page.close()
+                    pages = extracted_pages
+                    pdf_title = _extract_title_from_pdf_bytes(content)
+                    if pdf_title:
+                        meta["title"] = pdf_title
+                    backend_used = "pypdfium2"
+                finally:
+                    pdf_doc.close()
+            except ImportError:
+                pass
+            except Exception as exc:
+                warnings.append(f"pypdfium2 failed ({type(exc).__name__}); attempting fallback backend.")
+
+        # 3. pypdf if available
         if pages is None:
             try:
                 import io
@@ -231,7 +373,7 @@ class PdfDocumentParser(DocumentParser):
             except Exception as exc:
                 warnings.append(f"pypdf failed ({type(exc).__name__}); attempting fallback backend.")
 
-        # 3. Poppler pdftotext CLI
+        # 4. Poppler pdftotext CLI over stdin (zero temp files, zero pdfinfo fork)
         if pages is None:
             poppler_res = _extract_pdf_via_pdftotext(content)
             if poppler_res is not None:
@@ -239,7 +381,7 @@ class PdfDocumentParser(DocumentParser):
                 meta.update(poppler_meta)
                 backend_used = "pdftotext"
 
-        # 4. Pure-Python PDF stream fallback
+        # 5. Pure-Python PDF stream fallback
         if pages is None:
             try:
                 pages, py_meta = _extract_pdf_text_pure_python(content)
@@ -262,10 +404,19 @@ class PdfDocumentParser(DocumentParser):
 
         meta["pdf_backend"] = backend_used
         meta["page_count"] = len(pages)
+        candidates = [number for number, page in enumerate(pages, start=1) if not page.strip()]
+        scanned_heavy = bool(candidates) and len(candidates) / len(pages) >= 0.30
+        ocr_pages = self._ocr_pages(content, pages, candidates) if (
+            self._enable_ocr and scanned_heavy and backend_used != "pure_python_pdf"
+        ) else set()
+        if self._enable_ocr and scanned_heavy and len(ocr_pages) < len(candidates):
+            warnings.append("pdf_ocr_incomplete")
 
         blocks: list[ParsedBlock] = []
         headings: list[str] = []
+        seen_headings: set[str] = set()
         all_math: list[str] = []
+        seen_math: set[str] = set()
         tables: list[dict[str, Any]] = []
         figures: list[dict[str, Any]] = []
         current_heading_path: tuple[str, ...] = ()
@@ -280,12 +431,16 @@ class PdfDocumentParser(DocumentParser):
 
             lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
             page_math = extract_math_expressions(text)
-            all_math.extend(m for m in page_math if m not in all_math)
+            for expr in page_math:
+                if expr not in seen_math:
+                    seen_math.add(expr)
+                    all_math.append(expr)
 
             # Detect headings and figures
             for ln in lines:
                 stripped = ln.strip()
-                if _HEADING_RE.match(stripped) and stripped not in headings:
+                if _HEADING_RE.match(stripped) and stripped not in seen_headings:
+                    seen_headings.add(stripped)
                     headings.append(stripped)
                     current_heading_path = (stripped,)
                 fig_m = _FIGURE_RE.match(stripped)
@@ -297,7 +452,7 @@ class PdfDocumentParser(DocumentParser):
             if page_table:
                 tables.append({"page": page_num, "rows": [list(r) for r in page_table]})
 
-            lang = detect_language_hint(text)
+            lang = detect_language_hint(text[:2500])
             blocks.append(
                 ParsedBlock(
                     ordinal=ordinal,
@@ -312,18 +467,19 @@ class PdfDocumentParser(DocumentParser):
                     language=lang,
                     table_rows=tuple(page_table),
                     math_expressions=page_math,
+                    metadata={"ocr": True} if page_num in ocr_pages else {},
                 )
             )
             ordinal += 1
 
-        ocr_used = False
+        if scanned_heavy and empty_pages:
+            unsupported.append("pdf_scanned_pages_unrecovered")
         empty_ratio = empty_pages / max(1, len(pages))
         if empty_pages > 0:
             # Distinguish genuinely scanned / image-heavy PDFs (0 text blocks or >=30% empty pages)
             # from normal text-rich slide decks/lectures with 1-2 blank or diagram-only pages.
-            is_scanned_heavy = (len(blocks) == 0) or (empty_ratio >= 0.30)
-            if is_scanned_heavy:
-                if shutil.which("tesseract") is None:
+            if scanned_heavy:
+                if _find_cli_binary("tesseract") is None:
                     unsupported.append("scanned_pages_without_ocr_engine")
                     warnings.append(
                         f"{empty_pages}/{len(pages)} PDF page(s) contained no extractable text "
@@ -358,7 +514,7 @@ class PdfDocumentParser(DocumentParser):
             metadata=meta,
             provenance=prov,
             extraction_quality=quality,
-            ocr_used=ocr_used,
+            ocr_used=bool(ocr_pages),
             unsupported_elements=tuple(unsupported),
             warnings=tuple(warnings),
         )

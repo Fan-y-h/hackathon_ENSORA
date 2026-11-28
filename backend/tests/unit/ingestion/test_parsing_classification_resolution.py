@@ -28,6 +28,46 @@ from backend.app.modules.ingestion.resolution.entity_resolver import (
 )
 
 
+def test_selective_pdf_ocr_preserves_native_text_and_page_locators(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from backend.app.modules.ingestion.parsers import pdf_parser
+
+    native = "Regression uses regularization to control variance."
+    captured_pages = []
+    monkeypatch.setattr(
+        pdf_parser, "_extract_pdf_via_pdftotext", lambda _: ([native, "", ""], {})
+    )
+    monkeypatch.setattr(pdf_parser, "_find_cli_binary", lambda binary: binary)
+
+    def run(command, **kwargs):
+        if command[0] == "pdftoppm":
+            number = command[command.index("-f") + 1]
+            captured_pages.append(int(number))
+            return SimpleNamespace(stdout=number.encode())
+        assert command[-1] == "fra+eng"
+        return SimpleNamespace(
+            stdout=b"Le document contient une preuve mathematique." if kwargs["input"] == b"2" else b""
+        )
+
+    monkeypatch.setattr(pdf_parser.subprocess, "run", run)
+    document = Document(
+        provenance=Provenance(external_id="local:scan", source=CodexSourceKind.LOCAL),
+        title="scan.pdf",
+        mime_type="application/pdf",
+    )
+    bridge = CodexParserBridge(DocumentParserRegistry(enable_pdf_ocr=True))
+    parsed = bridge.parse(document, b"%PDF-1.4 synthetic")
+    assert parsed is not None and parsed.status == "partial"
+    assert "pdf_ocr_incomplete" in parsed.warning_codes
+    assert captured_pages == [2, 3]
+    assert parsed.chunks[0].text == native
+    assert parsed.chunks[0].locator["page"] == 1
+    assert "ocr" not in parsed.chunks[0].structured
+    assert parsed.chunks[1].locator["page"] == 2
+    assert parsed.chunks[1].structured["ocr"] is True
+
+
 def _build_minimal_pdf(text_lines: list[str]) -> bytes:
     """Create a valid minimal single-page PDF with text operators."""
     ops = ["BT", "/F1 12 Tf", "72 720 Td"]

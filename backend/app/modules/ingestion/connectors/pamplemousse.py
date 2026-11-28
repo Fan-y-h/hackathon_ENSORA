@@ -19,7 +19,10 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
+import threading
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
@@ -28,6 +31,7 @@ from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from ..auth.ensai import (
     DEFAULT_ENSAI_USER_AGENT,
@@ -93,7 +97,32 @@ PAMPLEMOUSSE_EDT_PATH = "index.php?p=121"
 PAMPLEMOUSSE_INSCRIPTIONS_PATH = "index.php?p=107"
 PAMPLEMOUSSE_NOTES_PATH = "index.php?p=1052"
 _ACADEMIC_YEAR_RE = re.compile(r"\b(20\d{2})\s*[-/–]\s*(20\d{2})\b")
-_SUBJECT_CODE_RE = re.compile(r"\b([1-3]A[-_][A-Z0-9_-]{2,}|UE\d+[-_]?[A-Z0-9]*|[A-Z]{2,5}\d{2,4}[A-Z]?)\b")
+_SUBJECT_CODE_RE = re.compile(
+    r"\b("
+    r"[1-3]A[A-Z]{2,5}\d{2,4}(?:[-_][A-Z0-9]+)*"
+    r"|[1-3]A[-_][A-Z]{2,}(?:[-_][A-Z0-9]+)+"
+    r"|[1-3]A[-_][A-Z]{2,}\d{2,}"
+    r"|UE\d+[-_]?[A-Z0-9]*"
+    r"|[A-Z]{2,5}\d{2,4}[A-Z]?"
+    r")\b"
+)
+
+
+def _extract_subject_code(title: str, description: str | None = None) -> str | None:
+    """Extract an ENSAI/Pamplemousse course code, preferring the title over description text."""
+    m = _SUBJECT_CODE_RE.search(title or "")
+    if m:
+        return m.group(1)
+    if description:
+        # Exclude group/promo metadata lines so student group codes (e.g. 2A-G1) are not misread as subjects
+        cleaned_lines = [
+            line for line in description.splitlines()
+            if not re.match(r"^\s*(?:groupe|group|promo|fili[eè]re)\s*[:\-]", line, re.IGNORECASE)
+        ]
+        m_desc = _SUBJECT_CODE_RE.search("\n".join(cleaned_lines))
+        if m_desc:
+            return m_desc.group(1)
+    return None
 
 
 def normalize_timestamp_utc(
@@ -199,24 +228,45 @@ def parse_decimal_strict(value: Any) -> Decimal | None:
     """Parse a Decimal strictly from string/int/float (French comma supported); returns None for missing."""
     if value is None:
         return None
-    text = str(value).strip().replace("\xa0", "").replace(" ", "").replace(",", ".")
+    text = (
+        str(value)
+        .strip()
+        .replace("\xa0", "")
+        .replace("\u202f", "")
+        .replace("\u2009", "")
+        .replace(" ", "")
+        .replace(",", ".")
+    )
     if not text or text.lower() in {
         "none",
         "null",
         "na",
         "n/a",
+        "n.c.",
+        "n/c",
         "-",
         "--",
         "—",
+        "–",
+        "...",
         "absent",
         "abs",
         "abi",
         "abj",
+        "def",
+        "déf",
+        "disp",
+        "exc",
         "nd",
         "nc",
         "nonévalué",
         "nonevalue",
+        "nonnoté",
+        "nonnote",
         "sansnote",
+        "enattente",
+        "verrouillé",
+        "verrouille",
     }:
         return None
     # Strip optional trailing scale suffix like "16.5/20" -> only accept numeric numerator if clean
@@ -227,6 +277,46 @@ def parse_decimal_strict(value: Any) -> Decimal | None:
         return Decimal(text)
     except InvalidOperation:
         return None
+
+
+def _parse_coefficient_cell(value: Any) -> tuple[Decimal | None, str | None]:
+    """Parse a Pamplemousse coefficient cell strictly, distinguishing raw coefficients from percentages.
+
+    - Supports French decimal commas ('2,5'), narrow no-break spaces, optional 'coef.'/'x' prefix.
+    - Explicit percentages ('25%', '33,5 %') convert to Decimal fractions in [0, 1] with mode='fraction'.
+    - Zero ('0', '0,0') is preserved as confirmed Decimal('0'), never conflated with None (missing).
+    - Negative or non-numeric values return (None, None) without fabricating data.
+    """
+    if value is None:
+        return None, None
+    raw = str(value).strip().replace("\xa0", " ").replace("\u202f", " ").replace("\u2009", " ").strip()
+    if not raw:
+        return None, None
+    if "%" in raw:
+        num_part = raw.replace("%", "").strip()
+        val = parse_decimal_strict(num_part)
+        if val is None or val < Decimal("0") or val > Decimal("100"):
+            return None, None
+        return (val / Decimal("100")).normalize(), "fraction"
+    cleaned = re.sub(r"^(?:coeff?\.?|x|×)\s*", "", raw, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"\s*(?:pts?|points?)$", "", cleaned, flags=re.IGNORECASE).strip()
+    val = parse_decimal_strict(cleaned)
+    if val is None or val < Decimal("0"):
+        return None, None
+    return val, "raw"
+
+
+def _parse_ics_duration(raw: str) -> timedelta | None:
+    """Parse RFC 5545 DURATION (e.g. PT1H30M, PT90M, P1D) into a positive timedelta."""
+    m = re.fullmatch(
+        r"\+?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?",
+        raw.strip().upper(),
+    )
+    if not m:
+        return None
+    weeks, days, hours, minutes, seconds = (int(g) if g else 0 for g in m.groups())
+    td = timedelta(weeks=weeks, days=days, hours=hours, minutes=minutes, seconds=seconds)
+    return td if td > timedelta(0) else None
 
 
 def _compute_duration_minutes(start_utc: str | None, end_utc: str | None) -> int | None:
@@ -328,23 +418,31 @@ def parse_ics_events(
         description = _unescape_ics(props.get("DESCRIPTION", ("", {}))[0]).strip() or None
         categories = _unescape_ics(props.get("CATEGORIES", ("", {}))[0]).strip() or None
         status_raw = props.get("STATUS", ("CONFIRMED", {}))[0].strip().lower()
+        is_cancelled_label = "annul" in summary.lower() or "annul" in (categories or "").lower()
         status = (
             "cancelled"
-            if status_raw == "cancelled"
+            if (status_raw == "cancelled" or is_cancelled_label)
             else ("tentative" if status_raw == "tentative" else "confirmed")
         )
         rrule = props.get("RRULE", ("", {}))[0].strip() or None
 
         dtstart_val, dtstart_params = props.get("DTSTART", ("", {}))
         dtend_val, dtend_params = props.get("DTEND", ("", {}))
+        duration_val = props.get("DURATION", ("", {}))[0].strip()
         start_utc, all_day_start, tz_name = (
             _parse_ics_datetime(dtstart_val, dtstart_params) if dtstart_val else (None, None, None)
         )
         end_utc, all_day_end, _ = (
             _parse_ics_datetime(dtend_val, dtend_params) if dtend_val else (None, None, None)
         )
+        if start_utc and not end_utc and duration_val:
+            dur_td = _parse_ics_duration(duration_val)
+            if dur_td is not None:
+                st_dt = datetime.fromisoformat(start_utc.replace("Z", "+00:00"))
+                end_utc = (st_dt + dur_td).isoformat().replace("+00:00", "Z")
 
         teacher, group, subject_hint = _extract_pamplemousse_metadata(summary, description)
+        course_code = _extract_subject_code(summary, description)
         if source_kind == SourceKind.PAMPLEMOUSSE:
             ev_type, confirm_req, confirm_reason = classify_timetable_event(
                 summary,
@@ -412,6 +510,7 @@ def parse_ics_events(
                     teacher=teacher,
                     group=group,
                     subject_hint=subject_hint,
+                    course_id=course_code,
                     recurrence_key=base_uid if rrule else None,
                     confirmation_required=confirm_req,
                     confirmation_reason=confirm_reason,
@@ -541,10 +640,14 @@ def _extract_pamplemousse_metadata(
     teacher: str | None = None
     group: str | None = None
     if description:
-        m_teacher = re.search(r"(?:enseignant|professeur|teacher|intervenant)\s*[:\-]\s*(.+)", description, re.IGNORECASE)
+        m_teacher = re.search(
+            r"(?:enseignant|professeur|prof|teacher|intervenant|responsable|resp|animateur|formateur)\s*[:\-]\s*(.+)",
+            description,
+            re.IGNORECASE,
+        )
         if m_teacher:
             teacher = m_teacher.group(1).strip().splitlines()[0].strip()
-        m_group = re.search(r"(?:groupe|group|promo|filière)\s*[:\-]\s*(.+)", description, re.IGNORECASE)
+        m_group = re.search(r"(?:groupe|group|promo|filière|filiere)\s*[:\-]\s*(.+)", description, re.IGNORECASE)
         if m_group:
             group = m_group.group(1).strip().splitlines()[0].strip()
 
@@ -774,12 +877,23 @@ def discover_pamplemousse_nav_links(html: str, base_url: str) -> dict[str, str]:
         ):
             nav["inscriptions"] = full_url
         elif "notes" not in nav and (
-            low_lbl in ("notes", "mes notes", "bulletin", "bulletin détaillé", "bulletin detaille")
+            low_lbl in ("notes", "mes notes", "bulletin", "bulletin détaillé", "bulletin detaille", "résultats", "resultats")
             or "note" in low_lbl
             or "bulletin" in low_lbl
+            or "résultat" in low_lbl
+            or "resultat" in low_lbl
+            or "relevé" in low_lbl
+            or "releve" in low_lbl
             or "p=1052" in low_url
         ):
             nav["notes"] = full_url
+        elif "program" not in nav and (
+            "programme" in low_lbl
+            or "maquette" in low_lbl
+            or "cursus" in low_lbl
+            or "scolarit" in low_lbl
+        ):
+            nav["program"] = full_url
     return nav
 
 
@@ -980,11 +1094,10 @@ def parse_fullcalendar_json_events(
             if m_room:
                 room = m_room.group(1).strip().splitlines()[0].strip()
 
-        code_match = _SUBJECT_CODE_RE.search(f"{title} {desc or ''}")
         course_code = (
             ext_props.get("code")
             or entry.get("code")
-            or (code_match.group(1) if code_match else None)
+            or _extract_subject_code(title, desc)
         )
         color_hint = (
             entry.get("backgroundColor")
@@ -1152,6 +1265,9 @@ def parse_fullcalendar_list_html(
                 continue
 
         teacher, group, subject_hint = _extract_pamplemousse_metadata(title, None)
+        course_code = _extract_subject_code(title)
+        is_cancelled = "annul" in title.lower()
+        ev_status = "cancelled" if is_cancelled else "confirmed"
         ev_type, confirm_req, confirm_reason = classify_timetable_event(title, group=group)
         duration_min = _compute_duration_minutes(start_utc, end_utc)
         ext_seed = f"fclist|{title}|{start_utc or all_day_start}|{idx}"
@@ -1167,11 +1283,14 @@ def parse_fullcalendar_list_html(
                 end_at=end_utc,
                 all_day_date=all_day_start,
                 original_timezone="Europe/Paris",
+                status=ev_status,
                 teacher=teacher,
                 group=group,
                 subject_hint=subject_hint,
+                course_id=course_code,
                 confirmation_required=confirm_req,
                 confirmation_reason=confirm_reason,
+                busy=ev_status != "cancelled",
                 provenance={
                     "format": "fullcalendar_list_html",
                     "academic_year": _academic_year_from_event_time(start_utc, all_day_start, fallback_year=academic_year),
@@ -1245,9 +1364,24 @@ class _RichHTMLTableParser(HTMLParser):
                     "bold": self._cell_bold,
                     "class": self._cell_attrs.get("class", ""),
                     "style": style,
-                    "colspan": int(self._cell_attrs.get("colspan") or "1")
-                    if str(self._cell_attrs.get("colspan") or "").isdigit()
-                    else 1,
+                    "colspan": min(
+                        64,
+                        max(
+                            1,
+                            int(self._cell_attrs.get("colspan") or "1")
+                            if str(self._cell_attrs.get("colspan") or "").isdigit()
+                            else 1,
+                        ),
+                    ),
+                    "rowspan": min(
+                        64,
+                        max(
+                            1,
+                            int(self._cell_attrs.get("rowspan") or "1")
+                            if str(self._cell_attrs.get("rowspan") or "").isdigit()
+                            else 1,
+                        ),
+                    ),
                     "indent_px": indent_px + leading_nbsp * 6,
                 }
             )
@@ -1267,6 +1401,75 @@ class _RichHTMLTableParser(HTMLParser):
         return self._tables
 
 
+def _expand_html_table_grid(raw_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expand HTML ``rowspan`` and ``colspan`` attributes into a regular column-aligned grid.
+
+    Ensures merged UE or semester cells never shift downstream ``Coef.`` / ``ECTS`` / ``Note``
+    columns out of alignment.
+    """
+    if not raw_rows:
+        return []
+    pending_spans: dict[int, tuple[int, dict[str, Any]]] = {}
+    expanded: list[dict[str, Any]] = []
+
+    for row_obj in raw_rows:
+        out_cells: list[dict[str, Any]] = []
+        col_idx = 0
+
+        def _flush_pending() -> None:
+            nonlocal col_idx
+            while col_idx in pending_spans:
+                rem, span_cell = pending_spans[col_idx]
+                out_cells.append({**span_cell, "inherited_from_rowspan": True})
+                if rem <= 1:
+                    del pending_spans[col_idx]
+                else:
+                    pending_spans[col_idx] = (rem - 1, span_cell)
+                col_idx += 1
+
+        for cell in row_obj["cells"]:
+            _flush_pending()
+            cspan = max(1, int(cell.get("colspan") or 1))
+            rspan = max(1, int(cell.get("rowspan") or 1))
+            base_cell = {**cell, "colspan": 1, "rowspan": 1}
+            for offset in range(cspan):
+                placed = base_cell if offset == 0 else {**base_cell, "colspan_continuation": True}
+                out_cells.append(placed)
+                if rspan > 1:
+                    pending_spans[col_idx] = (rspan - 1, base_cell)
+                col_idx += 1
+        _flush_pending()
+        expanded.append({"attrs": row_obj["attrs"], "cells": out_cells})
+
+    return expanded
+
+
+def _find_table_header_row(
+    grid: list[dict[str, Any]],
+    predicate: Callable[[list[str]], bool],
+    *,
+    max_scan: int = 4,
+) -> tuple[int, list[str]] | None:
+    """Locate the first header row matching ``predicate`` (skips full-width banner/title rows)."""
+    limit = min(len(grid) - 1, max_scan)
+    for idx in range(limit):
+        row = grid[idx]
+        # Skip single-label banner rows spanned across the whole table
+        distinct_texts = [c["text"] for c in row["cells"] if c["text"] and not c.get("colspan_continuation")]
+        if len(distinct_texts) < 2:
+            continue
+        headers = [c["text"].lower() for c in row["cells"]]
+        if predicate(headers):
+            return idx, headers
+    return None
+
+
+def _strip_accents(text: str) -> str:
+    """Fold accented Latin characters to ASCII equivalents for deterministic French matching."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
 def _slug_key(text: str) -> str:
     norm = re.sub(r"[^a-z0-9]+", "_", text.lower().strip()).strip("_")
     return norm[:48] or hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
@@ -1276,15 +1479,20 @@ def _normalize_semester_label(raw: str | None) -> str | None:
     if not raw:
         return None
     s = raw.strip()
-    low = s.lower()
+    low = _strip_accents(s.lower())
     if low in ("1", "s1", "sem1", "semestre 1", "premier semestre", "1er semestre"):
         return "S1"
-    if low in ("2", "s2", "sem2", "semestre 2", "second semestre", "deuxième semestre", "2e semestre", "2ème semestre"):
+    if low in ("2", "s2", "sem2", "semestre 2", "second semestre", "deuxieme semestre", "2e semestre", "2eme semestre"):
         return "S2"
-    if "premier semestre" in low or "semestre 1" in low or low == "s1":
+    m_sem = re.search(r"\b(?:semestre|sem\.?|s)\s*([1-6])\b", low)
+    if m_sem:
+        return f"S{m_sem.group(1)}"
+    if "premier semestre" in low:
         return "S1"
-    if "second semestre" in low or "deuxième semestre" in low or "semestre 2" in low or low == "s2":
+    if "second semestre" in low or "deuxieme semestre" in low:
         return "S2"
+    if low in ("annuel", "annee", "s1-s2", "s1/s2", "s1 et s2", "toute l'annee"):
+        return "Annuel"
     return s
 
 
@@ -1324,34 +1532,61 @@ def parse_pamplemousse_inscriptions_html(
         )
         emitted_ids.add(year_id)
 
-    for table in parser.tables:
+    for raw_table in parser.tables:
+        table = _expand_html_table_grid(raw_table)
         if len(table) < 2:
             continue
-        headers = [c["text"].lower() for c in table[0]["cells"]]
-        has_matiere = any("mati" in h or "enseignement" in h or "subject" in h for h in headers)
-        has_inscriptions_markers = any(
-            any(tok in h for tok in ("ects", "coef", "code", "sem", "ue")) for h in headers
-        )
-        # Skip detailed grade bulletin tables (which have 'note' / 'classement')
-        has_grade_col = any("note" in h or "classement" in h for h in headers)
-        if not has_matiere or not has_inscriptions_markers or has_grade_col:
-            continue
 
-        def col_idx(*candidates: str) -> int | None:
+        def _is_inscriptions_header(hdrs: list[str]) -> bool:
+            norm_h = [_strip_accents(h) for h in hdrs]
+            has_mat = any(
+                any(tok in h for tok in ("matiere", "enseignement", "subject", "intitul", "libell", "module"))
+                for h in norm_h
+            )
+            has_markers = any(
+                any(tok in h for tok in ("ects", "coef", "ponder", "code", "sem", "ue"))
+                for h in norm_h
+            )
+            has_grade = any("note" in h or "classement" in h for h in norm_h)
+            return has_mat and has_markers and not has_grade
+
+        found_hdr = _find_table_header_row(table, _is_inscriptions_header)
+        if found_hdr is None:
+            continue
+        hdr_idx, headers = found_hdr
+        norm_headers = [_strip_accents(h) for h in headers]
+
+        def col_idx(
+            *candidates: str,
+            exclude: tuple[str, ...] = (),
+            exact_first: tuple[str, ...] = (),
+        ) -> int | None:
+            for ex in exact_first:
+                for i, h in enumerate(norm_headers):
+                    if h.strip(" .:") == ex and not any(bad in h for bad in exclude):
+                        return i
             for cand in candidates:
-                for i, h in enumerate(headers):
-                    if cand in h:
+                for i, h in enumerate(norm_headers):
+                    if cand in h and not any(bad in h for bad in exclude):
                         return i
             return None
 
-        idx_ue = col_idx("ue", "unité", "unite")
-        idx_mat = col_idx("matière", "matiere", "enseignement", "subject")
-        idx_code = col_idx("code")
-        idx_coef = col_idx("coef", "poids", "weight")
-        idx_ects = col_idx("ects", "crédit", "credit")
+        idx_ue = col_idx("ue", "unite", exclude=("code ue",), exact_first=("ue",))
+        if idx_ue is None:
+            idx_ue = col_idx("ue", "unite")
+        idx_mat = col_idx("matiere", "enseignement", "subject", "intitul", "libell", "module")
+        idx_code = col_idx(
+            "code matiere",
+            "code mat",
+            "code",
+            exclude=("code ue",),
+            exact_first=("code", "code matiere"),
+        )
+        idx_coef = col_idx("coef", "poids", "weight", "ponder", exclude=("ects", "credit"))
+        idx_ects = col_idx("ects", "credit", exclude=("coef", "poids", "weight", "ponder"))
         idx_sem = col_idx("sem")
 
-        for row_num, row_obj in enumerate(table[1:], start=1):
+        for row_num, row_obj in enumerate(table[hdr_idx + 1 :], start=1):
             cells = row_obj["cells"]
 
             def get_cell(i: int | None) -> str:
@@ -1369,9 +1604,9 @@ def parse_pamplemousse_inscriptions_html(
             sem_raw = get_cell(idx_sem)
             sem_norm = _normalize_semester_label(sem_raw)
 
-            coef_val = parse_decimal_strict(coef_raw)
+            coef_val, coef_mode = _parse_coefficient_cell(coef_raw)
             ects_val = parse_decimal_strict(ects_raw)
-            is_sans_ue = (not ue_raw) or ("sans ue" in ue_raw.lower()) or ue_raw in ("-", "—", "N/A")
+            is_sans_ue = (not ue_raw) or ("sans ue" in ue_raw.lower()) or ue_raw in ("-", "—", "–", "N/A")
             is_optional = (coef_val == Decimal("0")) or ("option" in subject_title.lower()) or ("sport" in subject_title.lower())
 
             # Emit Semester parent if present
@@ -1388,6 +1623,8 @@ def parse_pamplemousse_inscriptions_html(
                             parent_external_id=year_id,
                             academic_year=detected_year,
                             semester=sem_norm,
+                            weight_status=ValueStatus.UNKNOWN,
+                            grade_status=ValueStatus.UNKNOWN,
                             observed_at=utc_now_iso(),
                             provenance={"format": "inscriptions_html", "raw_semester": sem_raw},
                         )
@@ -1411,6 +1648,9 @@ def parse_pamplemousse_inscriptions_html(
                             parent_external_id=parent_id,
                             academic_year=detected_year,
                             semester=sem_norm,
+                            # Inscriptions table has no UE-level coefficient or grade column; never fabricate MISSING!
+                            weight_status=ValueStatus.UNKNOWN,
+                            grade_status=ValueStatus.UNKNOWN,
                             observed_at=utc_now_iso(),
                             provenance={"format": "inscriptions_html", "ue_label": ue_raw},
                         )
@@ -1429,6 +1669,17 @@ def parse_pamplemousse_inscriptions_html(
                 subj_id = f"{subj_id}:r{row_num}"
             emitted_ids.add(subj_id)
 
+            subj_weight_status = (
+                ValueStatus.CONFIRMED
+                if coef_val is not None
+                else (ValueStatus.MISSING if idx_coef is not None else ValueStatus.UNKNOWN)
+            )
+            subj_ects_status = (
+                ValueStatus.CONFIRMED
+                if ects_val is not None
+                else (ValueStatus.MISSING if idx_ects is not None else ValueStatus.UNKNOWN)
+            )
+
             records.append(
                 AcademicRecord(
                     source_kind=SourceKind.PAMPLEMOUSSE,
@@ -1440,8 +1691,8 @@ def parse_pamplemousse_inscriptions_html(
                     semester=sem_norm,
                     subject_code=code_raw,
                     weight=coef_val,
-                    weight_mode="raw" if coef_val is not None else None,
-                    weight_status=ValueStatus.CONFIRMED if coef_val is not None else ValueStatus.MISSING,
+                    weight_mode=coef_mode,
+                    weight_status=subj_weight_status,
                     grade_value=None,
                     # Inscriptions (p=107) has no grade column; never fabricate MISSING grade rows from catalog!
                     grade_status=ValueStatus.UNKNOWN,
@@ -1454,7 +1705,7 @@ def parse_pamplemousse_inscriptions_html(
                         "ue_label": None if is_sans_ue else ue_raw,
                         "sans_ue": is_sans_ue,
                         "ects": str(ects_val) if ects_val is not None else None,
-                        "ects_status": ValueStatus.CONFIRMED.value if ects_val is not None else ValueStatus.MISSING.value,
+                        "ects_status": subj_ects_status.value,
                         "optional_activity": is_optional,
                         "zero_coefficient": coef_val == Decimal("0"),
                         "retrieved_at": utc_now_iso(),
@@ -1502,38 +1753,49 @@ def parse_pamplemousse_notes_html(
         )
         emitted_ids.add(year_id)
 
-    is_bulletin_page = "bulletin" in html.lower()
-    for table in parser.tables:
+    is_bulletin_page = "bulletin" in html.lower() or "relev" in _strip_accents(html.lower())
+    for raw_table in parser.tables:
+        table = _expand_html_table_grid(raw_table)
         if len(table) < 2:
             continue
-        headers = [c["text"].lower() for c in table[0]["cells"]]
-        has_ens = any(tok in h for h in headers for tok in ("enseignement", "matière", "matiere", "épreuve", "epreuve"))
-        has_note = any("note" in h or "moyenne" in h or "grade" in h for h in headers)
-        has_bulletin_header = (
-            is_bulletin_page
-            or any("enseignement" in h or "note finale" in h or "classement" in h for h in headers)
-            or any(
-                any(
-                    tok in (r["attrs"].get("class", "").lower())
-                    for tok in ("semestre", "ue", "epreuve", "overall", "matiere")
-                )
-                or any(int(c.get("indent_px", 0)) > 0 for c in r["cells"][:1])
-                for r in table[1:]
-            )
-        )
-        if not (has_ens and has_note and has_bulletin_header):
-            continue
 
-        def col_idx(*candidates: str) -> int | None:
+        def _is_notes_header(hdrs: list[str]) -> bool:
+            norm_h = [_strip_accents(h) for h in hdrs]
+            has_ens = any(
+                tok in h for h in norm_h for tok in ("enseignement", "matiere", "epreuve", "intitul", "libell")
+            )
+            has_note = any("note" in h or "moyenne" in h or "grade" in h for h in norm_h)
+            if not (has_ens and has_note):
+                return False
+            return (
+                is_bulletin_page
+                or any("enseignement" in h or "note finale" in h or "classement" in h for h in norm_h)
+                or any(
+                    any(
+                        tok in (r["attrs"].get("class", "").lower())
+                        for tok in ("semestre", "ue", "epreuve", "overall", "matiere")
+                    )
+                    or any(int(c.get("indent_px", 0)) > 0 for c in r["cells"][:1])
+                    for r in table[1:]
+                )
+            )
+
+        found_hdr = _find_table_header_row(table, _is_notes_header)
+        if found_hdr is None:
+            continue
+        hdr_idx, headers = found_hdr
+        norm_headers = [_strip_accents(h) for h in headers]
+
+        def col_idx(*candidates: str, exclude: tuple[str, ...] = ()) -> int | None:
             for cand in candidates:
-                for i, h in enumerate(headers):
-                    if cand in h:
+                for i, h in enumerate(norm_headers):
+                    if cand in h and not any(bad in h for bad in exclude):
                         return i
             return None
 
-        idx_label = col_idx("enseignement", "matière", "matiere", "épreuve", "epreuve")
+        idx_label = col_idx("enseignement", "matiere", "epreuve", "intitul", "libell")
         idx_note = col_idx("note finale", "note", "moyenne", "grade")
-        idx_coef = col_idx("coefficient", "coef", "poids", "weight")
+        idx_coef = col_idx("coefficient", "coef", "poids", "weight", "ponder", exclude=("ects", "credit"))
         # Deliberately NEVER read idx_classement (class ranking excluded by policy)
 
         current_sem_id: str | None = None
@@ -1544,7 +1806,7 @@ def parse_pamplemousse_notes_html(
         current_assessment_id: str | None = None
         current_assessment_indent: int | None = None
 
-        for row_num, row_obj in enumerate(table[1:], start=1):
+        for row_num, row_obj in enumerate(table[hdr_idx + 1 :], start=1):
             cells = row_obj["cells"]
             row_cls = row_obj["attrs"].get("class", "").lower()
             if idx_label is None or idx_label >= len(cells):
@@ -1554,6 +1816,7 @@ def parse_pamplemousse_notes_html(
             if not label:
                 continue
             low_label = label.lower()
+            ascii_label = _strip_accents(low_label)
             cell_cls = label_cell.get("class", "").lower()
             combined_cls = f"{row_cls} {cell_cls}"
             indent_px = int(label_cell.get("indent_px", 0))
@@ -1562,7 +1825,12 @@ def parse_pamplemousse_notes_html(
             note_raw = cells[idx_note]["text"].strip() if (idx_note is not None and idx_note < len(cells)) else ""
             coef_raw = cells[idx_coef]["text"].strip() if (idx_coef is not None and idx_coef < len(cells)) else ""
             grade_val = parse_decimal_strict(note_raw)
-            coef_val = parse_decimal_strict(coef_raw)
+            coef_val, coef_mode = _parse_coefficient_cell(coef_raw)
+            row_weight_status = (
+                ValueStatus.CONFIRMED
+                if coef_val is not None
+                else (ValueStatus.MISSING if idx_coef is not None else ValueStatus.UNKNOWN)
+            )
             # Detect scale if explicitly shown like "15,5 / 20"
             scale_val: Decimal | None = None
             m_scale = re.search(r"/\s*(\d+(?:[.,]\d+)?)", note_raw)
@@ -1573,23 +1841,27 @@ def parse_pamplemousse_notes_html(
 
             # Classify row hierarchy level conservatively
             is_overall = any(
-                tok in low_label for tok in ("moyenne générale", "moyenne generale", "moyenne annuelle", "résultat annuel", "resultat annuel")
+                tok in ascii_label for tok in ("moyenne generale", "moyenne annuelle", "resultat annuel")
             ) or "overall" in combined_cls
             is_semester = (
                 "semestre" in combined_cls
                 or "semester" in combined_cls
-                or re.match(r"^(?:premier|second|deuxième|deuxieme|1er|2e|2ème)\s+semestre\b", low_label) is not None
-                or re.match(r"^semestre\s*\d+\b", low_label) is not None
-                or re.match(r"^s[1-6]\b", low_label) is not None
+                or re.match(r"^(?:premier|second|deuxieme|1er|2e|2eme)\s+semestre\b", ascii_label) is not None
+                or re.match(r"^semestre\s*\d+\b", ascii_label) is not None
+                or re.match(r"^s[1-6]\b", ascii_label) is not None
             )
             is_ue = (
                 not is_semester
                 and not is_overall
                 and (
-                    re.search(r"\b(?:[1-3]a[-_\s]*)?ue\s*\d+\b", low_label) is not None
-                    or "ue" in combined_cls.split()
-                    or "teaching_unit" in combined_cls
-                    or "unite" in combined_cls
+                    re.search(r"\b(?:[1-3]a[-_\s]*)?ue\s*\d*[a-z]*\b", ascii_label) is not None
+                    and (
+                        re.search(r"\b(?:[1-3]a[-_\s]*)?ue\s*\d+\b", ascii_label) is not None
+                        or re.search(r"\b[1-3]a[-_\s]+ue\b", ascii_label) is not None
+                        or "ue" in combined_cls.split()
+                        or "teaching_unit" in combined_cls
+                        or "unite" in combined_cls
+                    )
                 )
             )
 
@@ -1604,8 +1876,8 @@ def parse_pamplemousse_notes_html(
                         parent_external_id=year_id,
                         academic_year=detected_year,
                         weight=coef_val,
-                        weight_mode="raw" if coef_val is not None else None,
-                        weight_status=ValueStatus.CONFIRMED if coef_val is not None else ValueStatus.MISSING,
+                        weight_mode=coef_mode,
+                        weight_status=row_weight_status,
                         grade_value=grade_val,
                         grade_scale_max=scale_val,
                         grade_kind="official_aggregate",
@@ -1643,6 +1915,8 @@ def parse_pamplemousse_notes_html(
                             parent_external_id=year_id,
                             academic_year=detected_year,
                             semester=sem_norm,
+                            weight_status=ValueStatus.UNKNOWN,
+                            grade_status=ValueStatus.UNKNOWN,
                             observed_at=utc_now_iso(),
                             provenance={"format": "notes_html", "raw_label": label, "row": row_num},
                         )
@@ -1659,8 +1933,8 @@ def parse_pamplemousse_notes_html(
                             academic_year=detected_year,
                             semester=sem_norm,
                             weight=coef_val,
-                            weight_mode="raw" if coef_val is not None else None,
-                            weight_status=ValueStatus.CONFIRMED if coef_val is not None else ValueStatus.MISSING,
+                            weight_mode=coef_mode,
+                            weight_status=row_weight_status,
                             grade_value=grade_val,
                             grade_scale_max=scale_val,
                             grade_kind="official_aggregate",
@@ -1695,8 +1969,9 @@ def parse_pamplemousse_notes_html(
                             academic_year=detected_year,
                             semester=current_sem_label,
                             weight=coef_val,
-                            weight_mode="raw" if coef_val is not None else None,
-                            weight_status=ValueStatus.CONFIRMED if coef_val is not None else ValueStatus.MISSING,
+                            weight_mode=coef_mode,
+                            weight_status=row_weight_status,
+                            grade_status=ValueStatus.UNKNOWN,
                             observed_at=utc_now_iso(),
                             provenance={"format": "notes_html", "row": row_num},
                         )
@@ -1712,6 +1987,10 @@ def parse_pamplemousse_notes_html(
                             parent_external_id=ue_id,
                             academic_year=detected_year,
                             semester=current_sem_label,
+                            # Parent teaching_unit already carries this row's coefficient; never emit a duplicate missing coef.
+                            weight=None,
+                            weight_mode=None,
+                            weight_status=ValueStatus.UNKNOWN,
                             grade_value=grade_val,
                             grade_scale_max=scale_val,
                             grade_kind="official_aggregate",
@@ -1728,13 +2007,14 @@ def parse_pamplemousse_notes_html(
                     )
                 continue
 
-            # Distinguish Subject vs Assessment vs Sub-assessment using indentation, class, and bold hints
+            # Distinguish Subject vs Assessment vs Sub-assessment using indentation, class, bold, and leading dash hints
             is_explicit_assessment = any(
                 tok in combined_cls for tok in ("epreuve", "épreuve", "assessment", "eval", "sub", "child", "level-3", "level-4")
             )
             is_explicit_subject = any(
                 tok in combined_cls for tok in ("matiere", "matière", "subject", "module", "level-2")
             )
+            has_dash_prefix = bool(re.match(r"^\s*[-–•]\s+\S", label))
 
             is_child_of_subject = (
                 current_subject_id is not None
@@ -1744,7 +2024,8 @@ def parse_pamplemousse_notes_html(
                         not is_explicit_subject
                         and (
                             (current_subject_indent is not None and indent_px > current_subject_indent)
-                            or (not is_bold and current_subject_indent is not None and indent_px >= current_subject_indent and re.match(r"^(?:tp|td|ds|dm|cm|exam|partiel|projet|oral|contrôle|controle|test|qcm|final|midterm)\b", low_label))
+                            or has_dash_prefix
+                            or (not is_bold and current_subject_indent is not None and indent_px >= current_subject_indent and re.match(r"^(?:tp|td|ds|dm|cm|exam|partiel|projet|oral|contrôle|controle|test|qcm|final|midterm|devoir|soutenance)\b", low_label))
                         )
                     )
                 )
@@ -1774,8 +2055,8 @@ def parse_pamplemousse_notes_html(
                         semester=current_sem_label,
                         subject_code=subj_code,
                         weight=coef_val,
-                        weight_mode="raw" if coef_val is not None else None,
-                        weight_status=ValueStatus.CONFIRMED if coef_val is not None else ValueStatus.MISSING,
+                        weight_mode=coef_mode,
+                        weight_status=row_weight_status,
                         grade_value=None,  # Keep official subject average separate from assessments!
                         grade_status=ValueStatus.UNKNOWN,
                         observed_at=utc_now_iso(),
@@ -1798,6 +2079,10 @@ def parse_pamplemousse_notes_html(
                             parent_external_id=subj_id,
                             academic_year=detected_year,
                             semester=current_sem_label,
+                            # Parent subject already carries this row's coefficient; never emit a duplicate missing coef.
+                            weight=None,
+                            weight_mode=None,
+                            weight_status=ValueStatus.UNKNOWN,
                             grade_value=grade_val,
                             grade_scale_max=scale_val,
                             grade_kind="official_aggregate",
@@ -1837,8 +2122,8 @@ def parse_pamplemousse_notes_html(
                         academic_year=detected_year,
                         semester=current_sem_label,
                         weight=coef_val,
-                        weight_mode="raw" if coef_val is not None else None,
-                        weight_status=ValueStatus.CONFIRMED if coef_val is not None else ValueStatus.MISSING,
+                        weight_mode=coef_mode,
+                        weight_status=row_weight_status,
                         grade_value=grade_val,
                         grade_scale_max=scale_val,
                         grade_kind="assessment" if grade_val is not None else None,
@@ -1866,8 +2151,12 @@ def reconcile_pamplemousse_academics(
     """Reconcile Pamplemousse Inscriptions (catalog/coefficients) with Notes (detailed grades).
 
     - Inscriptions are authoritative for the enrolled subject catalog, codes, coefficients, and ECTS.
-    - Links Notes subjects & their child assessments/aggregates to the matching Inscriptions subject
-      ONLY when the match is unambiguous (exact code or unique normalized title within the same semester).
+    - Enriches matching Inscriptions UEs/subjects with official coefficients from Notes whenever
+      Inscriptions lacked a coefficient (e.g. UE-level coefficients present only on BULLETIN DÉTAILLÉ,
+      or subjects whose coefficient cell was blank in Inscriptions).
+    - Links Notes UEs/subjects & their child assessments/aggregates to the matching Inscriptions
+      node ONLY when the match is unambiguous (exact ID, exact code, or unique accent-insensitive
+      normalized title within the same semester).
     - Preserves ambiguity when multiple enrolled subjects share a name instead of silently merging.
     - Keeps raw coefficients untouched and emits parents strictly before children.
     """
@@ -1877,9 +2166,66 @@ def reconcile_pamplemousse_academics(
         return list(inscriptions_records)
 
     def _norm_title(t: str) -> str:
-        return re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()
+        return re.sub(r"[^a-z0-9]+", " ", _strip_accents(t).lower()).strip()
 
-    insc_subjects = [r for r in inscriptions_records if r.record_type == "subject"]
+    def _merge_weight(base: AcademicRecord, notes_rec: AcademicRecord) -> AcademicRecord:
+        """Enrich ``base`` with coefficient evidence from ``notes_rec`` without inventing values."""
+        prov = dict(base.provenance or {})
+        new_weight = base.weight
+        new_mode = base.weight_mode
+        new_status = base.weight_status
+
+        if base.weight is None and notes_rec.weight is not None:
+            new_weight = notes_rec.weight
+            new_mode = notes_rec.weight_mode
+            new_status = notes_rec.weight_status
+            prov["weight_source"] = "notes_html"
+        elif base.weight is not None and notes_rec.weight is not None and base.weight != notes_rec.weight:
+            prov["notes_weight"] = str(notes_rec.weight)
+            prov["weight_discrepancy"] = True
+        elif base.weight is None and base.weight_status == ValueStatus.UNKNOWN and notes_rec.weight_status == ValueStatus.MISSING:
+            new_status = ValueStatus.MISSING
+
+        if new_weight == base.weight and new_mode == base.weight_mode and new_status == base.weight_status and prov == (base.provenance or {}):
+            return base
+        return AcademicRecord(
+            source_kind=base.source_kind,
+            external_id=base.external_id,
+            record_type=base.record_type,
+            title=base.title,
+            parent_external_id=base.parent_external_id,
+            academic_year=base.academic_year,
+            cohort=base.cohort,
+            semester=base.semester,
+            specialization=base.specialization,
+            subject_code=base.subject_code,
+            weight=new_weight,
+            weight_mode=new_mode,
+            weight_status=new_status,
+            grade_value=base.grade_value,
+            grade_scale_max=base.grade_scale_max,
+            grade_kind=base.grade_kind,
+            grade_status=base.grade_status,
+            observed_at=base.observed_at,
+            rule_payload=base.rule_payload,
+            rule_verification_status=base.rule_verification_status,
+            provenance=prov,
+        )
+
+    merged: list[AcademicRecord] = list(inscriptions_records)
+    index_by_id: dict[str, int] = {r.external_id: i for i, r in enumerate(merged)}
+
+    # 1. Index Inscriptions UEs for exact/accent-insensitive reconciliation
+    ue_by_sem_title: dict[tuple[str, str], list[AcademicRecord]] = {}
+    ue_by_title: dict[str, list[AcademicRecord]] = {}
+    for r in merged:
+        if r.record_type == "teaching_unit":
+            nt = _norm_title(r.title)
+            ue_by_sem_title.setdefault((r.semester or "", nt), []).append(r)
+            ue_by_title.setdefault(nt, []).append(r)
+
+    # 2. Index Inscriptions Subjects for exact-code or accent-insensitive title reconciliation
+    insc_subjects = [r for r in merged if r.record_type == "subject"]
     by_code: dict[str, list[AcademicRecord]] = {}
     by_sem_title: dict[tuple[str, str], list[AcademicRecord]] = {}
     by_title: dict[str, list[AcademicRecord]] = {}
@@ -1893,6 +2239,19 @@ def reconcile_pamplemousse_academics(
     id_remap: dict[str, str] = {}
     ambiguous_notes_subjects: set[str] = set()
     for nr in notes_records:
+        if nr.record_type == "teaching_unit":
+            if nr.external_id in index_by_id:
+                idx = index_by_id[nr.external_id]
+                merged[idx] = _merge_weight(merged[idx], nr)
+                continue
+            nt = _norm_title(nr.title)
+            ue_matches = ue_by_sem_title.get((nr.semester or "", nt)) or ue_by_title.get(nt) or []
+            if len(ue_matches) == 1:
+                target_id = ue_matches[0].external_id
+                id_remap[nr.external_id] = target_id
+                idx = index_by_id[target_id]
+                merged[idx] = _merge_weight(merged[idx], nr)
+            continue
         if nr.record_type != "subject":
             continue
         matches: list[AcademicRecord] = []
@@ -1902,19 +2261,21 @@ def reconcile_pamplemousse_academics(
             nt = _norm_title(nr.title)
             matches = by_sem_title.get((nr.semester or "", nt)) or by_title.get(nt) or []
         if len(matches) == 1:
-            id_remap[nr.external_id] = matches[0].external_id
+            target_id = matches[0].external_id
+            id_remap[nr.external_id] = target_id
+            idx = index_by_id[target_id]
+            merged[idx] = _merge_weight(merged[idx], nr)
         elif len(matches) > 1:
             ambiguous_notes_subjects.add(nr.external_id)
 
-    merged: list[AcademicRecord] = list(inscriptions_records)
     seen_ids: set[str] = {r.external_id for r in merged}
 
     for nr in notes_records:
-        # Skip duplicate year/semester/ue already emitted by inscriptions
+        # Skip duplicate year/semester/ue already emitted by inscriptions (weights already merged above)
         if nr.external_id in seen_ids:
             continue
-        # If this notes subject cleanly matched an inscriptions subject, skip duplicate subject node
-        if nr.record_type == "subject" and nr.external_id in id_remap:
+        # If this notes UE or subject cleanly matched an inscriptions record, skip duplicate node
+        if nr.record_type in ("subject", "teaching_unit") and nr.external_id in id_remap:
             continue
         new_parent = id_remap.get(nr.parent_external_id or "", nr.parent_external_id)
         prov = dict(nr.provenance or {})
@@ -2064,8 +2425,17 @@ def resolve_pamplemousse_scopes(raw: Any) -> set[str]:
     return resolved
 
 
+_REAL_REQUESTS_SESSION = requests.Session
+
+
 class PamplemousseConnector(SourceConnector):
-    """Authorized read-only Pamplemousse connector with ICS/CSV/JSON fallbacks."""
+    """Authorized read-only Pamplemousse connector with ICS/CSV/JSON fallbacks.
+
+    Reuses a thread-local pooled ``requests.Session`` (``HTTPAdapter`` with TCP/TLS
+    keep-alive) hydrated from the private ``session_cookies.json`` snapshot,
+    automatically invalidating whenever cookies change on disk or ``requests.Session``
+    is replaced in unit tests.
+    """
 
     source_kind = SourceKind.PAMPLEMOUSSE
 
@@ -2081,7 +2451,94 @@ class PamplemousseConnector(SourceConnector):
         self._auth = auth_adapter or EnsaiAuthAdapter(config)
         self._page_fetcher = page_fetcher
         self._rate_limiter = rate_limiter or RateLimiter(config.rate_limit_min_interval_sec)
+        self._http_local = threading.local()
+        self._cookie_cache_lock = threading.Lock()
+        self._cookie_snapshot_cache: tuple[tuple[int, int], list[dict[str, Any]]] | None = None
         self.last_stats: dict[str, Any] = {}
+
+    def close(self) -> None:
+        """Close any cached thread-local pooled HTTP session cleanly."""
+        cached = getattr(self._http_local, "cookie_session", None)
+        if cached is not None:
+            try:
+                cached[0].close()
+            except Exception:
+                pass
+            self._http_local.cookie_session = None
+
+    def _load_persisted_pamplemousse_cookies_with_sig(self) -> tuple[list[dict[str, Any]], tuple[int, int] | None]:
+        """Read allowlisted Pamplemousse cookies, cached by file ``(mtime_ns, size)``."""
+        profile_dir = self._auth.profile_dir_for(SourceKind.PAMPLEMOUSSE)
+        cookie_path = profile_dir / SESSION_COOKIES_FILENAME
+        if not cookie_path.is_file() or cookie_path.is_symlink():
+            with self._cookie_cache_lock:
+                self._cookie_snapshot_cache = None
+            return [], None
+        try:
+            st = cookie_path.stat()
+            sig = (int(st.st_mtime_ns), int(st.st_size))
+        except OSError:
+            return [], None
+        with self._cookie_cache_lock:
+            cached = self._cookie_snapshot_cache
+            if cached is not None and cached[0] == sig:
+                return cached[1], sig
+        try:
+            fd = os.open(str(cookie_path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception:
+            return [], None
+        raw_cookies = data.get("cookies", []) if isinstance(data, dict) else []
+        pamp_host = urlparse(self._config.pamplemousse_base_url).netloc.lower()
+        valid: list[dict[str, Any]] = []
+        for c in self._auth._filter_institutional_cookies(raw_cookies):
+            dom = str(c.get("domain") or "").lstrip(".").lower()
+            if dom and (pamp_host == dom or pamp_host.endswith(f".{dom}")):
+                valid.append(c)
+        with self._cookie_cache_lock:
+            self._cookie_snapshot_cache = (sig, valid)
+        return valid, sig
+
+    def _get_pooled_cookie_session(self) -> tuple[Any, bool] | None:
+        """Return a thread-local pooled ``requests.Session`` for Pamplemousse HTTP calls."""
+        cookies, cookie_sig = self._load_persisted_pamplemousse_cookies_with_sig()
+        if not cookies:
+            return None
+        session_cls = requests.Session
+        is_real_session = session_cls is _REAL_REQUESTS_SESSION
+        cached = getattr(self._http_local, "cookie_session", None)
+        if (
+            is_real_session
+            and cached is not None
+            and cached[1] is session_cls
+            and cached[2] == cookie_sig
+        ):
+            return cached[0], True
+        if cached is not None:
+            try:
+                cached[0].close()
+            except Exception:
+                pass
+            self._http_local.cookie_session = None
+
+        session = session_cls()
+        if is_real_session and hasattr(session, "mount"):
+            adapter = HTTPAdapter(pool_connections=4, pool_maxsize=8)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+        session.headers.update({"User-Agent": DEFAULT_ENSAI_USER_AGENT})
+        for c in cookies:
+            session.cookies.set(
+                str(c["name"]),
+                str(c["value"]),
+                domain=str(c.get("domain") or "").lstrip(".") or None,
+                path=str(c.get("path") or "/"),
+            )
+        if is_real_session:
+            self._http_local.cookie_session = (session, session_cls, cookie_sig)
+            return session, True
+        return session, False
 
     def capabilities(self) -> ConnectorCapabilities:
         return ConnectorCapabilities(
@@ -2102,46 +2559,15 @@ class PamplemousseConnector(SourceConnector):
         return self._auth.ensure_authenticated(SourceKind.PAMPLEMOUSSE, interactive=interactive)
 
     def _cookie_session_fetch_html(self, url: str) -> str | None:
-        """Fast authenticated HTML fetch using persisted Pamplemousse cookies (no Chromium launch).
+        """Fast authenticated HTML fetch using a pooled Pamplemousse cookie session.
 
-        Returns None when persisted cookies are absent or expired/redirected to CAS so callers
-        fall back seamlessly to Playwright protected-page access.
+        Returns ``None`` when persisted cookies are absent or expired/redirected to CAS
+        so callers fall back seamlessly to Playwright protected-page access.
         """
-        import json as _json
-        import os as _os
-        import requests as _requests
-        from ..auth.ensai import DEFAULT_ENSAI_USER_AGENT, SESSION_COOKIES_FILENAME
-
-        profile_dir = self._auth.profile_dir_for(SourceKind.PAMPLEMOUSSE)
-        cookie_path = profile_dir / SESSION_COOKIES_FILENAME
-        if not cookie_path.is_file() or cookie_path.is_symlink():
+        pooled = self._get_pooled_cookie_session()
+        if pooled is None:
             return None
-        try:
-            fd = _os.open(str(cookie_path), _os.O_RDONLY | getattr(_os, "O_NOFOLLOW", 0))
-            with _os.fdopen(fd, "r", encoding="utf-8") as fh:
-                data = _json.load(fh)
-        except Exception:
-            return None
-        raw_cookies = data.get("cookies", []) if isinstance(data, dict) else []
-        pamp_host = urlparse(self._config.pamplemousse_base_url).netloc.lower()
-        cookies = [
-            c
-            for c in self._auth._filter_institutional_cookies(raw_cookies)
-            if pamp_host == str(c.get("domain") or "").lstrip(".").lower()
-            or pamp_host.endswith("." + str(c.get("domain") or "").lstrip(".").lower())
-        ]
-        if not cookies:
-            return None
-
-        session = _requests.Session()
-        session.headers.update({"User-Agent": DEFAULT_ENSAI_USER_AGENT})
-        for c in cookies:
-            session.cookies.set(
-                str(c["name"]),
-                str(c["value"]),
-                domain=str(c.get("domain") or "").lstrip(".") or None,
-                path=str(c.get("path") or "/"),
-            )
+        session, is_pooled = pooled
 
         current_url = url
         try:
@@ -2191,7 +2617,8 @@ class PamplemousseConnector(SourceConnector):
         except Exception:
             return None
         finally:
-            session.close()
+            if not is_pooled:
+                session.close()
 
     def _fetch_html(
         self,
@@ -2260,45 +2687,19 @@ class PamplemousseConnector(SourceConnector):
 
     def _load_persisted_pamplemousse_cookies(self) -> list[dict[str, Any]]:
         """Read allowlisted Pamplemousse cookies from the private 0o600 session snapshot."""
-        import os
-
-        profile_dir = self._auth.profile_dir_for(SourceKind.PAMPLEMOUSSE)
-        cookie_path = profile_dir / SESSION_COOKIES_FILENAME
-        if not cookie_path.is_file():
-            return []
-        try:
-            fd = os.open(str(cookie_path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-            with os.fdopen(fd, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        except Exception:
-            return []
-        raw_cookies = data.get("cookies", []) if isinstance(data, dict) else []
-        pamp_host = urlparse(self._config.pamplemousse_base_url).netloc.lower()
-        valid: list[dict[str, Any]] = []
-        for c in self._auth._filter_institutional_cookies(raw_cookies):
-            dom = str(c.get("domain") or "").lstrip(".").lower()
-            if dom and (pamp_host == dom or pamp_host.endswith(f".{dom}")):
-                valid.append(c)
-        return valid
+        cookies, _ = self._load_persisted_pamplemousse_cookies_with_sig()
+        return cookies
 
     def _http_get_text_with_cookies(self, url: str) -> tuple[str, str] | None:
-        """Fetch raw text (ICS or HTML) directly via authenticated requests.Session without triggering Chromium download errors."""
+        """Fetch raw text (ICS or HTML) directly via a pooled authenticated ``requests.Session``."""
         if not _is_allowed_pamplemousse_ical_url(url, self._config.pamplemousse_base_url):
             raise PermissionDeniedError(
                 f"Blocked unauthorized Pamplemousse iCalendar host: {sanitize_url_for_logs(url)}"
             )
-        cookies = self._load_persisted_pamplemousse_cookies()
-        if not cookies:
+        pooled = self._get_pooled_cookie_session()
+        if pooled is None:
             return None
-        session = requests.Session()
-        session.headers.update({"User-Agent": DEFAULT_ENSAI_USER_AGENT})
-        for c in cookies:
-            session.cookies.set(
-                str(c["name"]),
-                str(c["value"]),
-                domain=str(c.get("domain") or "").lstrip(".") or None,
-                path=str(c.get("path") or "/"),
-            )
+        session, is_pooled = pooled
         try:
             current_url = url
             resp: requests.Response | None = None
@@ -2337,7 +2738,8 @@ class PamplemousseConnector(SourceConnector):
                 text = raw_bytes.decode("latin-1", errors="replace")
             return text, current_url
         finally:
-            session.close()
+            if not is_pooled:
+                session.close()
 
     def _fetch_ical_payload(
         self,
@@ -3029,13 +3431,27 @@ class PamplemousseConnector(SourceConnector):
     ) -> ChangePage:
         """Acquire Pamplemousse timetable (EDT/iCalendar), Inscriptions catalog, and Detailed Notes.
 
-        Supported scope keys:
-        - ics_text / csv_text / json_data / timetable_html / academic_html /
-          inscriptions_html / notes_html / fullcalendar_json / fullcalendar_html (offline/fixture)
-        - academic_year: optional year label override (e.g. '2026-2027')
-        - range_start / range_end: optional datetime bounds for timetable events
-        - days_back / days_ahead: optional int day window when range_start/range_end omitted
-        - max_items / page_size: bounded pagination
+        Supports independent sync slices via ``sections`` (``"timetable"``, ``"grades"``,
+        ``"catalog"``, or ``"all"``) so frequent timetable refreshes never touch catalog or
+        grade endpoints. Separates portal-confirmed ``source_confirmed_academic_year`` from
+        caller-requested ``academic_year``, preserves explicit missing/ambiguous grades and
+        coefficients as ``None`` (never fabricating ``0``), and skips unchanged records via
+        deterministic wall-clock-free ``known_versions`` hashes (skipping academic facts only
+        as a consistent whole so hierarchy and sibling-weight derivation remain intact).
+
+        Args:
+            scope: Optional scope dictionary supporting:
+                - ``sections`` / ``pamplemousse_scope``: Slice selector (``timetable``, ``grades``,
+                  ``catalog``, or ``all``).
+                - ``academic_year``: Requested year label (e.g. ``"2026-2027"``).
+                - ``known_versions``: ``dict[external_id, remote_version]`` for incremental skip.
+                - ``range_start`` / ``range_end`` / ``days_back`` / ``days_ahead``: Timetable bounds.
+                - ``ics_text`` / ``csv_text`` / ``json_data`` / ``*_html``: Offline fixture inputs.
+                - ``max_items`` / ``page_size``: Bounded pagination controls.
+            cursor: Optional numeric page offset cursor.
+
+        Returns:
+            ``ChangePage`` containing normalized timetable events and/or academic records.
         """
         opts = scope or {}
         raw_sections = (
@@ -3285,11 +3701,12 @@ class PamplemousseConnector(SourceConnector):
                     warnings.append(f"pamplemousse_edt_extraction_failed:{type(exc).__name__}")
 
             # 3. Academic catalog & coefficients — Inscriptions (`index.php?p=107`, catalog slice only)
+            has_leos_menu_paths = "index.php?p=" in home_html.lower()
             insc_url = (
                 nav.get("inscriptions")
                 or (
                     urljoin(start_url, PAMPLEMOUSSE_INSCRIPTIONS_PATH)
-                    if not inscriptions_academics and not discovered_explicit
+                    if not inscriptions_academics and (has_leos_menu_paths or not discovered_explicit)
                     else None
                 )
             ) if want_catalog else None
@@ -3314,12 +3731,48 @@ class PamplemousseConnector(SourceConnector):
                 except Exception as exc:
                     warnings.append(f"pamplemousse_inscriptions_failed:{type(exc).__name__}")
 
+            # 3b. Optional pedagogical program / curriculum page when catalog still empty or lacks coefficients
+            prog_url = nav.get("program") if want_catalog else None
+            if (
+                want_catalog
+                and prog_url
+                and prog_url != insc_url
+                and (
+                    not inscriptions_academics
+                    or not any(r.record_type == "subject" and r.weight is not None for r in inscriptions_academics)
+                )
+            ):
+                try:
+                    prog_html = self._fetch_html(
+                        prog_url,
+                        interactive=interactive,
+                        allow_auto_reauth=allow_auto_reauth,
+                    )
+                    pages_visited.append("program")
+                    _capture_source_year(prog_html)
+                    if source_confirmed_year:
+                        detected_year = source_confirmed_year
+                    prog_recs = parse_pamplemousse_inscriptions_html(
+                        prog_html, academic_year=detected_year
+                    )
+                    if prog_recs:
+                        if not inscriptions_academics:
+                            inscriptions_academics.extend(prog_recs)
+                        else:
+                            inscriptions_academics = reconcile_pamplemousse_academics(
+                                inscriptions_academics, prog_recs
+                            )
+                except AuthenticationRequiredError:
+                    raise
+                except Exception as exc:
+                    warnings.append(f"pamplemousse_program_failed:{type(exc).__name__}")
+
             # 4. Detailed grades — Notes (`index.php?p=1052`, grades slice only)
             notes_url = (
                 nav.get("notes")
                 or (
                     urljoin(start_url, PAMPLEMOUSSE_NOTES_PATH)
-                    if not notes_academics and not discovered_explicit
+                    if not notes_academics and (has_leos_menu_paths or not discovered_explicit)
                     else None
                 )
             ) if want_grades else None
@@ -3347,7 +3800,7 @@ class PamplemousseConnector(SourceConnector):
                     warnings.append(f"pamplemousse_notes_failed:{type(exc).__name__}")
 
             # 5. Additional explicit subpages only when running full (all-slices) Pamplemousse discovery
-            visited_urls = {start_url, ical_url, edt_url, insc_url, notes_url}
+            visited_urls = {start_url, ical_url, edt_url, insc_url, prog_url, notes_url}
             if active_scopes == PAMPLEMOUSSE_SYNC_SCOPES:
                 for sub_url in discovered_explicit:
                     if sub_url in visited_urls:

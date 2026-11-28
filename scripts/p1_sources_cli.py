@@ -10,6 +10,7 @@ Normal local and academic imports route through Codex's unified Runtime & SQLite
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import os
 import sys
@@ -39,6 +40,9 @@ from backend.app.modules.ingestion import (  # noqa: E402
 from backend.app.modules.ingestion.codex_bridge import (  # noqa: E402
     _to_codex_records,
     runtime_config_from_codex_settings,
+)
+from backend.app.modules.ingestion.connectors.ensora_drive import (  # noqa: E402
+    APPROVED_ACADEMIC_COHORT_FOLDERS,
 )
 
 
@@ -342,12 +346,16 @@ def main(argv: list[str] | None = None) -> int:
     p_pamp.add_argument("--non-interactive", action="store_true", help="Never open a visible browser window on session expiry.")
     p_pamp.add_argument("--yes", action="store_true")
 
-    p_drive = sub.add_parser("discover-drive", help="Discover and optionally verify downloads/parsing inside approved Ensora academic Drive folders (1A/2A/3A; Global excluded).")
+    allowed_cohorts_str = "/".join(APPROVED_ACADEMIC_COHORT_FOLDERS)
+    p_drive = sub.add_parser(
+        "discover-drive",
+        help=f"Discover and optionally verify downloads/parsing inside approved Ensora academic Drive folders ({allowed_cohorts_str}; Global excluded).",
+    )
     p_drive.add_argument(
         "--cohort",
         action="append",
         default=None,
-        help="Optional subset of approved academic folders (1A, 2A, 3A). Global is always excluded.",
+        help=f"Optional subset of approved academic folders ({', '.join(APPROVED_ACADEMIC_COHORT_FOLDERS)}). Global is always excluded.",
     )
     p_drive.add_argument("--max-files", type=int, default=25)
     p_drive.add_argument("--all", action="store_true", help="Exhaustive recursive discovery across all pages within the approved Ensora root.")
@@ -356,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
     p_drive.add_argument("--only-external-id", action="append", default=None, help="Selectively verify/retry only specific Drive external_id(s).")
     p_drive.add_argument("--retry-failed", type=Path, default=None, help="Retry only failed/unparsed Drive external_ids from a prior --export-json report.")
     p_drive.add_argument("--max-download-mb", type=int, default=None, help="Optional per-file download size limit in MiB for diagnostics.")
+    p_drive.add_argument("--workers", type=int, default=1, help="Bounded download/parse worker count for --verify-downloads/--verify-all-downloads (1..6, default 1).")
     p_drive.add_argument("--yes", action="store_true")
 
     p_cal = sub.add_parser("sync-calendar", help="Sync read-only Google Calendar availability.")
@@ -374,6 +383,36 @@ def main(argv: list[str] | None = None) -> int:
     p_acad.add_argument("--path", type=Path, required=True)
     p_acad.add_argument("--dry-run", action="store_true", help="Validate without committing to SQLite.")
     p_acad.add_argument("--data-dir", type=Path, default=None, help="Optional override for local runtime data dir.")
+
+    p_reprocess = sub.add_parser(
+        "reprocess-stored", help="Reparse selected authorized documents from local blobs."
+    )
+    p_reprocess.add_argument("--source", choices=["moodle", "ensora_drive", "local"], required=True)
+    p_reprocess.add_argument("--document-id", action="append", required=True)
+    p_reprocess.add_argument("--data-dir", type=Path, default=None)
+    p_reprocess.add_argument("--pdf-ocr", action="store_true")
+    p_reprocess.add_argument("--yes", action="store_true")
+
+    p_reconcile = sub.add_parser(
+        "reconcile-stored", help="Match persisted documents against the authorized local academic catalog."
+    )
+    p_reconcile.add_argument("--data-dir", type=Path, default=None)
+    p_reconcile.add_argument("--yes", action="store_true")
+
+    p_rag = sub.add_parser(
+        "index-rag",
+        help="Incrementally build/update the local derived RAG index from persisted P1 chunks (zero redownloads; redacted stats only).",
+    )
+    p_rag.add_argument("--data-dir", type=Path, default=None, help="Optional override for local runtime data dir.")
+    p_rag.add_argument(
+        "--embedder",
+        choices=["feature_hash", "ollama"],
+        default="feature_hash",
+        help="Embedding provider: deterministic feature_hash (default, zero downloads) or local loopback ollama neural_dense.",
+    )
+    p_rag.add_argument("--model", type=str, default=None, help="Optional model ID when --embedder=ollama (e.g. bge-m3).")
+    p_rag.add_argument("--dimension", type=int, default=256, help="Embedding vector dimension (default 256 for feature_hash; e.g. 1024 for bge-m3).")
+    p_rag.add_argument("--base-url", type=str, default="http://127.0.0.1:11434", help="Loopback Ollama URL when --embedder=ollama.")
 
     args = parser.parse_args(argv)
     settings, config = _load_shared_config(args.config_dir)
@@ -619,6 +658,14 @@ def main(argv: list[str] | None = None) -> int:
         all_items = []
         all_warnings: list[str] = []
         all_errors: list[str] = []
+        traversal_counts: Counter[str] = Counter()
+        formats: Counter[str] = Counter()
+        traversal_keys = (
+            "courses_traversed", "courses_excluded_by_page_year", "sections_discovered",
+            "sections_traversed", "folders_traversed", "unavailable_sections_skipped",
+            "resources_excluded", "resources_discovered", "resources_unchanged_skipped",
+            "html_pages_extracted", "failed_resources",
+        )
         cursor: str | None = None
         complete = True
         try:
@@ -636,6 +683,8 @@ def main(argv: list[str] | None = None) -> int:
                 all_items.extend(page.items)
                 all_warnings.extend(page.warnings)
                 all_errors.extend(page.errors)
+                traversal_counts.update({key: conn.last_stats.get(key, 0) for key in traversal_keys})
+                formats.update(conn.last_stats.get("formats_by_extension", {}))
                 complete = page.complete
                 if page.complete or not page.next_cursor:
                     break
@@ -727,10 +776,11 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             }
 
+        moodle_stats = {**conn.last_stats, **traversal_counts, "formats_by_extension": dict(formats)}
         summary = {
             "source": "moodle",
             **_summarize_records(all_items),
-            "moodle_stats": dict(conn.last_stats),
+            "moodle_stats": moodle_stats,
             "complete": complete,
             "warning_count": len(all_warnings),
             "warnings": all_warnings,
@@ -744,7 +794,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.export_json,
                 {
                     "items": [r.to_dict() for r in all_items],
-                    "stats": conn.last_stats,
+                    "stats": moodle_stats,
                     "warnings": all_warnings,
                     "download_verification": download_verification,
                 },
@@ -836,9 +886,20 @@ def main(argv: list[str] | None = None) -> int:
         cursor = None
         complete = True
         max_files_opt = None if args.all else args.max_files
+        retry_ids = _load_retry_external_ids(args.retry_failed, args.only_external_id)
+        verify_cap = (
+            None
+            if (args.verify_all_downloads or retry_ids)
+            else (args.verify_downloads if (args.verify_downloads and args.verify_downloads > 0) else 0)
+        )
+        discovery_only_mode = verify_cap == 0
         while True:
             page = conn.list_changes(
-                scope={"cohorts": args.cohort, "max_files": max_files_opt},
+                scope={
+                    "cohorts": args.cohort,
+                    "max_files": max_files_opt,
+                    "discovery_only": discovery_only_mode,
+                },
                 cursor=cursor,
             )
             all_items.extend(page.items)
@@ -859,17 +920,16 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.max_download_mb is not None and args.max_download_mb > 0:
             config.max_download_bytes = int(args.max_download_mb) * 1024 * 1024
-        retry_ids = _load_retry_external_ids(args.retry_failed, args.only_external_id)
-        verify_cap = (
-            None
-            if (args.verify_all_downloads or retry_ids)
-            else (args.verify_downloads if (args.verify_downloads and args.verify_downloads > 0) else 0)
-        )
 
         download_verification = None
         if verify_cap is None or verify_cap > 0:
             parser_reg = DocumentParserRegistry()
-            attempted = 0
+            selected_items = [
+                rec for rec in all_items if (not retry_ids or rec.external_id in retry_ids)
+            ]
+            if verify_cap is not None:
+                selected_items = selected_items[:verify_cap]
+            attempted = len(selected_items)
             downloaded_ok = 0
             parsed_ok = 0
             partially_parsed = 0
@@ -882,44 +942,63 @@ def main(argv: list[str] | None = None) -> int:
             parsed_by_mime: dict[str, int] = {}
             unparsed_by_mime: dict[str, int] = {}
             partial_by_category: dict[str, int] = {}
-            for rec in all_items:
-                if verify_cap is not None and attempted >= verify_cap:
-                    break
-                if retry_ids and rec.external_id not in retry_ids:
+            worker_count = max(1, min(int(getattr(args, "workers", 1) or 1), 6))
+            if worker_count > 1 and len(selected_items) > 1:
+                fetched_rows = conn.fetch_blobs_concurrent(selected_items, max_workers=worker_count)
+            else:
+                fetched_rows = []
+                for rec in selected_items:
+                    try:
+                        fetched_rows.append((rec, conn.fetch_blob(rec), None))
+                    except Exception as exc:
+                        fetched_rows.append((rec, None, exc))
+            ok_records_and_blobs = []
+            for rec, blob, exc in fetched_rows:
+                if exc is not None or blob is None:
+                    err = exc or RuntimeError("Empty Drive download result.")
+                    failure_types.append(type(err).__name__)
+                    failure_details.append(_classify_download_error(rec, err))
                     continue
-                attempted += 1
-                try:
-                    blob = conn.fetch_blob(rec)
-                    downloaded_ok += 1
-                    parsed = parser_reg.parse_bytes(
+                downloaded_ok += 1
+                ok_records_and_blobs.append((rec, blob))
+            parsed_docs = (
+                parser_reg.parse_batch_parallel(
+                    [(blob.content, blob.filename, blob.mime_type, None) for _, blob in ok_records_and_blobs],
+                    max_workers=worker_count,
+                )
+                if worker_count > 1 and len(ok_records_and_blobs) > 2
+                else [
+                    parser_reg.parse_bytes(
                         blob.content,
                         filename=blob.filename,
                         mime_type=blob.mime_type,
+                        precomputed_sha256=blob.content_hash,
                     )
-                    partial_cat = _categorize_partial_parse(parsed)
-                    if parsed and parsed.blocks:
-                        total_blocks += len(parsed.blocks)
-                        parsed_by_mime[blob.mime_type] = parsed_by_mime.get(blob.mime_type, 0) + 1
-                        if partial_cat and partial_cat != "mixed_media_pages_present":
-                            partially_parsed += 1
-                            partial_by_category[partial_cat] = partial_by_category.get(partial_cat, 0) + 1
-                        else:
-                            parsed_ok += 1
-                            if partial_cat == "mixed_media_pages_present":
-                                partial_by_category[partial_cat] = partial_by_category.get(partial_cat, 0) + 1
+                    for _, blob in ok_records_and_blobs
+                ]
+            )
+            for (rec, blob), parsed in zip(ok_records_and_blobs, parsed_docs):
+                partial_cat = _categorize_partial_parse(parsed)
+                if parsed and parsed.blocks:
+                    total_blocks += len(parsed.blocks)
+                    parsed_by_mime[blob.mime_type] = parsed_by_mime.get(blob.mime_type, 0) + 1
+                    if partial_cat and partial_cat != "mixed_media_pages_present":
+                        partially_parsed += 1
+                        partial_by_category[partial_cat] = partial_by_category.get(partial_cat, 0) + 1
                     else:
-                        if partial_cat in ("scanned_pages_without_ocr", "ocr_unavailable"):
-                            partially_parsed += 1
+                        parsed_ok += 1
+                        if partial_cat == "mixed_media_pages_present":
                             partial_by_category[partial_cat] = partial_by_category.get(partial_cat, 0) + 1
-                        unparsed_external_ids.append(rec.external_id)
-                        unparsed_by_mime[blob.mime_type] = unparsed_by_mime.get(blob.mime_type, 0) + 1
-                        if parsed and parsed.parser_name == "unsupported":
-                            unsupported_count += 1
-                        else:
-                            parsed_empty += 1
-                except Exception as exc:
-                    failure_types.append(type(exc).__name__)
-                    failure_details.append(_classify_download_error(rec, exc))
+                else:
+                    if partial_cat in ("scanned_pages_without_ocr", "ocr_unavailable"):
+                        partially_parsed += 1
+                        partial_by_category[partial_cat] = partial_by_category.get(partial_cat, 0) + 1
+                    unparsed_external_ids.append(rec.external_id)
+                    unparsed_by_mime[blob.mime_type] = unparsed_by_mime.get(blob.mime_type, 0) + 1
+                    if parsed and parsed.parser_name == "unsupported":
+                        unsupported_count += 1
+                    else:
+                        parsed_empty += 1
             download_verification = {
                 "attempted": attempted,
                 "downloaded_ok": downloaded_ok,
@@ -1119,6 +1198,90 @@ def main(argv: list[str] | None = None) -> int:
         }
         _print_json(summary)
         return 0 if summary["errors"] == 0 else 1
+
+    if args.command == "reconcile-stored":
+        from backend.app.contracts.sources import SourceKind as CodexSourceKind
+        from backend.app.core.runtime import Runtime
+
+        if not _confirm_live_operation("Reconcile documents against the stored academic catalog", yes=args.yes):
+            return 1
+        run_settings = settings.model_copy(
+            update={"local_data_dir": args.data_dir.expanduser().absolute()}
+        ) if args.data_dir else settings
+        with Runtime(run_settings) as runtime:
+            if not runtime.consent.allowed(CodexSourceKind.PAMPLEMOUSSE, "read"):
+                _print_json({"status": "read_consent_required"})
+                return 2
+            result = runtime.reconcile_academic_documents(CodexSourceKind.PAMPLEMOUSSE)
+            _print_json(result)
+            return 1 if result["errors"] else 0
+
+    if args.command == "reprocess-stored":
+        from backend.app.contracts.sources import SourceKind as CodexSourceKind
+        from backend.app.core.runtime import Runtime
+        from backend.app.modules.ingestion.codex_bridge import CodexParserBridge
+        from backend.app.modules.ingestion.parsers.registry import DocumentParserRegistry
+
+        document_ids = list(dict.fromkeys(args.document_id))
+        if len(document_ids) > 100:
+            parser.error("reprocess-stored accepts up to 100 document IDs")
+        if not _confirm_live_operation("Reprocess selected local document blobs", yes=args.yes):
+            return 1
+        run_settings = settings.model_copy(
+            update={"local_data_dir": args.data_dir.expanduser().absolute()}
+        ) if args.data_dir else settings
+        source = CodexSourceKind(args.source)
+        with Runtime(run_settings) as runtime:
+            if not runtime.consent.allowed(source, "read"):
+                _print_json({"status": "read_consent_required"})
+                return 2
+            if args.pdf_ocr:
+                runtime.pipeline.parser = CodexParserBridge(
+                    DocumentParserRegistry(enable_pdf_ocr=True)
+                )
+            result = runtime.pipeline.reprocess_documents(
+                [runtime.connection_ids[source]],
+                document_ids=document_ids,
+                limit=len(document_ids),
+                is_authorized=lambda _: runtime.consent.allowed(source, "read"),
+            )
+            _print_json(result)
+            return 1 if result["errors"] or result["reprocessed"] != len(document_ids) else 0
+
+    if args.command == "index-rag":
+        from backend.app.modules.rag import RagEngine, build_embedding_provider
+
+        data_dir = (
+            args.data_dir.expanduser().absolute()
+            if args.data_dir
+            else settings.local_data_dir.expanduser().absolute()
+        )
+        p1_db = data_dir / "ensora.sqlite3"
+        if not p1_db.is_file():
+            _print_json(
+                {
+                    "status": "NO_LOCAL_P1_DATABASE",
+                    "detail": "Local P1 SQLite database does not exist yet in the selected data directory.",
+                }
+            )
+            return 2
+        embedder = build_embedding_provider(
+            args.embedder,
+            model_id=args.model,
+            dimension=args.dimension,
+            base_url=args.base_url,
+        )
+        engine = RagEngine.from_local_data_dir(data_dir, embedder=embedder)
+        receipt = engine.index()
+        stats = engine.store.stats()
+        _print_json(
+            {
+                "status": "OK",
+                "receipt": receipt.to_dict(),
+                "index_stats": stats,
+            }
+        )
+        return 0
 
     return 1
 

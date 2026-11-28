@@ -55,6 +55,22 @@ from backend.app.modules.ingestion.contracts import SourceKind, ValueStatus
 from backend.app.modules.ingestion.parsers.registry import DocumentParserRegistry
 
 
+def test_moodle_bulk_year_filter_uses_explicit_course_page_year(tmp_path: Path) -> None:
+    config = SourcesRuntimeConfig.load(config_dir=tmp_path, environ={})
+    connector = MoodleConnector(config, rate_limiter=RateLimiter(0.0))
+    page = """<title>Statistics 2025-2026</title>
+      <a href="/mod/resource/view.php?id=41">Lecture notes</a>"""
+    scope = {
+        "dashboard_html": """<div class="block_myoverview"><div class="course-card">
+          <a href="/course/view.php?id=42">Statistics</a></div></div>""",
+        "course_html_by_id": {"42": page},
+    }
+    assert connector.list_changes(scope={**scope, "academic_year": "2026-2027"}).items == ()
+    assert connector.last_stats["courses_excluded_by_page_year"] == 1
+    included = connector.list_changes(scope={**scope, "academic_year": "2025-2026"})
+    assert any(record.payload["academic_year"] == "2025-2026" for record in included.items)
+
+
 def test_moodle_tab_based_sections_inline_html_academic_year_and_parsing(tmp_path: Path) -> None:
     """Moodle discovers full enrolled courses (not just recent), traverses accessible `&section=N` tabs,
     skips disabled/unavailable tabs, extracts inline HTML instructions + notebooks, parses downloads,
@@ -3090,3 +3106,203 @@ def test_sprint7_ensora_drive_exclude_global_only_1a_2a_3a_scope_shortcuts_check
         cur = pg.next_cursor
     assert "ensora_drive:f_global_01" not in resumed_ids
     assert global_folder_ids.isdisjoint(set(listed_folder_ids))
+
+
+def test_sprint8_moodle_year_filter_drive_nonstalling_paging_and_academic_reconciliation(
+    tmp_path: Path,
+) -> None:
+    """Sprint 8 regression:
+    1. Moodle academic-year filtering retains active ongoing/reused courses (enddate=0, e.g. course 505),
+       explicit-year matches, and spanning multi-year courses while still strictly excluding explicit
+       past-year courses, closed courses ending before the requested year, past-timeline courses, and
+       future-year courses.
+    2. AcademicEntityResolver + CodexEntityMatcherBridge automatically matches real ENSAI Drive folder
+       naming variations (French plurals, Pamplemousse code/parenthetical prefixes, bilingual FR/EN
+       equivalents, semester disambiguation) while keeping genuine ties unconfirmed for human review.
+    3. EnsoraDriveConnector in-process Page 1->2 continuation performs ZERO redundant upfront `files.get`
+       boundary calls (eliminating the Page-1 discover-only stall) while cross-process resume still
+       lazily revalidates queued folders and blocks tampered Global entries.
+    4. Single source of truth: Drive allowed cohorts derive from `backend.app.core.drive_scope` and
+       `RECOMMENDED_SYNC_POLICY_SECONDS` derives from `backend.app.contracts.sync.DEFAULT_SYNC_INTERVALS_MINUTES`.
+    """
+    import json as _json
+    import re as _re
+    from datetime import datetime, timezone
+    from backend.app.contracts.sources import (
+        ClassificationResult as CodexClassificationResult,
+        Document as CodexDocument,
+        Provenance as CodexProvenance,
+        SourceKind as CodexSourceKind,
+    )
+    from backend.app.contracts.sync import DEFAULT_SYNC_INTERVALS_MINUTES
+    from backend.app.core.drive_scope import ENSORA_DRIVE_ALLOWED_TOP_LEVEL_FOLDERS
+    from backend.app.modules.ingestion.auth.google_oauth import GoogleOAuthAdapter
+    from backend.app.modules.ingestion.codex_bridge import CodexEntityMatcherBridge
+    from backend.app.modules.ingestion.connectors.base import RECOMMENDED_SYNC_POLICY_SECONDS
+    from backend.app.modules.ingestion.connectors.ensora_drive import (
+        APPROVED_ACADEMIC_COHORT_FOLDERS,
+        DRIVE_FOLDER_MIME,
+        DRIVE_SHORTCUT_MIME,
+        EnsoraDriveConnector,
+    )
+    from backend.app.modules.ingestion.connectors.moodle import (
+        MoodleConnector,
+        parse_moodle_ajax_courses,
+    )
+    from backend.app.modules.ingestion.resolution.entity_resolver import (
+        AcademicEntityResolver,
+        CanonicalSubject,
+    )
+
+    # --- 1. Single source of truth checks ---
+    assert APPROVED_ACADEMIC_COHORT_FOLDERS == tuple(ENSORA_DRIVE_ALLOWED_TOP_LEVEL_FOLDERS)
+    assert RECOMMENDED_SYNC_POLICY_SECONDS["ensora_drive"] == DEFAULT_SYNC_INTERVALS_MINUTES["ensora_drive"] * 60
+    assert RECOMMENDED_SYNC_POLICY_SECONDS["moodle"] == DEFAULT_SYNC_INTERVALS_MINUTES["moodle"] * 60
+    assert RECOMMENDED_SYNC_POLICY_SECONDS["pamplemousse:timetable"] == DEFAULT_SYNC_INTERVALS_MINUTES["pamplemousse.timetable"] * 60
+
+    # --- 2. Moodle academic-year filtering (no blind disabling; fixes 19/20 ongoing-course exclusion) ---
+    def _ts(y: int, m: int, d: int) -> int:
+        return int(datetime(y, m, d, 12, 0, tzinfo=timezone.utc).timestamp())
+
+    ajax_payload = [
+        {
+            "error": False,
+            "data": {
+                "courses": [
+                    # Course 505: created in 2023, open-ended ongoing active course (enddate=0) -> KEEP!
+                    {"id": 505, "fullname": "Deep Learning", "shortname": "DL3A", "coursecategory": "3A", "startdate": _ts(2023, 9, 1), "enddate": 0, "isinprogress": True},
+                    # Explicit matching year -> KEEP!
+                    {"id": 506, "fullname": "Statistique avancée 2026-2027", "shortname": "STAT26", "coursecategory": "2026-2027", "startdate": _ts(2026, 9, 1), "enddate": _ts(2027, 6, 30)},
+                    # Multi-year course spanning 2025-2027 -> KEEP!
+                    {"id": 507, "fullname": "Projet Fil Rouge", "shortname": "PFR", "coursecategory": "Projets", "startdate": _ts(2025, 9, 1), "enddate": _ts(2027, 6, 30)},
+                    # Closed prior-year course ending July 2025 (2024-2025) -> EXCLUDE!
+                    {"id": 508, "fullname": "Statistique Descriptive", "shortname": "STAT24", "coursecategory": "2A", "startdate": _ts(2024, 9, 1), "enddate": _ts(2025, 7, 15)},
+                    # Explicit prior-year label even with enddate=0 -> EXCLUDE!
+                    {"id": 509, "fullname": "Économétrie 2024-2025", "shortname": "ECO24", "coursecategory": "2024-2025", "startdate": _ts(2024, 9, 1), "enddate": 0},
+                    # Past timeline classification -> EXCLUDE!
+                    {"id": 510, "fullname": "Module Terminé", "shortname": "PAST1", "coursecategory": "1A", "startdate": _ts(2023, 9, 1), "enddate": 0, "ispast": True},
+                    # Future academic year -> EXCLUDE!
+                    {"id": 511, "fullname": "Cours Futur", "shortname": "FUT1", "coursecategory": "3A", "startdate": _ts(2027, 9, 5), "enddate": _ts(2028, 6, 30)},
+                ]
+            },
+        }
+    ]
+    parsed_ajax = parse_moodle_ajax_courses(ajax_payload, "https://foad-moodle.ensai.fr/")
+    assert len(parsed_ajax) == 7
+
+    cfg = SourcesRuntimeConfig.load(config_dir=tmp_path, environ={})
+    moodle = MoodleConnector(cfg, rate_limiter=RateLimiter(0.0))
+    moodle._discover_courses_playwright = lambda **kwargs: parsed_ajax  # type: ignore[method-assign]
+    kept = moodle.discover_courses(academic_year="2026-2027")
+    assert {c.course_id for c in kept} == {"505", "506", "507"}
+    assert all(c.academic_year == "2026-2027" for c in kept)
+    diag = moodle._last_discovery_diag
+    assert diag["courses_discovered_raw"] == 7
+    assert diag["courses_excluded_by_year"] == 4
+    decisions_by_id = {row["course_id"]: row for row in diag["course_filter_summary"]}
+    assert decisions_by_id["505"]["reason"] == "ongoing_enrolled_no_enddate"
+    assert decisions_by_id["506"]["reason"] == "explicit_year_match"
+    assert decisions_by_id["507"]["reason"] == "active_date_span_overlap"
+    assert decisions_by_id["508"]["reason"] == "ended_before_requested_year"
+    assert decisions_by_id["509"]["reason"] == "explicit_year_mismatch"
+    assert decisions_by_id["510"]["reason"] == "past_or_archived"
+    assert decisions_by_id["511"]["reason"] == "starts_after_requested_year"
+
+    # --- 3. Academic reconciliation improvements (plurals, code prefixes, bilingual EN/FR, semester ties) ---
+    resolver = AcademicEntityResolver(current_academic_year="2026-2027")
+    resolver.register_subject(CanonicalSubject(subject_id="pamp:subj:stat", title="ST201 - Statistique mathématique (S3)", code="ST201", semester="S3", teaching_unit="pamp:ue:stat"))
+    resolver.register_subject(CanonicalSubject(subject_id="pamp:subj:bdd", title="INF204 - Bases de données", code="INF204", teaching_unit="pamp:ue:info"))
+    resolver.register_subject(CanonicalSubject(subject_id="pamp:subj:ml", title="Apprentissage automatique", code="ML2A", teaching_unit="pamp:ue:ds"))
+    resolver.register_subject(CanonicalSubject(subject_id="pamp:subj:eco1", title="Économétrie 1", semester="S3", teaching_unit="pamp:ue:eco"))
+    resolver.register_subject(CanonicalSubject(subject_id="pamp:subj:eco2", title="Économétrie 2", semester="S4", teaching_unit="pamp:ue:eco"))
+    matcher = CodexEntityMatcherBridge(resolver)
+    clf = CodexClassificationResult(resource_type="lecture", confidence=0.9)
+
+    def _doc(ext: str, title: str, folder: str) -> CodexDocument:
+        return CodexDocument(
+            provenance=CodexProvenance(external_id=ext, source=CodexSourceKind.ENSORA_DRIVE, folder=folder),
+            title=title,
+            mime_type="application/pdf",
+        )
+
+    m_plural = matcher.match(_doc("ensora_drive:d1", "TD1.pdf", "Ensora/2A/Statistiques mathematiques/TD"), clf)
+    assert m_plural.confirmed is True and m_plural.subject_id == "pamp:subj:stat"
+
+    m_bilingual = matcher.match(_doc("ensora_drive:d2", "CM1.pdf", "Ensora/2A/Machine Learning/Cours"), clf)
+    assert m_bilingual.confirmed is True and m_bilingual.subject_id == "pamp:subj:ml"
+
+    m_prefix = matcher.match(_doc("ensora_drive:d3", "TP_SQL.pdf", "Ensora/2A/S3/Bases de donnees/TP"), clf)
+    assert m_prefix.confirmed is True and m_prefix.subject_id == "pamp:subj:bdd"
+
+    m_sem_tie = matcher.match(_doc("ensora_drive:d4", "CM1.pdf", "Ensora/2A/S3/Econometrie/Cours"), clf)
+    assert m_sem_tie.confirmed is True and m_sem_tie.subject_id == "pamp:subj:eco1"
+
+    # Without semester evidence, Économétrie 1 vs Économétrie 2 is a genuine tie -> MUST stay unconfirmed!
+    m_ambig = matcher.match(_doc("ensora_drive:d5", "Annale_2024.pdf", "Ensora/2A/Econometrie/Annales"), clf)
+    assert m_ambig.confirmed is False
+
+    # --- 4. Drive Page-1 -> Page-2 zero redundant files.get() calls (eliminates discover-only stall) ---
+    root_id = "1bwHMmvVUOI7CJyeiVhvkofspfZdFNZuO"
+    drive_tree: dict[str, dict[str, Any]] = {
+        root_id: {"id": root_id, "name": "Ensora", "mimeType": DRIVE_FOLDER_MIME, "trashed": False},
+        "fld_2a": {"id": "fld_2a", "name": "2A", "mimeType": DRIVE_FOLDER_MIME, "parents": [root_id], "trashed": False},
+        "fld_global": {"id": "fld_global", "name": "Global", "mimeType": DRIVE_FOLDER_MIME, "parents": [root_id], "trashed": False},
+        "sc_g1": {"id": "sc_g1", "name": "LinkG1", "mimeType": DRIVE_SHORTCUT_MIME, "parents": ["fld_2a"], "shortcutDetails": {"targetId": "fld_global"}, "trashed": False},
+        "sc_g2": {"id": "sc_g2", "name": "LinkG2", "mimeType": DRIVE_SHORTCUT_MIME, "parents": ["fld_2a"], "shortcutDetails": {"targetId": "fld_global"}, "trashed": False},
+    }
+    for i in range(1, 21):
+        sf = f"sub_{i:02d}"
+        drive_tree[sf] = {"id": sf, "name": f"Matiere_{i:02d}", "mimeType": DRIVE_FOLDER_MIME, "parents": ["fld_2a"], "trashed": False}
+        drive_tree[f"doc_{i:02d}"] = {"id": f"doc_{i:02d}", "name": f"cours_{i:02d}.pdf", "mimeType": "application/pdf", "parents": [sf], "modifiedTime": f"2026-11-{i:02d}T10:00:00Z", "trashed": False}
+
+    get_calls: list[str] = []
+
+    class _Exec:
+        def __init__(self, fn: Any) -> None:
+            self._fn = fn
+
+        def execute(self) -> Any:
+            return self._fn()
+
+    class _Files:
+        def get(self, *, fileId: str, **kwargs: Any) -> _Exec:
+            def _do():
+                get_calls.append(fileId)
+                return drive_tree[fileId]
+            return _Exec(_do)
+
+        def list(self, *, q: str, **kwargs: Any) -> _Exec:
+            pids = set(_re.findall(r"'([^']+)'\s+in\s+parents", q))
+            return _Exec(lambda: {"files": [v for v in drive_tree.values() if not v.get("trashed") and any(p in pids for p in (v.get("parents") or []))]})
+
+    class _Svc:
+        def files(self) -> _Files:
+            return _Files()
+
+    class _Creds:
+        valid = True
+        expired = False
+        refresh_token = "rt"
+        scopes = ["https://www.googleapis.com/auth/drive.readonly"]
+        granted_scopes = ["https://www.googleapis.com/auth/drive.readonly"]
+
+    cfg.ensure_private_directories()
+    cfg.google_token_path.write_text("{}", encoding="utf-8")
+    oauth = GoogleOAuthAdapter(cfg, source=SourceKind.ENSORA_DRIVE, credentials_loader=lambda p, s: _Creds())
+    dconn = EnsoraDriveConnector(
+        cfg, oauth_adapter=oauth, drive_service_factory=lambda _: _Svc(), rate_limiter=RateLimiter(0.0), batch_folder_queries=True
+    )
+    p1 = dconn.list_changes(scope={"page_size": 5})
+    assert p1.complete is False and p1.next_cursor
+    # Repeated shortcuts to fld_global only validated fld_global ONCE (cached in rejected_in_run!)
+    assert get_calls.count("fld_global") == 1
+    get_calls.clear()
+    # In-process Page 2 -> final page MUST make ZERO redundant files.get() boundary revalidation calls!
+    cur = p1.next_cursor
+    seen_ext = [r.external_id for r in p1.items]
+    while cur:
+        pg = dconn.list_changes(scope={"page_size": 5}, cursor=cur)
+        seen_ext.extend(r.external_id for r in pg.items)
+        cur = pg.next_cursor
+    assert len(seen_ext) == 20
+    assert get_calls == []  # ZERO redundant files.get calls during in-process multi-page traversal!

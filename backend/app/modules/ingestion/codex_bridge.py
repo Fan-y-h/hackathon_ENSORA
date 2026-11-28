@@ -523,6 +523,8 @@ def _to_codex_records(
                     record_status=rec_status,
                 )
             )
+            weight_mode = str(p.get("weight_mode") or "").lower()
+            coef_mode = weight_mode if weight_mode in ("raw", "relative", "fraction") else "raw"
             weight_status = str(p.get("weight_status") or prov_meta.get("weight_status") or "")
             if weight_dec is not None or weight_status in ("missing", "ambiguous"):
                 out.append(
@@ -540,7 +542,7 @@ def _to_codex_records(
                         parent_key=rec.external_id,
                         weight=weight_dec,
                         level="teaching_unit",
-                        mode="raw",
+                        mode=coef_mode,
                         record_status=weight_status if weight_status in ("missing", "ambiguous") else rec_status,
                     )
                 )
@@ -562,6 +564,8 @@ def _to_codex_records(
                     record_status=rec_status,
                 )
             )
+            weight_mode = str(p.get("weight_mode") or "").lower()
+            coef_mode = weight_mode if weight_mode in ("raw", "relative", "fraction") else "raw"
             weight_status = str(p.get("weight_status") or prov_meta.get("weight_status") or "")
             if weight_dec is not None or weight_status in ("missing", "ambiguous"):
                 out.append(
@@ -579,7 +583,7 @@ def _to_codex_records(
                         parent_key=rec.external_id,
                         weight=weight_dec,
                         level="subject",
-                        mode="raw",
+                        mode=coef_mode,
                         record_status=weight_status if weight_status in ("missing", "ambiguous") else rec_status,
                     )
                 )
@@ -1005,23 +1009,29 @@ def _load_known_document_revisions(db_path: Path, source_value: str) -> dict[str
 
 
 def _load_known_record_revisions(db_path: Path, source_value: str) -> dict[str, str]:
-    """Read-only SQLite lookup of `{external_id: remote_revision}` for persisted structured records."""
+    """Load persisted source-record revisions without opening the database for writes.
+
+    Structured records store their source revision inside the normalized JSON
+    provenance payload (unlike documents, which have a dedicated column).
+    Returning these revisions lets incremental connectors omit unchanged facts.
+    """
     if not db_path.is_file():
         return {}
     try:
         with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as conn:
             has_recs = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'records'"
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'source_records'"
             ).fetchone()
             if not has_recs:
                 return {}
             rows = conn.execute(
                 """
-                SELECT r.external_id, r.remote_revision
-                FROM records r
+                SELECT r.external_id,
+                       json_extract(r.payload, '$.provenance.remote_revision')
+                FROM source_records r
                 JOIN connections c ON c.id = r.connection_id
                 WHERE c.source = ?
-                  AND r.remote_revision IS NOT NULL
+                  AND json_extract(r.payload, '$.provenance.remote_revision') IS NOT NULL
                 """,
                 (source_value,),
             ).fetchall()
@@ -1056,6 +1066,27 @@ class CodexConnectorBridge:
         self.last_checkpoint_blocked: bool = False
 
     def list_changes(self, scope: SyncScope, cursor: str | None) -> CodexChangePage:
+        """Translate Codex's ``SyncScope`` into connector scope and convert returned records.
+
+        Enforces approved Drive cohort scope defense-in-depth, excludes unscoped local-folder
+        runs, injects read-only known revisions/active IDs for non-full incremental runs,
+        propagates bounded allowlisted observation counters and safe warning/error codes,
+        and withholds terminal ``resume_cursor`` whenever errors occur or scope is selective.
+
+        Args:
+            scope: Codex ``SyncScope`` describing source, filters, full/retry/discovery flags.
+            cursor: Optional opaque continuation cursor or durable sync watermark.
+
+        Returns:
+            ``CodexChangePage`` ready for ``SyncEngine`` persistence and checkpoint tracking.
+
+        Raises:
+            PermissionDeniedError: If Drive scope requests an unauthorized folder ID.
+            ReauthenticationRequired: On expired institutional CAS or Google OAuth credentials.
+            ServiceAccessDenied: On institutional HTTP 403/access denial.
+            ProfileBusy: When the shared ENSAI Chromium profile lock is already held.
+            RetryableSourceError: On transient upstream failures or empty error-only pages.
+        """
         # Local folder synchronization must be explicitly scoped; exclude from unscoped runs.
         if self._connector.source_kind == InternalSourceKind.LOCAL_FILE and not scope.folder_id:
             self._page_cache = {}
@@ -1081,6 +1112,8 @@ class CodexConnectorBridge:
             scope_dict["root_path"] = scope.folder_id
         if scope.full:
             scope_dict["full"] = True
+        if getattr(scope, "discovery_only", False):
+            scope_dict["discovery_only"] = True
         if getattr(scope, "academic_year", None):
             scope_dict["academic_year"] = scope.academic_year
         if getattr(scope, "window_start", None) is not None:
@@ -1406,6 +1439,12 @@ class CodexConnectorBridge:
         )
 
     def fetch_blob(self, record: Document) -> FetchedDocument:
+        """Fetch raw document bytes for ``record`` using page-cached connector metadata when available.
+
+        Translates internal authentication, permission, browser-lock, transient, and
+        Drive size-limit exceptions into Codex's shared exception hierarchy and returns
+        a basename-sanitized ``FetchedDocument``.
+        """
         cached = self._page_cache.get(record.provenance.external_id)
         internal_rec = cached or InternalSourceRecord(
             source_kind=self._connector.source_kind,
@@ -1528,11 +1567,20 @@ class CodexParserBridge:
         self._chunk_overlap_chars = max(0, min(int(chunk_overlap_chars), self._max_chunk_chars // 3))
 
     def parse(self, document: Document, content: bytes) -> ParsedContent | None:
+        """Parse raw document bytes into Codex RAG chunks with bounded size and provenance.
+
+        Computes a single SHA-256 digest up front so downstream parsers and the
+        version-aware registry cache avoid hashing large binaries repeatedly.
+        """
+        from .connectors.base import sha256_bytes
+
+        content_sha = sha256_bytes(content)
         parsed = self._registry.parse_bytes(
             content,
             filename=document.title,
             mime_type=document.mime_type,
             provenance=document.provenance.model_dump(mode="json", exclude_none=True),
+            precomputed_sha256=content_sha,
         )
         if parsed.error and not parsed.blocks:
             return None
@@ -1545,12 +1593,16 @@ class CodexParserBridge:
 
         if "scanned_pages_without_ocr_engine" in parsed.unsupported_elements:
             _add_warn("scanned_pages_without_ocr")
+        if "pdf_scanned_pages_unrecovered" in parsed.unsupported_elements:
+            _add_warn("pdf_scanned_pages_unrecovered")
         if "ocr_engine_unavailable" in parsed.unsupported_elements:
             _add_warn("ocr_unavailable")
         for w in parsed.warnings:
             low_w = str(w).lower()
             if "pdf_mixed_media_empty_pages" in low_w:
                 _add_warn("mixed_media_pages_present")
+            elif "pdf_ocr_incomplete" in low_w:
+                _add_warn("pdf_ocr_incomplete")
             elif "legacy_binary_office" in low_w:
                 _add_warn("legacy_binary_office")
             elif "zip_contains_no_parseable_text_members" in low_w:
@@ -1593,6 +1645,8 @@ class CodexParserBridge:
                     loc_dict["sub_chunks_total"] = seg_total
 
                 structured: dict[str, object] = {}
+                if block.metadata.get("ocr") is True:
+                    structured["ocr"] = True
                 if block.language:
                     structured["language"] = block.language
                 if block.code_language:
@@ -1831,7 +1885,8 @@ class CodexEntityMatcherBridge:
         When `consent_manager` and `connection_ids` are provided, strictly filters BOTH
         subjects and cross-record user overrides to currently read-consented sources.
         """
-        from sqlalchemy import select
+        import re as _re_mod
+        from sqlalchemy import func, select
         from ...core.database import documents as db_documents, records as db_records
 
         allowed_conn_ids: list[str] | None = None
@@ -1846,6 +1901,19 @@ class CodexEntityMatcherBridge:
 
         added = 0
         with engine.connect() as db:
+            # Hydrate semester/UE hierarchy metadata so subjects retain semester & cohort hints
+            ancestors: dict[str, dict[str, Any]] = {}
+            anc_query = select(db_records.c.external_id, db_records.c.kind, db_records.c.payload).where(
+                db_records.c.kind.in_(("semester", "teaching_unit"))
+            )
+            if allowed_conn_ids is not None:
+                anc_query = anc_query.where(db_records.c.connection_id.in_(allowed_conn_ids))
+            for arow in db.execute(anc_query).mappings():
+                ancestors[str(arow["external_id"])] = {
+                    "kind": str(arow["kind"]),
+                    "payload": arow["payload"] or {},
+                }
+
             subj_query = select(db_records.c.external_id, db_records.c.payload).where(
                 db_records.c.kind == "subject"
             )
@@ -1861,18 +1929,44 @@ class CodexEntityMatcherBridge:
                 if payload.get("source_code") and payload.get("source_code") != code:
                     aliases = (*aliases, str(payload["source_code"]))
                 parent_ue = payload.get("parent_key")
+                # Resolve explicit semester/cohort from parent UE or Semester without inventing values
+                subj_sem: str | None = None
+                subj_cohort: str | None = None
+                cur_key = str(parent_ue) if parent_ue else None
+                for _ in range(3):
+                    if not cur_key or cur_key not in ancestors:
+                        break
+                    anc = ancestors[cur_key]
+                    anc_p = anc["payload"]
+                    anc_title = str(anc_p.get("title") or "")
+                    if anc["kind"] == "semester" and not subj_sem:
+                        m_s = _re_mod.search(r"\bS([1-6])\b", anc_title, _re_mod.IGNORECASE)
+                        subj_sem = f"S{m_s.group(1)}" if m_s else anc_title or None
+                    cur_key = anc_p.get("parent_key")
+                if not subj_sem:
+                    sem_probe = f"{row['external_id']} {parent_ue or ''} {title}"
+                    m_s = _re_mod.search(r"(?:^|[:_\-\s/])s([1-6])(?:[:_\-\s/]|$)", sem_probe, _re_mod.IGNORECASE)
+                    if m_s:
+                        subj_sem = f"S{m_s.group(1)}"
+                m_c = _re_mod.search(r"(?:^|[:_\-\s/])([1-3]a)(?:[:_\-\s/]|$)", f"{title} {code or ''}", _re_mod.IGNORECASE)
+                if m_c:
+                    subj_cohort = m_c.group(1).upper()
                 self._resolver.register_subject(
                     CanonicalSubject(
                         subject_id=row["external_id"],
                         title=str(title),
                         code=str(code) if code else None,
                         aliases=aliases,
+                        cohort=subj_cohort,
+                        semester=subj_sem,
                         teaching_unit=str(parent_ue) if parent_ue else None,
                     )
                 )
                 added += 1
 
-            doc_query = select(db_documents.c.external_id, db_documents.c.metadata_json)
+            doc_query = select(db_documents.c.external_id, db_documents.c.metadata_json).where(
+                func.json_extract(db_documents.c.metadata_json, "$.user_override.subject_id").is_not(None)
+            )
             if allowed_conn_ids is not None:
                 doc_query = doc_query.where(db_documents.c.connection_id.in_(allowed_conn_ids))
             doc_rows = db.execute(doc_query).mappings()
@@ -1937,6 +2031,13 @@ class CodexEntityMatcherBridge:
         document: Document,
         classification: CodexClassificationResult,
     ) -> EntityMatch:
+        """Resolve ``document`` against the hydrated canonical curriculum without forcing ties.
+
+        Passes document title, folder path, course ID/title, and chapter/section path to
+        ``AcademicEntityResolver.resolve_record()``. Ambiguous matches (within the ``0.06``
+        tie margin) or scores below ``0.90`` return ``confirmed=False`` for human review,
+        while confirmed user overrides always return ``confirmed=True``.
+        """
         if self._catalog_loader is not None:
             try:
                 self.sync_catalog_subjects(self._catalog_loader())

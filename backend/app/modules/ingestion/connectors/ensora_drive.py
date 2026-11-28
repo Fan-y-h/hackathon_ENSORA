@@ -12,6 +12,8 @@ Shortcuts pointing to Global or outside the approved academic folders are never 
 
 from __future__ import annotations
 
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import http.client
 import io
@@ -20,10 +22,11 @@ import logging
 import os
 import re
 import ssl
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from ..auth.google_oauth import GoogleOAuthAdapter
 from ..config import DEFAULT_ENSORA_DRIVE_ROOT_FOLDER_ID, SourcesRuntimeConfig
@@ -40,6 +43,7 @@ from ..contracts import (
 )
 from ..credentials import redact_sensitive_text
 from .base import (
+    AdaptiveRateLimiter,
     AuthenticationRequiredError,
     PermissionDeniedError,
     RateLimiter,
@@ -98,12 +102,25 @@ UNEXPORTABLE_WORKSPACE_MIMES: frozenset[str] = frozenset(
     }
 )
 
-APPROVED_ACADEMIC_COHORT_FOLDERS: tuple[str, ...] = ("1A", "2A", "3A")
-APPROVED_ACADEMIC_COHORT_KEYS: frozenset[str] = frozenset({"1a", "2a", "3a"})
-EXCLUDED_TOP_LEVEL_FOLDER_KEYS: frozenset[str] = frozenset({"global"})
+try:
+    from ....core.drive_scope import (
+        ENSORA_DRIVE_ALLOWED_TOP_LEVEL_FOLDERS as _CANONICAL_ALLOWED_TOP_FOLDERS,
+        ENSORA_DRIVE_EXCLUDED_TOP_LEVEL_FOLDERS as _CANONICAL_EXCLUDED_TOP_FOLDERS,
+    )
+except Exception:
+    _CANONICAL_ALLOWED_TOP_FOLDERS = ("1A", "2A", "3A")
+    _CANONICAL_EXCLUDED_TOP_FOLDERS = ("Global",)
+
+APPROVED_ACADEMIC_COHORT_FOLDERS: tuple[str, ...] = tuple(_CANONICAL_ALLOWED_TOP_FOLDERS)
+APPROVED_ACADEMIC_COHORT_KEYS: frozenset[str] = frozenset(
+    name.strip().lower() for name in APPROVED_ACADEMIC_COHORT_FOLDERS
+)
+EXCLUDED_TOP_LEVEL_FOLDER_KEYS: frozenset[str] = frozenset(
+    name.strip().lower() for name in _CANONICAL_EXCLUDED_TOP_FOLDERS
+)
 EXPECTED_COHORT_FOLDERS: frozenset[str] = frozenset(APPROVED_ACADEMIC_COHORT_FOLDERS)
 DRIVE_SCOPE_POLICY_VERSION = 2
-DRIVE_SCOPE_POLICY_ID = "academic_cohorts_v2:1a,2a,3a"
+DRIVE_SCOPE_POLICY_ID = f"academic_cohorts_v{DRIVE_SCOPE_POLICY_VERSION}:{','.join(sorted(APPROVED_ACADEMIC_COHORT_KEYS))}"
 
 _COHORT_CANONICAL_BY_KEY: dict[str, str] = {
     "1a": "1A",
@@ -331,10 +348,26 @@ DRIVE_DEFAULT_RATE_LIMIT_CAP_SEC = 0.12
 DRIVE_FOLDER_BATCH_SIZE = 15
 DRIVE_LIST_PAGE_SIZE = 1000
 DRIVE_PAGING_SNAPSHOT_TTL_SEC = 24 * 3600
+DRIVE_VERIFIED_PARENT_TTL_SEC = 60.0
+DRIVE_DEFAULT_DOWNLOAD_WORKERS = 4
+DRIVE_MAX_DOWNLOAD_WORKERS = 6
 
 
 class EnsoraDriveConnector(SourceConnector):
-    """Read-only connector strictly restricted to the Ensora shared Drive folder tree."""
+    """Read-only connector strictly restricted to the Ensora shared Drive folder tree.
+
+    Security & concurrency guarantees:
+    - Strictly enforces the ``1A / 2A / 3A`` top-level academic cohort scope before
+      recursive traversal; top-level ``Global`` and personal Drive files are excluded.
+    - Every ``fetch_blob()`` call performs a live ``files.get`` check on the target
+      file (catching trashed or moved files immediately) and validates folder ancestry.
+      Within an active download batch, verified parent folders are cached for at most
+      ``parent_verification_ttl_sec`` seconds (default 60s) and invalidated immediately
+      on ``list_changes()``, ``_invalidate_service()``, or any ``PermissionDeniedError``.
+    - Google's ``httplib2.Http`` transport is not thread-safe; concurrent downloads via
+      ``fetch_blobs_concurrent()`` construct an isolated Drive client per worker thread
+      via ``threading.local()`` while sharing a thread-safe ``AdaptiveRateLimiter``.
+    """
 
     source_kind = SourceKind.ENSORA_DRIVE
 
@@ -346,6 +379,7 @@ class EnsoraDriveConnector(SourceConnector):
         drive_service_factory: Callable[[Any], Any] | None = None,
         rate_limiter: RateLimiter | None = None,
         batch_folder_queries: bool | None = None,
+        parent_verification_ttl_sec: float = DRIVE_VERIFIED_PARENT_TTL_SEC,
     ) -> None:
         self._config = config
         self._root_folder_id = (
@@ -356,12 +390,12 @@ class EnsoraDriveConnector(SourceConnector):
         self._oauth = oauth_adapter or GoogleOAuthAdapter(config, source=SourceKind.ENSORA_DRIVE)
         self._service_factory = drive_service_factory
         # Google Drive API v3 quota is 12,000 req/min/user; avoid applying 1.0s HTML-scraping
-        # delays to Drive REST calls while keeping polite pacing + exponential backoff on 429.
+        # delays to Drive REST calls while keeping polite pacing + adaptive backoff on 429.
         effective_interval = min(
             max(0.0, float(config.rate_limit_min_interval_sec)),
             DRIVE_DEFAULT_RATE_LIMIT_CAP_SEC,
         )
-        self._rate_limiter = rate_limiter or RateLimiter(effective_interval)
+        self._rate_limiter: RateLimiter = rate_limiter or AdaptiveRateLimiter(effective_interval)
         # Multi-folder OR batching (`pageSize=1000`) auto-enabled for real Google Drive API v3;
         # disabled by default for injected test fakes unless explicitly opted in.
         self._batch_folder_queries = (
@@ -371,12 +405,123 @@ class EnsoraDriveConnector(SourceConnector):
         )
         # Bounded process-local + durable 0o600 continuation states across pages & restarts
         self._paging_states: dict[str, dict[str, Any]] = {}
+        self._state_lock = threading.Lock()
+        self._thread_local = threading.local()
+        self._service_generation: int = 0
         self._cached_service: Any | None = None
         self._cached_creds: Any | None = None
         self._cached_service_factory_ref: Any | None = None
+        self._parent_verification_ttl_sec = max(0.0, float(parent_verification_ttl_sec))
+        # Short-TTL verified parent folder cache populated ONLY by live fetch_blob() walks
+        # (never pre-seeded by list_changes(), and cleared on list_changes/invalidation/403).
+        self._verified_parent_cache: dict[str, float] = {}
+        self._snapshot_writes_since_prune: int = 0
         self.last_scan_authoritative: bool = False
         self.last_fetch_errors_by_reason: dict[str, int] = {}
         self.last_stats: dict[str, Any] = {}
+
+    def _clear_verified_parent_cache(self) -> None:
+        with self._state_lock:
+            self._verified_parent_cache.clear()
+
+    def _is_parent_recently_verified(self, folder_id: str) -> bool:
+        if self._parent_verification_ttl_sec <= 0 or folder_id == self._root_folder_id:
+            return False
+        now = time.monotonic()
+        with self._state_lock:
+            expires_at = self._verified_parent_cache.get(folder_id)
+            if expires_at is None:
+                return False
+            if now >= expires_at:
+                self._verified_parent_cache.pop(folder_id, None)
+                return False
+            return True
+
+    def _snapshot_verified_parents(self) -> set[str]:
+        """Return a snapshot of currently unexpired verified parent folder IDs."""
+        if self._parent_verification_ttl_sec <= 0:
+            return set()
+        now = time.monotonic()
+        with self._state_lock:
+            valid = {
+                fid for fid, exp in self._verified_parent_cache.items() if now < exp
+            }
+            if len(valid) != len(self._verified_parent_cache):
+                self._verified_parent_cache = {
+                    fid: exp for fid, exp in self._verified_parent_cache.items() if now < exp
+                }
+            return valid
+
+    def _record_verified_parents(self, folder_ids: set[str]) -> None:
+        if self._parent_verification_ttl_sec <= 0 or not folder_ids:
+            return
+        expires_at = time.monotonic() + self._parent_verification_ttl_sec
+        with self._state_lock:
+            for fid in folder_ids:
+                if fid and fid != self._root_folder_id:
+                    self._verified_parent_cache[fid] = expires_at
+            if len(self._verified_parent_cache) > 4096:
+                now = time.monotonic()
+                self._verified_parent_cache = {
+                    k: v for k, v in self._verified_parent_cache.items() if v > now
+                }
+
+    def _notify_rate_limiter_result(self, exc: Exception | None = None) -> None:
+        if not isinstance(self._rate_limiter, AdaptiveRateLimiter):
+            return
+        if exc is None:
+            self._rate_limiter.notify_success()
+        elif isinstance(exc, TransientSourceError) and exc.status_code == 429:
+            self._rate_limiter.notify_rate_limit()
+
+    def _construct_drive_client(self, creds: Any) -> Any:
+        if self._service_factory is not None:
+            return self._service_factory(creds)
+        from googleapiclient.discovery import build  # type: ignore
+
+        timeout_sec = max(30.0, float(self._config.request_timeout_sec))
+        try:
+            import google_auth_httplib2  # type: ignore
+            import httplib2  # type: ignore
+
+            authed_http = google_auth_httplib2.AuthorizedHttp(
+                creds,
+                http=httplib2.Http(timeout=timeout_sec),
+            )
+            return build("drive", "v3", http=authed_http, cache_discovery=False)
+        except Exception:
+            return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+    def _build_thread_service(self, *, force_refresh: bool = False) -> Any:
+        """Build or reuse a Drive API client strictly isolated to the current worker thread."""
+        gen = self._service_generation
+        tl_svc = getattr(self._thread_local, "service", None)
+        tl_creds = getattr(self._thread_local, "creds", None)
+        tl_gen = getattr(self._thread_local, "generation", -1)
+        tl_factory = getattr(self._thread_local, "factory_ref", None)
+        if (
+            not force_refresh
+            and tl_svc is not None
+            and tl_gen == gen
+            and tl_factory is self._service_factory
+            and not bool(getattr(tl_creds, "expired", False))
+        ):
+            return tl_svc
+
+        with self._state_lock:
+            creds = self._oauth.get_credentials(allow_refresh=True, interactive=False)
+        if creds is None:
+            self._thread_local.service = None
+            self._thread_local.creds = None
+            raise AuthenticationRequiredError(
+                "Google Drive OAuth token missing or expired; run Google authorization first."
+            )
+        svc = self._construct_drive_client(creds)
+        self._thread_local.service = svc
+        self._thread_local.creds = creds
+        self._thread_local.generation = self._service_generation
+        self._thread_local.factory_ref = self._service_factory
+        return svc
 
     @property
     def root_folder_id(self) -> str:
@@ -414,32 +559,20 @@ class EnsoraDriveConnector(SourceConnector):
             raise AuthenticationRequiredError(
                 "Google Drive OAuth token missing or expired; run Google authorization first."
             )
-        if self._service_factory is not None:
-            svc = self._service_factory(creds)
-        else:
-            from googleapiclient.discovery import build  # type: ignore
-
-            timeout_sec = max(30.0, float(self._config.request_timeout_sec))
-            try:
-                import google_auth_httplib2  # type: ignore
-                import httplib2  # type: ignore
-
-                authed_http = google_auth_httplib2.AuthorizedHttp(
-                    creds,
-                    http=httplib2.Http(timeout=timeout_sec),
-                )
-                svc = build("drive", "v3", http=authed_http, cache_discovery=False)
-            except Exception:
-                svc = build("drive", "v3", credentials=creds, cache_discovery=False)
-
+        svc = self._construct_drive_client(creds)
         self._cached_service = svc
         self._cached_creds = creds
         self._cached_service_factory_ref = self._service_factory
         return svc
 
     def _invalidate_service(self) -> None:
+        with self._state_lock:
+            self._service_generation += 1
+            self._verified_parent_cache.clear()
         self._cached_service = None
         self._cached_creds = None
+        self._thread_local.service = None
+        self._thread_local.creds = None
 
     def authorize(self, config: dict[str, Any] | None = None) -> AuthStatus:
         interactive = bool((config or {}).get("interactive", False))
@@ -879,7 +1012,14 @@ class EnsoraDriveConnector(SourceConnector):
         )
 
     def _save_durable_paging_state(self, handle: str, state: dict[str, Any]) -> None:
-        """Persist metadata-only BFS continuation atomically (0o600, O_NOFOLLOW) across restarts."""
+        """Persist metadata-only BFS continuation atomically (0o600, O_NOFOLLOW) across restarts.
+
+        Skipped in ``discovery_only`` mode (where in-memory continuation suffices and avoiding
+        per-page JSON serialization + ``fsync`` removes unnecessary disk latency). Prunes
+        expired (>24h) snapshots opportunistically every 10 writes rather than scanning on every page.
+        """
+        if state.get("discovery_only"):
+            return
         key = handle.split(":", 1)[-1]
         if not key or not key.isalnum():
             return
@@ -932,6 +1072,11 @@ class EnsoraDriveConnector(SourceConnector):
             "excluded_shortcuts_skipped": int(state.get("excluded_shortcuts_skipped", 0)),
             "unexportable_skipped": int(state["unexportable_skipped"]),
             "api_list_calls": int(state.get("api_list_calls", 0)),
+            "batch_list_calls": int(state.get("batch_list_calls", 0)),
+            "batch_fallback_count": int(state.get("batch_fallback_count", state.get("batch_fallback_calls", 0))),
+            "batch_fallback_calls": int(state.get("batch_fallback_calls", 0)),
+            "ancestry_get_calls": int(state.get("ancestry_get_calls", 0)),
+            "shortcut_ancestry_get_calls": int(state.get("shortcut_ancestry_get_calls", 0)),
         }
         try:
             fd = os.open(
@@ -945,17 +1090,18 @@ class EnsoraDriveConnector(SourceConnector):
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, target)
-            # Prune only expired (>TTL) legacy snapshots; retain recent snapshots so crash-replay
-            # from a previously committed job cursor remains idempotent across restarts.
-            now_ts = time.time()
-            for old in snap_dir.glob("*.json"):
-                if old == target or old.is_symlink():
-                    continue
-                try:
-                    if (now_ts - old.stat().st_mtime) > DRIVE_PAGING_SNAPSHOT_TTL_SEC:
-                        old.unlink(missing_ok=True)
-                except OSError:
-                    continue
+            # Prune expired (>TTL) snapshots opportunistically every 10 writes to avoid per-page directory scans
+            self._snapshot_writes_since_prune += 1
+            if self._snapshot_writes_since_prune % 10 == 1:
+                now_ts = time.time()
+                for old in snap_dir.glob("*.json"):
+                    if old == target or old.is_symlink():
+                        continue
+                    try:
+                        if (now_ts - old.stat().st_mtime) > DRIVE_PAGING_SNAPSHOT_TTL_SEC:
+                            old.unlink(missing_ok=True)
+                    except OSError:
+                        continue
         except OSError:
             tmp.unlink(missing_ok=True)
 
@@ -1025,7 +1171,7 @@ class EnsoraDriveConnector(SourceConnector):
             "authorized_top_level_folders": list(raw.get("authorized_top_level_folders") or []),
             "top_folder_id_by_cohort": dict(raw.get("top_folder_id_by_cohort") or {}),
             "excluded_top_level_folders_count": int(raw.get("excluded_top_level_folders_count", 0)),
-            "queue": filtered_queue,
+            "queue": deque(filtered_queue),
             "visited_folders": set(raw.get("visited_folders") or []),
             "verified_in_run": {
                 str(fid)
@@ -1047,6 +1193,10 @@ class EnsoraDriveConnector(SourceConnector):
             "excluded_shortcuts_skipped": int(raw.get("excluded_shortcuts_skipped", 0)),
             "unexportable_skipped": int(raw.get("unexportable_skipped", 0)),
             "api_list_calls": int(raw.get("api_list_calls", 0)),
+            "batch_list_calls": int(raw.get("batch_list_calls", 0)),
+            "batch_fallback_calls": int(raw.get("batch_fallback_calls", 0)),
+            "ancestry_get_calls": int(raw.get("ancestry_get_calls", 0)),
+            "shortcut_ancestry_get_calls": int(raw.get("shortcut_ancestry_get_calls", 0)),
         }
 
     def _store_bfs_paging_state(self, state: dict[str, Any]) -> str:
@@ -1090,7 +1240,11 @@ class EnsoraDriveConnector(SourceConnector):
         `drvmod:` watermarks ONLY once the entire approved tree finishes cleanly.
         """
         service = self._build_service()
-        queue: list[tuple[str, str, int]] = state["queue"]
+        raw_queue = state["queue"]
+        queue: deque[tuple[str, str, int]] = (
+            raw_queue if isinstance(raw_queue, deque) else deque(raw_queue)
+        )
+        state["queue"] = queue
         visited_folders: set[str] = state["visited_folders"]
         verified_in_run: set[str] = state["verified_in_run"]
         pending_items: list[SourceRecord] = state["pending_items"]
@@ -1109,7 +1263,8 @@ class EnsoraDriveConnector(SourceConnector):
         page_errors: list[str] = []
 
         target_buffer = drain_offset + page_size + 1
-        batch_cap = DRIVE_FOLDER_BATCH_SIZE if self._batch_folder_queries else 1
+        default_batch_cap = DRIVE_FOLDER_BATCH_SIZE if self._batch_folder_queries else 1
+        batch_cap = int(state.setdefault("effective_batch_cap", default_batch_cap))
         folders_before = len(visited_folders)
         discovered_before = int(state["total_discovered"])
 
@@ -1119,10 +1274,24 @@ class EnsoraDriveConnector(SourceConnector):
                 break
 
             batch: list[tuple[str, str, int]] = []
+            needs_reval = bool(state.get("needs_boundary_revalidation", False))
+            rejected_in_run: set[str] = state.setdefault("rejected_in_run", set())
             while queue and len(batch) < batch_cap:
-                fid, fpath, depth = queue.pop(0)
+                fid, fpath, depth = queue.popleft()
                 if fid in visited_folders:
                     continue
+                if needs_reval and fid not in verified_in_run:
+                    if fid in rejected_in_run:
+                        continue
+                    state["ancestry_get_calls"] = int(state.get("ancestry_get_calls", 0)) + 1
+                    if not self._validate_target_folder_boundary(
+                        fid,
+                        service,
+                        verified_in_run=verified_in_run,
+                        require_approved_cohort=True,
+                    ):
+                        rejected_in_run.add(fid)
+                        continue
                 visited_folders.add(fid)
                 verified_in_run.add(fid)
                 if depth > max_depth:
@@ -1140,16 +1309,24 @@ class EnsoraDriveConnector(SourceConnector):
                 batch_ids = [b[0] for b in batch]
                 try:
                     state["api_list_calls"] = state.get("api_list_calls", 0) + 1
+                    state["batch_list_calls"] = int(state.get("batch_list_calls", 0)) + 1
                     children_by_fid = self._list_folders_batch(service, batch_ids)
                 except AuthenticationRequiredError:
                     self._invalidate_service()
                     service = self._build_service(force_refresh=True)
                     state["api_list_calls"] = state.get("api_list_calls", 0) + 1
+                    state["batch_list_calls"] = int(state.get("batch_list_calls", 0)) + 1
                     children_by_fid = self._list_folders_batch(service, batch_ids)
                 except PermissionDeniedError:
                     raise
                 except Exception:
-                    # Fallback cleanly to single-folder queries so one problematic folder never fails the batch
+                    # Fallback cleanly to single-folder queries and shrink batch_cap adaptively
+                    # so repeated query-complexity errors do not burn retries on every batch.
+                    fallback_count = int(state.get("batch_fallback_count", 0)) + 1
+                    state["batch_fallback_count"] = fallback_count
+                    state["batch_fallback_calls"] = fallback_count
+                    batch_cap = max(1, batch_cap // 2)
+                    state["effective_batch_cap"] = batch_cap
                     children_by_fid = {}
 
             for fid, fpath, depth in batch:
@@ -1184,12 +1361,27 @@ class EnsoraDriveConnector(SourceConnector):
                     if mime == DRIVE_SHORTCUT_MIME:
                         state["shortcuts_skipped"] += 1
                         target_id = (entry.get("shortcutDetails") or {}).get("targetId")
-                        if not target_id or not self._validate_target_folder_boundary(
-                            target_id,
-                            service,
-                            verified_in_run=verified_in_run,
-                            require_approved_cohort=True,
-                        ):
+                        rejected_in_run = state.setdefault("rejected_in_run", set())
+                        is_valid_target = False
+                        if target_id and target_id not in rejected_in_run:
+                            if target_id != self._root_folder_id and (
+                                target_id in verified_in_run
+                                or f"ensora_drive:{target_id}" in seen_live_ids
+                            ):
+                                is_valid_target = True
+                            else:
+                                state["shortcut_ancestry_get_calls"] = (
+                                    int(state.get("shortcut_ancestry_get_calls", 0)) + 1
+                                )
+                                is_valid_target = self._validate_target_folder_boundary(
+                                    target_id,
+                                    service,
+                                    verified_in_run=verified_in_run,
+                                    require_approved_cohort=True,
+                                )
+                                if not is_valid_target:
+                                    rejected_in_run.add(target_id)
+                        if not is_valid_target:
                             state["excluded_shortcuts_skipped"] = (
                                 int(state.get("excluded_shortcuts_skipped", 0)) + 1
                             )
@@ -1343,6 +1535,11 @@ class EnsoraDriveConnector(SourceConnector):
             "page_folders_traversed": max(0, len(visited_folders) - folders_before),
             "folders_remaining": len(queue),
             "api_list_calls": int(state.get("api_list_calls", 0)),
+            "batch_list_calls": int(state.get("batch_list_calls", 0)),
+            "batch_fallback_count": int(state.get("batch_fallback_count", state.get("batch_fallback_calls", 0))),
+            "batch_fallback_calls": int(state.get("batch_fallback_calls", 0)),
+            "ancestry_get_calls": int(state.get("ancestry_get_calls", 0)),
+            "shortcut_ancestry_get_calls": int(state.get("shortcut_ancestry_get_calls", 0)),
             "resources_discovered": state["total_discovered"],
             "page_resources_discovered": max(0, int(state["total_discovered"]) - discovered_before),
             "resources_emitted": state["total_emitted"],
@@ -1371,18 +1568,43 @@ class EnsoraDriveConnector(SourceConnector):
         scope: dict[str, Any] | None = None,
         cursor: str | None = None,
     ) -> ChangePage:
-        """Recursively traverse ONLY the approved Ensora folder tree with streaming BFS pagination.
+        """Recursively traverse ONLY approved Ensora academic folders (1A/2A/3A) via streaming BFS.
 
-        Supported scope keys:
-        - folder_id: optional subfolder ID (validated to be inside Ensora root!)
-        - cohorts: optional list[str] filter (e.g. ["2A", "Global"])
-        - modified_since: optional ISO UTC string for incremental sync
-        - known_versions: dict[external_id, remote_version] to skip unchanged files
-        - known_external_ids: set[str] or dict[external_id, title] of active cached Drive IDs
-          for authoritative approved-root membership reconciliation
-        - max_files: optional bounded limit for safe live validation
-        - max_depth: recursion limit (depth truncation marks scan non-authoritative)
-        - page_size: pagination chunk size (default 100)
+        Resolves direct children of the Ensora shared root once before recursion so the
+        top-level ``Global`` folder, personal Drive roots, and stray root files are never
+        queued or listed. In-process pagination serves continuation handles from memory first
+        and persists metadata-only ``0o600`` ``drvpage:<hash>`` snapshots (24h TTL, skipped in
+        ``discovery_only`` mode) for crash recovery across restarts; cross-process resumes
+        lazily revalidate queued folders against live Drive ancestry. Authoritative membership
+        reconciliation (tombstones + durable ``drvmod:<iso_utc>`` sync tokens) is emitted only
+        when an unscoped approved-root traversal completes with zero errors and zero depth
+        truncation.
+
+        Args:
+            scope: Optional traversal configuration dictionary supporting:
+                - ``folder_id``: Optional subfolder ID (live-verified inside ``1A``/``2A``/``3A``).
+                - ``cohorts``: Restricts enumeration to approved academic top-level folders,
+                  for example ``["2A"]``. Personal Drive and top-level ``Global`` are outside
+                  the allowed scope and raise ``PermissionDeniedError``.
+                - ``modified_since``: Optional ISO-8601 UTC watermark for incremental runs.
+                - ``known_versions``: ``dict[external_id, remote_version]`` to skip unchanged files.
+                - ``known_external_ids``: Active persisted Drive IDs (set or mapping to title/folder)
+                  enabling authoritative root membership reconciliation.
+                - ``discovery_only``: When ``True``, skips per-page ``drvpage:`` disk ``fsync``
+                  snapshots while preserving full in-memory pagination and scope enforcement.
+                - ``max_files``: Optional bounded discovery cap for diagnostic runs.
+                - ``max_depth``: Maximum recursion depth (truncation marks scan non-authoritative).
+                - ``page_size``: Maximum items returned per page (default ``100``).
+            cursor: Optional ``drvpage:<hash>`` continuation token or ``drvmod:<iso_utc>`` watermark.
+
+        Returns:
+            ``ChangePage`` containing normalized ``SourceRecord`` items, continuation cursor or
+            terminal ``sync_token``, and redacted warnings/errors.
+
+        Raises:
+            PermissionDeniedError: If personal Drive, top-level ``Global``, or an out-of-scope
+                ``folder_id`` is requested.
+            ValueError: If an expired, mismatched, or unknown ``drvpage:`` handle is supplied.
         """
         opts = scope or {}
         if opts.get("personal_drive") is True:
@@ -1407,51 +1629,58 @@ class EnsoraDriveConnector(SourceConnector):
             f"{DRIVE_SCOPE_POLICY_ID}|{start_folder}|{','.join(sorted(cohorts_filter))}|{max_files}".encode("utf-8")
         ).hexdigest()[:12]
 
-        # Serve continuation pages from in-memory OR durable 0o600 on-disk BFS snapshot.
-        # Rejects legacy v1 snapshots from the broader scope (before Global exclusion) and
-        # filters resumed queue/items defensively so excluded Global state can never leak.
+        # Serve continuation pages from in-memory state FIRST (zero disk/revalidation overhead
+        # during same-process pagination!), falling back to durable 0o600 on-disk BFS snapshot
+        # across process restarts. Legacy v1 snapshots (before Global exclusion) are rejected &
+        # purged; cross-process v2 resumes revalidate queued folders lazily per batch with a
+        # shared verified/rejected cache so Page 1->2 never stalls on hundreds of files.get calls.
         if cursor and cursor.startswith("drvpage:") and not cursor[len("drvpage:") :].isdigit():
-            state = self._load_durable_paging_state(cursor)
-            loaded_from_disk = state is not None
+            state: dict[str, Any] | None = None
+            loaded_from_disk = False
+            mem_state = self._paging_states.get(cursor)
+            if mem_state is not None:
+                if mem_state.get("scope_policy") != DRIVE_SCOPE_POLICY_ID:
+                    self._paging_states.pop(cursor, None)
+                else:
+                    # Deep-copy mutable traversal containers so replaying a cursor is idempotent
+                    state = {
+                        **mem_state,
+                        "queue": deque(
+                            t for t in mem_state["queue"] if is_approved_drive_folder_path(t[1])
+                        ),
+                        "visited_folders": set(mem_state["visited_folders"]),
+                        "verified_in_run": {
+                            fid
+                            for fid in mem_state["verified_in_run"]
+                            if fid != self._root_folder_id
+                        },
+                        "rejected_in_run": set(mem_state.get("rejected_in_run") or ()),
+                        "pending_items": [
+                            r
+                            for r in mem_state["pending_items"]
+                            if r.access_status == AccessStatus.TOMBSTONED
+                            or is_approved_drive_folder_path(r.folder_path)
+                        ],
+                        "membership_additions": [
+                            r
+                            for r in mem_state["membership_additions"]
+                            if is_approved_drive_folder_path(r.folder_path)
+                        ],
+                        "seen_live_ids": set(mem_state["seen_live_ids"]),
+                        "warnings": list(mem_state["warnings"]),
+                        "errors": list(mem_state["errors"]),
+                    }
             if state is None:
-                mem_state = self._paging_states.get(cursor)
-                if mem_state is not None:
-                    if mem_state.get("scope_policy") != DRIVE_SCOPE_POLICY_ID:
-                        self._paging_states.pop(cursor, None)
-                    else:
-                        # Deep-copy mutable traversal containers so replaying a cursor is idempotent
-                        state = {
-                            **mem_state,
-                            "queue": [
-                                t for t in mem_state["queue"] if is_approved_drive_folder_path(t[1])
-                            ],
-                            "visited_folders": set(mem_state["visited_folders"]),
-                            "verified_in_run": {
-                                fid
-                                for fid in mem_state["verified_in_run"]
-                                if fid != self._root_folder_id
-                            },
-                            "pending_items": [
-                                r
-                                for r in mem_state["pending_items"]
-                                if r.access_status == AccessStatus.TOMBSTONED
-                                or is_approved_drive_folder_path(r.folder_path)
-                            ],
-                            "membership_additions": [
-                                r
-                                for r in mem_state["membership_additions"]
-                                if is_approved_drive_folder_path(r.folder_path)
-                            ],
-                            "seen_live_ids": set(mem_state["seen_live_ids"]),
-                            "warnings": list(mem_state["warnings"]),
-                            "errors": list(mem_state["errors"]),
-                        }
+                state = self._load_durable_paging_state(cursor)
+                loaded_from_disk = state is not None
             if state is None:
                 raise ValueError("Expired or unknown Ensora Drive paging handle.")
             if state["fingerprint"] != scope_fingerprint:
                 raise ValueError("Ensora Drive paging cursor does not match the current query scope.")
             if loaded_from_disk:
-                # Re-validate approved academic folder containment whenever resuming across a process boundary
+                # Cross-process resume: validate start_folder immediately and clear verified_in_run
+                # so each queued folder batch is lazily revalidated against live Drive ancestry
+                # using a shared cache (preventing O(queue_size * depth) upfront files.get storms).
                 service = self._build_service()
                 if state["start_folder"] != self._root_folder_id:
                     if not self._validate_target_folder_boundary(
@@ -1463,18 +1692,14 @@ class EnsoraDriveConnector(SourceConnector):
                         raise PermissionDeniedError(
                             f"Resumed folder '{state['start_folder']}' is outside approved Ensora academic folders (1A/2A/3A)."
                         )
-                validated_queue: list[tuple[str, str, int]] = []
-                for q_fid, q_path, q_depth in state["queue"]:
-                    if self._validate_target_folder_boundary(
-                        q_fid,
-                        service,
-                        verified_in_run=None,
-                        require_approved_cohort=True,
-                    ):
-                        validated_queue.append((q_fid, q_path, q_depth))
-                state["queue"] = validated_queue
+                state["verified_in_run"] = set()
+                state["rejected_in_run"] = set()
+                state["needs_boundary_revalidation"] = True
             return self._advance_bfs_page(state, page_size=page_size)
 
+        # Fresh traversal start: clear short-TTL fetch_blob parent cache so post-discovery
+        # security checks never inherit stale parent verifications across distinct runs.
+        self._clear_verified_parent_cache()
         service = self._build_service()
         verified_in_run: set[str] = set()
         authorized_top_meta: list[dict[str, str]] = []
@@ -1566,6 +1791,7 @@ class EnsoraDriveConnector(SourceConnector):
             "max_files": max_files,
             "max_depth": max_depth,
             "modified_since": modified_since,
+            "discovery_only": bool(opts.get("discovery_only", False)),
             "known_versions": known_versions,
             "has_membership_baseline": has_membership_baseline,
             "known_external_ids": known_external_ids,
@@ -1574,7 +1800,7 @@ class EnsoraDriveConnector(SourceConnector):
             "authorized_top_level_folders": authorized_top_meta,
             "top_folder_id_by_cohort": top_folder_id_by_cohort,
             "excluded_top_level_folders_count": excluded_top_count,
-            "queue": initial_queue,
+            "queue": deque(initial_queue),
             "visited_folders": initial_visited,
             "verified_in_run": verified_in_run,
             "pending_items": [],
@@ -1592,30 +1818,53 @@ class EnsoraDriveConnector(SourceConnector):
             "excluded_shortcuts_skipped": 0,
             "unexportable_skipped": 0,
             "api_list_calls": initial_api_list_calls,
+            "batch_list_calls": 0,
+            "batch_fallback_calls": 0,
+            "ancestry_get_calls": 0,
+            "shortcut_ancestry_get_calls": 0,
         }
         return self._advance_bfs_page(state, page_size=page_size, drain_offset=offset)
 
-    def fetch_blob(self, item: SourceRecord) -> FetchResult:
-        """Download an approved Ensora Drive file or export a Google Workspace document."""
+    def fetch_blob(
+        self,
+        item: SourceRecord,
+        *,
+        _use_thread_service: bool = False,
+    ) -> FetchResult:
+        """Download an approved Ensora Drive file or export a Google Workspace document.
+
+        Always executes a live ``files.get`` check on the target file to reject trashed
+        or relocated files immediately. Parent-folder ancestry walks reuse verified
+        folders for at most ``parent_verification_ttl_sec`` seconds (default 60s) within
+        the active download batch and invalidate immediately on any permission denial.
+        Streams real Google API ``HttpRequest`` downloads through ``MediaIoBaseDownload``
+        so size-limit guards trigger incrementally rather than after buffering the entire file.
+        """
         file_id = str(item.payload.get("drive_file_id") or item.external_id.split(":", 1)[-1])
 
         def _record_failure(exc: Exception) -> None:
             reason = _categorize_drive_error_reason(exc)
-            self.last_fetch_errors_by_reason[reason] = (
-                self.last_fetch_errors_by_reason.get(reason, 0) + 1
-            )
-            if self.last_stats:
-                self.last_stats["fetch_errors_by_reason"] = dict(self.last_fetch_errors_by_reason)
+            with self._state_lock:
+                self.last_fetch_errors_by_reason[reason] = (
+                    self.last_fetch_errors_by_reason.get(reason, 0) + 1
+                )
+                if self.last_stats:
+                    self.last_stats["fetch_errors_by_reason"] = dict(self.last_fetch_errors_by_reason)
+
+        def _get_svc(*, force_refresh: bool = False) -> Any:
+            if _use_thread_service:
+                return self._build_thread_service(force_refresh=force_refresh)
+            return self._build_service(force_refresh=force_refresh)
 
         try:
-            service = self._build_service()
+            service = _get_svc()
 
-            # Re-verify file ancestry before download to guarantee boundary integrity
+            # Re-verify target file metadata live before download (catches trashed & moved files)
             def _fetch_meta(svc: Any) -> dict[str, Any]:
                 def _meta_op():
                     self._rate_limiter.wait()
                     try:
-                        return (
+                        res = (
                             svc.files()
                             .get(
                                 fileId=file_id,
@@ -1624,8 +1873,12 @@ class EnsoraDriveConnector(SourceConnector):
                             )
                             .execute()
                         )
+                        self._notify_rate_limiter_result(None)
+                        return res
                     except Exception as exc:
-                        raise _classify_http_error(exc) from exc
+                        translated = _classify_http_error(exc)
+                        self._notify_rate_limiter_result(translated)
+                        raise translated from exc
 
                 return retry_with_backoff(_meta_op, max_retries=self._config.max_retries)
 
@@ -1634,7 +1887,7 @@ class EnsoraDriveConnector(SourceConnector):
             except AuthenticationRequiredError:
                 # Transparently refresh expired OAuth access token once during long Drive runs
                 self._invalidate_service()
-                service = self._build_service(force_refresh=True)
+                service = _get_svc(force_refresh=True)
                 meta = _fetch_meta(service)
 
             if meta.get("trashed"):
@@ -1642,12 +1895,24 @@ class EnsoraDriveConnector(SourceConnector):
                     f"Blocked download of trashed Drive file '{file_id}'."
                 )
             parents = meta.get("parents") or []
-            if not parents or not any(
-                self._validate_target_folder_boundary(
-                    p, service, verified_in_run=None, require_approved_cohort=True
-                )
-                for p in parents
-            ):
+            parent_allowed = False
+            for p in parents:
+                if self._is_parent_recently_verified(p):
+                    parent_allowed = True
+                    break
+                # Pre-seed already-verified unexpired ancestors so sibling leaf folders
+                # sharing a verified grandparent stop walking at the first cached ancestor.
+                seeded_verified = self._snapshot_verified_parents()
+                before_count = len(seeded_verified)
+                if self._validate_target_folder_boundary(
+                    p, service, verified_in_run=seeded_verified, require_approved_cohort=True
+                ):
+                    if len(seeded_verified) > before_count:
+                        self._record_verified_parents(seeded_verified)
+                    parent_allowed = True
+                    break
+            if not parents or not parent_allowed:
+                self._clear_verified_parent_cache()
                 raise PermissionDeniedError(
                     f"Blocked download of Drive file '{file_id}' inside excluded (Global) or outside approved Ensora academic folders (1A/2A/3A)."
                 )
@@ -1671,15 +1936,39 @@ class EnsoraDriveConnector(SourceConnector):
                         )
 
             def _execute_media(req: Any) -> bytes:
+                # Stream real Google API HttpRequests via MediaIoBaseDownload so oversized files
+                # abort incrementally rather than buffering completely before the size guard.
+                use_streaming = False
+                try:
+                    from googleapiclient.http import HttpRequest, MediaIoBaseDownload  # type: ignore
+
+                    use_streaming = isinstance(req, HttpRequest)
+                except Exception:
+                    MediaIoBaseDownload = None  # type: ignore
+
+                if use_streaming and MediaIoBaseDownload is not None:
+                    buf = io.BytesIO()
+                    downloader = MediaIoBaseDownload(buf, req, chunksize=4 * 1024 * 1024)
+                    done = False
+                    while not done:
+                        _, done = downloader.next_chunk()
+                        if buf.tell() > self._config.max_download_bytes:
+                            raise DriveSizeLimitError(
+                                f"Drive streamed download exceeded limit ({self._config.max_download_bytes} bytes).",
+                                size_bytes=buf.tell(),
+                                limit_bytes=self._config.max_download_bytes,
+                            )
+                    return buf.getvalue()
+
                 if hasattr(req, "execute"):
                     data = req.execute()
                     if isinstance(data, bytes):
                         return data
 
-                from googleapiclient.http import MediaIoBaseDownload  # type: ignore
+                from googleapiclient.http import MediaIoBaseDownload as _MediaDl  # type: ignore
 
                 buf = io.BytesIO()
-                downloader = MediaIoBaseDownload(buf, req)
+                downloader = _MediaDl(buf, req)
                 done = False
                 while not done:
                     _, done = downloader.next_chunk()
@@ -1699,9 +1988,13 @@ class EnsoraDriveConnector(SourceConnector):
                     self._rate_limiter.wait()
                     try:
                         req = svc.files().get_media(fileId=file_id, supportsAllDrives=True)
-                        return _execute_media(req)
+                        data = _execute_media(req)
+                        self._notify_rate_limiter_result(None)
+                        return data
                     except Exception as exc:
-                        raise _classify_http_error(exc) from exc
+                        translated = _classify_http_error(exc)
+                        self._notify_rate_limiter_result(translated)
+                        raise translated from exc
 
                 return retry_with_backoff(_op, max_retries=self._config.max_retries)
 
@@ -1717,9 +2010,13 @@ class EnsoraDriveConnector(SourceConnector):
                         self._rate_limiter.wait()
                         try:
                             req = svc.files().export_media(fileId=file_id, mimeType=emime)
-                            return _execute_media(req)
+                            data = _execute_media(req)
+                            self._notify_rate_limiter_result(None)
+                            return data
                         except Exception as exc:
-                            raise _classify_http_error(exc) from exc
+                            translated = _classify_http_error(exc)
+                            self._notify_rate_limiter_result(translated)
+                            raise translated from exc
 
                     try:
                         return retry_with_backoff(_op, max_retries=self._config.max_retries)
@@ -1733,7 +2030,7 @@ class EnsoraDriveConnector(SourceConnector):
                 content = _download_workspace(service) if export_candidates else _download_binary(service)
             except AuthenticationRequiredError:
                 self._invalidate_service()
-                service = self._build_service(force_refresh=True)
+                service = _get_svc(force_refresh=True)
                 content = _download_workspace(service) if export_candidates else _download_binary(service)
 
             if len(content) > self._config.max_download_bytes:
@@ -1761,6 +2058,55 @@ class EnsoraDriveConnector(SourceConnector):
         except Exception as exc:
             _record_failure(exc)
             raise
+
+    def fetch_blobs_concurrent(
+        self,
+        items: Sequence[SourceRecord],
+        *,
+        max_workers: int = DRIVE_DEFAULT_DOWNLOAD_WORKERS,
+    ) -> list[tuple[SourceRecord, FetchResult | None, Exception | None]]:
+        """Download multiple approved Ensora Drive files concurrently using thread-local clients.
+
+        Creates one isolated Drive API client (and ``httplib2.Http`` socket) per worker
+        thread via ``threading.local()`` while sharing the connector's thread-safe
+        ``AdaptiveRateLimiter`` and short-TTL verified-parent cache. Concurrency is
+        clamped to ``1..DRIVE_MAX_DOWNLOAD_WORKERS`` (6) to stay well within Drive quotas.
+
+        Args:
+            items: Ordered sequence of Drive ``SourceRecord`` objects to download.
+            max_workers: Desired worker count (clamped to ``1..6``).
+
+        Returns:
+            Input-ordered list of ``(record, fetch_result_or_none, exception_or_none)``.
+        """
+        if not items:
+            return []
+        workers = max(1, min(int(max_workers), DRIVE_MAX_DOWNLOAD_WORKERS, len(items)))
+        if workers == 1:
+            out: list[tuple[SourceRecord, FetchResult | None, Exception | None]] = []
+            for rec in items:
+                try:
+                    out.append((rec, self.fetch_blob(rec), None))
+                except Exception as exc:
+                    out.append((rec, None, exc))
+            return out
+
+        results: list[tuple[SourceRecord, FetchResult | None, Exception | None] | None] = [None] * len(items)
+
+        def _worker(idx_rec: tuple[int, SourceRecord]) -> tuple[int, SourceRecord, FetchResult | None, Exception | None]:
+            idx, rec = idx_rec
+            try:
+                blob = self.fetch_blob(rec, _use_thread_service=True)
+                return idx, rec, blob, None
+            except Exception as exc:
+                return idx, rec, None, exc
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_worker, (i, rec)) for i, rec in enumerate(items)]
+            for fut in as_completed(futures):
+                idx, rec, blob, exc = fut.result()
+                results[idx] = (rec, blob, exc)
+        return [r for r in results if r is not None]
 
     def disconnect(self) -> AuthStatus:
         return self._oauth.disconnect(revoke_remote=True)

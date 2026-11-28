@@ -16,15 +16,18 @@ discovery safety when `single_course_first=True`.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import logging
 import re
-from dataclasses import dataclass, field
+import threading
+from dataclasses import dataclass, field, replace
 from html.parser import HTMLParser
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse, urlunparse
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from ..auth.ensai import (
     DEFAULT_ENSAI_USER_AGENT,
@@ -144,6 +147,11 @@ class MoodleCourseSummary:
     summary: str | None = None
     academic_year: str | None = None
     archived: bool = False
+    explicit_academic_year: str | None = None
+    startdate: int | None = None
+    enddate: int | None = None
+    timeline_classification: str | None = None  # "inprogress" | "future" | "past" | None
+    year_evidence: str | None = None  # "explicit_label" | "date_span" | "ongoing_no_enddate" | "none"
 
 
 @dataclass(frozen=True)
@@ -201,8 +209,12 @@ def _extract_academic_year_hint(text: str | None) -> str | None:
     return None
 
 
-def _academic_year_from_timestamp(ts: Any) -> str | None:
-    """Derive source-backed academic year (e.g. '2026-2027') from an official Moodle epoch timestamp."""
+def _academic_year_from_timestamp(ts: Any, *, is_enddate: bool = False) -> str | None:
+    """Derive source-backed academic year (e.g. '2026-2027') from an official Moodle epoch timestamp.
+
+    Start dates from July onward belong to the upcoming academic year (e.g. Aug 2026 -> 2026-2027).
+    End dates in July/August belong to the academic year just ending (e.g. Jul 2026 -> 2025-2026).
+    """
     if not isinstance(ts, (int, float)) or ts <= 0:
         return None
     try:
@@ -211,9 +223,95 @@ def _academic_year_from_timestamp(ts: Any) -> str | None:
         return None
     if dt.year < 2015 or dt.year > 2040:
         return None
-    # Moodle courses for the upcoming year frequently open in July/August (month >= 7)
-    start_year = dt.year if dt.month >= 7 else dt.year - 1
+    cutoff_month = 9 if is_enddate else 7
+    start_year = dt.year if dt.month >= cutoff_month else dt.year - 1
     return f"{start_year}-{start_year + 1}"
+
+
+def _parse_academic_year_bounds(academic_year: str) -> tuple[int, int] | None:
+    """Return `(window_start_epoch, window_end_epoch)` in UTC for a `YYYY-YYYY` academic year."""
+    m = re.fullmatch(r"\s*(20\d{2})\s*[-/–]\s*(20\d{2})\s*", academic_year or "")
+    if not m:
+        return None
+    y1, y2 = int(m.group(1)), int(m.group(2))
+    if y2 != y1 + 1:
+        return None
+    start_dt = datetime(y1, 7, 1, 0, 0, 0, tzinfo=timezone.utc)
+    end_dt = datetime(y2, 8, 31, 23, 59, 59, tzinfo=timezone.utc)
+    return int(start_dt.timestamp()), int(end_dt.timestamp())
+
+
+def _course_matches_academic_year(
+    course: MoodleCourseSummary,
+    requested_year: str,
+) -> tuple[bool, str, str | None, str | None]:
+    """Evaluate academic-year membership from explicit labels, date spans, and ongoing status.
+
+    Never disables academic-year filtering blindly: explicit out-of-year labels, closed
+    courses whose ``enddate`` precedes the requested academic year, past/archived courses,
+    and future courses starting after the requested year are strictly excluded. Active
+    rolling/reused Moodle courses (``enddate == 0``, not past/archived, no conflicting
+    explicit year) and bare HTML dashboard candidates pending course-page enrichment are
+    retained. Explicit ``course_ids`` requested by the caller remain selected even on a
+    year mismatch (subject to service authorization).
+
+    Args:
+        course: Discovered ``MoodleCourseSummary`` metadata from AJAX or HTML listing.
+        requested_year: Requested academic year label (e.g. ``"2026-2027"``).
+
+    Returns:
+        Four-tuple ``(keep, reason, effective_academic_year, year_evidence)`` where:
+        - ``keep``: ``True`` if the course should be retained for traversal/enrichment.
+        - ``reason``: Deterministic privacy-safe decision code for ``year_decision_counts``.
+        - ``effective_academic_year``: Resolved ``YYYY-YYYY`` label or ``None`` if unknown.
+        - ``year_evidence``: Source evidence tier (``"explicit_label"``, ``"date_span"``,
+          ``"ongoing_no_enddate"``, or ``"none"``).
+    """
+    norm_yr = requested_year.replace("–", "-").replace("/", "-").strip()
+    bounds = _parse_academic_year_bounds(norm_yr)
+
+    # 1. Explicit source year label (title / shortname / category / breadcrumb) is authoritative
+    explicit_yr = course.explicit_academic_year or (
+        course.academic_year
+        if (course.startdate is None and course.enddate is None and course.academic_year is not None)
+        else None
+    )
+    if explicit_yr:
+        if explicit_yr == norm_yr:
+            return True, "explicit_year_match", norm_yr, "explicit_label"
+        return False, "explicit_year_mismatch", explicit_yr, "explicit_label"
+
+    # 2. Closed course with explicit enddate > 0: check overlap against requested academic year
+    if bounds is not None and course.enddate is not None and course.enddate > 0:
+        req_start, req_end = bounds
+        if course.enddate < req_start:
+            return False, "ended_before_requested_year", course.academic_year, "date_span"
+        if course.startdate is not None and course.startdate > 0 and course.startdate > req_end:
+            return False, "starts_after_requested_year", course.academic_year, "date_span"
+        return True, "active_date_span_overlap", norm_yr, "date_span"
+
+    # 3. Ongoing / rolling enrolled course (`enddate == 0` with no conflicting explicit year label)
+    if course.enddate == 0:
+        if course.timeline_classification == "past" or course.archived:
+            return False, "past_or_archived", course.academic_year, "ongoing_no_enddate"
+        if bounds is not None and course.startdate is not None and course.startdate > bounds[1]:
+            return False, "starts_after_requested_year", course.academic_year, "date_span"
+        # Actively enrolled open-ended Moodle course (reused across academic years with enddate=0)
+        return True, "ongoing_enrolled_no_enddate", norm_yr, "ongoing_no_enddate"
+
+    # 4. Timestamp-only fallback when enddate is absent (None)
+    if bounds is not None and course.startdate is not None and course.startdate > 0:
+        req_start, req_end = bounds
+        if course.startdate > req_end:
+            return False, "starts_after_requested_year", course.academic_year, "date_span"
+        if course.timeline_classification == "inprogress":
+            return True, "ongoing_inprogress_timeline", norm_yr, "ongoing_no_enddate"
+        if course.startdate >= req_start:
+            return True, "startdate_in_requested_year", norm_yr, "date_span"
+        return False, "startdate_before_requested_year", course.academic_year, "date_span"
+
+    # 5. No year or timestamp metadata yet (e.g. bare HTML dashboard / user profile link) -> keep for page check
+    return True, "unknown_year_pending_course_page", course.academic_year, "none"
 
 
 def _extract_course_title_from_html(html: str) -> str | None:
@@ -279,11 +377,33 @@ def parse_moodle_ajax_courses(payload: Any, base_url: str) -> list[MoodleCourseS
             course_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?id={cid}"
         else:
             course_url = urljoin(base_url, f"course/view.php?id={cid}")
-        yr = (
-            _extract_academic_year_hint(f"{title} {shortname or ''} {cat or ''}")
-            or _academic_year_from_timestamp(entry.get("enddate"))
-            or _academic_year_from_timestamp(entry.get("startdate"))
-        )
+        explicit_yr = _extract_academic_year_hint(f"{title} {shortname or ''} {cat or ''}")
+        raw_start = entry.get("startdate")
+        raw_end = entry.get("enddate")
+        start_ts = int(raw_start) if isinstance(raw_start, (int, float)) and raw_start >= 0 else None
+        end_ts = int(raw_end) if isinstance(raw_end, (int, float)) and raw_end >= 0 else None
+        timeline_cls: str | None = None
+        if entry.get("ispast") is True:
+            timeline_cls = "past"
+        elif entry.get("isinprogress") is True:
+            timeline_cls = "inprogress"
+        elif entry.get("isfuture") is True:
+            timeline_cls = "future"
+
+        if explicit_yr:
+            yr: str | None = explicit_yr
+            yr_evidence = "explicit_label"
+        elif end_ts is not None and end_ts > 0:
+            yr = _academic_year_from_timestamp(end_ts, is_enddate=True)
+            yr_evidence = "date_span" if yr else "none"
+        elif end_ts == 0:
+            # Open-ended / rolling Moodle course (no enddate): do NOT stamp as a historical year
+            # purely from its original creation startdate!
+            yr = None
+            yr_evidence = "ongoing_no_enddate"
+        else:
+            yr = _academic_year_from_timestamp(start_ts, is_enddate=False)
+            yr_evidence = "date_span" if yr else "none"
         archived = bool(entry.get("hidden", False)) or _is_archived_hint(f"{title} {cat or ''}")
         courses.append(
             MoodleCourseSummary(
@@ -296,6 +416,11 @@ def parse_moodle_ajax_courses(payload: Any, base_url: str) -> list[MoodleCourseS
                 summary=str(entry.get("summary") or "").strip() or None,
                 academic_year=yr,
                 archived=archived,
+                explicit_academic_year=explicit_yr,
+                startdate=start_ts,
+                enddate=end_ts,
+                timeline_classification=timeline_cls,
+                year_evidence=yr_evidence,
             )
         )
     return courses
@@ -909,8 +1034,16 @@ def extract_assignment_deadline(text: str) -> str | None:
     return None
 
 
+_REAL_REQUESTS_SESSION = requests.Session
+
+
 class MoodleConnector(SourceConnector):
-    """Read-only Moodle ENSAI connector supporting Playwright + optional WS REST + fixtures."""
+    """Read-only Moodle ENSAI connector supporting Playwright, pooled cookie HTTP, optional WS REST, and fixtures.
+
+    Maintains a thread-local pooled ``requests.Session`` (``HTTPAdapter`` with TCP/TLS
+    keep-alive) invalidated automatically whenever the private ``session_cookies.json``
+    snapshot changes on disk or ``requests.Session`` is substituted in tests.
+    """
 
     source_kind = SourceKind.MOODLE
 
@@ -932,7 +1065,71 @@ class MoodleConnector(SourceConnector):
         self._page_fetcher = page_fetcher
         self._blob_fetcher = blob_fetcher
         self._rate_limiter = rate_limiter or RateLimiter(config.rate_limit_min_interval_sec)
+        self._http_local = threading.local()
+        self._cookie_cache_lock = threading.Lock()
+        self._cookie_snapshot_cache: tuple[tuple[int, int], list[dict[str, Any]]] | None = None
         self.last_stats: dict[str, Any] = {}
+
+    def close(self) -> None:
+        """Close any cached thread-local pooled HTTP session cleanly."""
+        cached = getattr(self._http_local, "cookie_session", None)
+        if cached is not None:
+            session = cached[0]
+            try:
+                session.close()
+            except Exception:
+                pass
+            self._http_local.cookie_session = None
+
+    def _get_pooled_cookie_session(self) -> tuple[Any, bool] | None:
+        """Return a thread-local pooled ``requests.Session`` hydrated with persisted Moodle cookies.
+
+        Caches the parsed cookie snapshot by file ``(mtime_ns, size)`` and reuses TCP/TLS
+        connections across consecutive page fetches, AJAX queries, and file downloads.
+        Automatically rebuilds when cookies refresh on disk or when ``requests.Session``
+        is monkeypatched in unit tests.
+
+        Returns:
+            Tuple ``(session, is_pooled)`` or ``None`` if no valid Moodle cookies exist.
+        """
+        cookies, cookie_sig = self._load_persisted_moodle_cookies_with_sig()
+        if not cookies:
+            return None
+        session_cls = requests.Session
+        is_real_session = session_cls is _REAL_REQUESTS_SESSION
+        cached = getattr(self._http_local, "cookie_session", None)
+        if (
+            is_real_session
+            and cached is not None
+            and cached[1] is session_cls
+            and cached[2] == cookie_sig
+        ):
+            return cached[0], True
+
+        if cached is not None:
+            try:
+                cached[0].close()
+            except Exception:
+                pass
+            self._http_local.cookie_session = None
+
+        session = session_cls()
+        if is_real_session and hasattr(session, "mount"):
+            adapter = HTTPAdapter(pool_connections=4, pool_maxsize=8)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+        session.headers.update({"User-Agent": DEFAULT_ENSAI_USER_AGENT})
+        for c in cookies:
+            session.cookies.set(
+                str(c["name"]),
+                str(c["value"]),
+                domain=str(c.get("domain") or "").lstrip(".") or None,
+                path=str(c.get("path") or "/"),
+            )
+        if is_real_session:
+            self._http_local.cookie_session = (session, session_cls, cookie_sig)
+            return session, True
+        return session, False
 
     def capabilities(self) -> ConnectorCapabilities:
         return ConnectorCapabilities(
@@ -1114,24 +1311,15 @@ class MoodleConnector(SourceConnector):
         return AuthState.ERROR
 
     def _cookie_session_fetch_html(self, url: str) -> str | None:
-        """Fast authenticated HTML fetch using persisted Moodle cookies (no Chromium launch).
+        """Fast authenticated HTML fetch using a pooled Moodle cookie session (no Chromium launch).
 
-        Returns None when no persisted cookies exist or the session requires Playwright/CAS reauth.
-        Enforces strict same-origin pre-follow redirect validation and login-HTML detection.
+        Returns ``None`` when no persisted cookies exist or the session requires Playwright/CAS
+        reauth. Enforces strict same-origin pre-follow redirect validation and login-HTML detection.
         """
-        cookies = self._load_persisted_moodle_cookies()
-        if not cookies:
+        pooled = self._get_pooled_cookie_session()
+        if pooled is None:
             return None
-
-        session = requests.Session()
-        session.headers.update({"User-Agent": DEFAULT_ENSAI_USER_AGENT})
-        for c in cookies:
-            session.cookies.set(
-                str(c["name"]),
-                str(c["value"]),
-                domain=str(c.get("domain") or "").lstrip(".") or None,
-                path=str(c.get("path") or "/"),
-            )
+        session, is_pooled = pooled
 
         current_url = url
         max_redirects = 6
@@ -1178,7 +1366,8 @@ class MoodleConnector(SourceConnector):
         except Exception:
             return None
         finally:
-            session.close()
+            if not is_pooled:
+                session.close()
 
     @staticmethod
     def _extract_sesskey_from_html(html_text: str) -> str | None:
@@ -1219,77 +1408,73 @@ class MoodleConnector(SourceConnector):
                     if c.course_id not in merged:
                         merged[c.course_id] = c
 
-        # 2. Read-only core Moodle AJAX query using the authenticated sesskey & cookies
+        # 2. Read-only core Moodle AJAX query using the authenticated sesskey & pooled session
         if sesskey:
-            session = requests.Session()
-            session.headers.update(
-                {
-                    "User-Agent": DEFAULT_ENSAI_USER_AGENT,
-                    "Content-Type": "application/json",
-                }
-            )
-            for c in cookies:
-                session.cookies.set(
-                    str(c["name"]),
-                    str(c["value"]),
-                    domain=str(c.get("domain") or "").lstrip(".") or None,
-                    path=str(c.get("path") or "/"),
+            pooled = self._get_pooled_cookie_session()
+            if pooled is not None:
+                session, is_pooled = pooled
+                ajax_url = urljoin(
+                    self._config.moodle_base_url,
+                    f"lib/ajax/service.php?sesskey={sesskey}&info=core_course_get_enrolled_courses_by_timeline_classification",
                 )
-            ajax_url = urljoin(
-                self._config.moodle_base_url,
-                f"lib/ajax/service.php?sesskey={sesskey}&info=core_course_get_enrolled_courses_by_timeline_classification",
-            )
-            try:
-                ajax_found_any = False
-                for classification in ("all", "allincludinghidden", "inprogress", "future", "past"):
-                    payload = [
-                        {
-                            "index": 0,
-                            "methodname": "core_course_get_enrolled_courses_by_timeline_classification",
-                            "args": {
-                                "offset": 0,
-                                "limit": 0,
-                                "classification": classification,
-                                "sort": "fullname",
-                            },
-                        }
-                    ]
-                    resp = session.post(
-                        ajax_url,
-                        json=payload,
-                        timeout=self._config.request_timeout_sec,
-                        allow_redirects=False,
-                    )
-                    if resp.status_code != 200:
-                        continue
-                    data = resp.json()
-                    parsed = parse_moodle_ajax_courses(data, self._config.moodle_base_url)
-                    if parsed:
-                        ajax_found_any = True
-                        for ac in parsed:
-                            if ac.course_id not in merged:
-                                merged[ac.course_id] = ac
-                            else:
-                                prev = merged[ac.course_id]
-                                merged[ac.course_id] = MoodleCourseSummary(
-                                    course_id=ac.course_id,
-                                    title=prev.title or ac.title,
-                                    url=prev.url or ac.url,
-                                    shortname=ac.shortname or prev.shortname,
-                                    subject_hint=prev.subject_hint or ac.subject_hint,
-                                    category=ac.category or prev.category,
-                                    summary=ac.summary or prev.summary,
-                                    academic_year=prev.academic_year or ac.academic_year,
-                                    archived=prev.archived or ac.archived,
-                                )
-                        if classification in ("all", "allincludinghidden"):
-                            break
-                if ajax_found_any:
-                    sources_used.append("cookie_ajax")
-            except Exception:
-                pass
-            finally:
-                session.close()
+                try:
+                    ajax_found_any = False
+                    for classification in ("all", "allincludinghidden", "inprogress", "future", "past"):
+                        payload = [
+                            {
+                                "index": 0,
+                                "methodname": "core_course_get_enrolled_courses_by_timeline_classification",
+                                "args": {
+                                    "offset": 0,
+                                    "limit": 0,
+                                    "classification": classification,
+                                    "sort": "fullname",
+                                },
+                            }
+                        ]
+                        resp = session.post(
+                            ajax_url,
+                            json=payload,
+                            headers={"Content-Type": "application/json"},
+                            timeout=self._config.request_timeout_sec,
+                            allow_redirects=False,
+                        )
+                        if resp.status_code != 200:
+                            continue
+                        data = resp.json()
+                        parsed = parse_moodle_ajax_courses(data, self._config.moodle_base_url)
+                        if parsed:
+                            ajax_found_any = True
+                            for ac in parsed:
+                                if ac.course_id not in merged:
+                                    merged[ac.course_id] = ac
+                                else:
+                                    prev = merged[ac.course_id]
+                                    merged[ac.course_id] = MoodleCourseSummary(
+                                        course_id=ac.course_id,
+                                        title=prev.title or ac.title,
+                                        url=prev.url or ac.url,
+                                        shortname=ac.shortname or prev.shortname,
+                                        subject_hint=prev.subject_hint or ac.subject_hint,
+                                        category=ac.category or prev.category,
+                                        summary=ac.summary or prev.summary,
+                                        academic_year=prev.explicit_academic_year or ac.explicit_academic_year or prev.academic_year or ac.academic_year,
+                                        archived=prev.archived or ac.archived,
+                                        explicit_academic_year=prev.explicit_academic_year or ac.explicit_academic_year,
+                                        startdate=ac.startdate if ac.startdate is not None else prev.startdate,
+                                        enddate=ac.enddate if ac.enddate is not None else prev.enddate,
+                                        timeline_classification=ac.timeline_classification or prev.timeline_classification,
+                                        year_evidence=ac.year_evidence or prev.year_evidence,
+                                    )
+                            if classification in ("all", "allincludinghidden"):
+                                break
+                    if ajax_found_any:
+                        sources_used.append("cookie_ajax")
+                except Exception:
+                    pass
+                finally:
+                    if not is_pooled:
+                        session.close()
 
         return list(merged.values()), sources_used
 
@@ -1740,8 +1925,13 @@ class MoodleConnector(SourceConnector):
                             subject_hint=dom_c.subject_hint or ac.subject_hint,
                             category=ac.category or dom_c.category,
                             summary=ac.summary or dom_c.summary,
-                            academic_year=dom_c.academic_year or ac.academic_year,
+                            academic_year=dom_c.explicit_academic_year or ac.explicit_academic_year or dom_c.academic_year or ac.academic_year,
                             archived=dom_c.archived or ac.archived,
+                            explicit_academic_year=dom_c.explicit_academic_year or ac.explicit_academic_year,
+                            startdate=ac.startdate if ac.startdate is not None else dom_c.startdate,
+                            enddate=ac.enddate if ac.enddate is not None else dom_c.enddate,
+                            timeline_classification=ac.timeline_classification or dom_c.timeline_classification,
+                            year_evidence=ac.year_evidence or dom_c.year_evidence,
                         )
 
                 # ALWAYS consult /user/profile.php (static complete course list) if my/courses.php
@@ -1829,6 +2019,8 @@ class MoodleConnector(SourceConnector):
         raw_count = len(courses)
         excluded_archived = 0
         excluded_by_year = 0
+        year_decision_counts: dict[str, int] = {}
+        course_filter_summary: list[dict[str, Any]] = []
 
         if course_ids:
             allowed = {str(cid).strip() for cid in course_ids if str(cid).strip()}
@@ -1848,6 +2040,45 @@ class MoodleConnector(SourceConnector):
                         )
                     )
                     matched_ids.add(scid)
+            if academic_year:
+                norm_yr = academic_year.replace("–", "-").replace("/", "-").strip()
+                upgraded: list[MoodleCourseSummary] = []
+                for c in matched:
+                    keep, reason, eff_yr, evidence = _course_matches_academic_year(c, norm_yr)
+                    year_decision_counts[reason] = year_decision_counts.get(reason, 0) + 1
+                    course_filter_summary.append(
+                        {
+                            "course_id": c.course_id,
+                            "decision": "kept_explicit_id",
+                            "reason": reason,
+                            "year_evidence": evidence,
+                            "explicit_year": c.explicit_academic_year,
+                            "has_enddate": bool(c.enddate and c.enddate > 0),
+                            "timeline": c.timeline_classification,
+                        }
+                    )
+                    if keep and eff_yr and eff_yr != c.academic_year:
+                        upgraded.append(
+                            MoodleCourseSummary(
+                                course_id=c.course_id,
+                                title=c.title,
+                                url=c.url,
+                                shortname=c.shortname,
+                                subject_hint=c.subject_hint,
+                                category=c.category,
+                                summary=c.summary,
+                                academic_year=eff_yr,
+                                archived=c.archived,
+                                explicit_academic_year=c.explicit_academic_year,
+                                startdate=c.startdate,
+                                enddate=c.enddate,
+                                timeline_classification=c.timeline_classification,
+                                year_evidence=evidence,
+                            )
+                        )
+                    else:
+                        upgraded.append(c)
+                matched = upgraded
             courses = matched
         else:
             if not include_archived:
@@ -1856,14 +2087,45 @@ class MoodleConnector(SourceConnector):
                 courses = kept
             if academic_year:
                 norm_yr = academic_year.replace("–", "-").replace("/", "-").strip()
-                # Keep courses matching the requested year OR courses with no explicit year metadata
-                kept = [
-                    c
-                    for c in courses
-                    if c.academic_year is None or c.academic_year == norm_yr
-                ]
-                excluded_by_year = len(courses) - len(kept)
-                courses = kept
+                kept_courses: list[MoodleCourseSummary] = []
+                for c in courses:
+                    keep, reason, eff_yr, evidence = _course_matches_academic_year(c, norm_yr)
+                    year_decision_counts[reason] = year_decision_counts.get(reason, 0) + 1
+                    course_filter_summary.append(
+                        {
+                            "course_id": c.course_id,
+                            "decision": "kept" if keep else "excluded",
+                            "reason": reason,
+                            "year_evidence": evidence,
+                            "explicit_year": c.explicit_academic_year,
+                            "has_enddate": bool(c.enddate and c.enddate > 0),
+                            "timeline": c.timeline_classification,
+                        }
+                    )
+                    if keep:
+                        if eff_yr != c.academic_year or evidence != c.year_evidence:
+                            kept_courses.append(
+                                MoodleCourseSummary(
+                                    course_id=c.course_id,
+                                    title=c.title,
+                                    url=c.url,
+                                    shortname=c.shortname,
+                                    subject_hint=c.subject_hint,
+                                    category=c.category,
+                                    summary=c.summary,
+                                    academic_year=eff_yr,
+                                    archived=c.archived,
+                                    explicit_academic_year=c.explicit_academic_year,
+                                    startdate=c.startdate,
+                                    enddate=c.enddate,
+                                    timeline_classification=c.timeline_classification,
+                                    year_evidence=evidence,
+                                )
+                            )
+                        else:
+                            kept_courses.append(c)
+                excluded_by_year = len(courses) - len(kept_courses)
+                courses = kept_courses
 
         unknown_year_count = sum(1 for c in courses if c.academic_year is None)
         self._last_discovery_diag.update(
@@ -1872,6 +2134,8 @@ class MoodleConnector(SourceConnector):
                 "courses_excluded_archived": excluded_archived,
                 "courses_excluded_by_year": excluded_by_year,
                 "courses_unknown_year": unknown_year_count,
+                "year_decision_counts": year_decision_counts,
+                "course_filter_summary": course_filter_summary,
             }
         )
 
@@ -1891,6 +2155,7 @@ class MoodleConnector(SourceConnector):
         max_folders: int = 20,
         max_sections: int = 50,
         stats: dict[str, Any] | None = None,
+        requested_academic_year: str | None = None,
     ) -> list[MoodleResourceItem]:
         """Traverse one Moodle course via REST WS or HTML extraction (including tab-based sections & nested folders).
 
@@ -1917,18 +2182,18 @@ class MoodleConnector(SourceConnector):
                 extracted_title = _extract_course_title_from_html(html)
                 if extracted_title:
                     new_title = extracted_title
-            new_year = course.academic_year or _extract_academic_year_from_course_html(html)
+            page_year = _extract_academic_year_from_course_html(html)
+            if requested_academic_year and page_year and page_year != requested_academic_year:
+                if stats is not None:
+                    stats["courses_excluded_by_page_year"] = stats.get("courses_excluded_by_page_year", 0) + 1
+                return []
+            new_year = course.explicit_academic_year or page_year or course.academic_year
             if new_title != course.title or new_year != course.academic_year:
-                course = MoodleCourseSummary(
-                    course_id=course.course_id,
+                course = replace(
+                    course,
                     title=new_title,
-                    url=course.url,
-                    shortname=course.shortname,
-                    subject_hint=new_title,
-                    category=course.category,
-                    summary=course.summary,
+                    subject_hint=new_title if new_title != course.title else course.subject_hint,
                     academic_year=new_year,
-                    archived=course.archived,
                 )
             items = list(
                 parse_moodle_course_html(
@@ -2246,6 +2511,10 @@ class MoodleConnector(SourceConnector):
         course_ids = opts.get("course_ids")
         single_course_first = bool(opts.get("single_course_first", False))
         academic_year: str | None = opts.get("academic_year")
+        requested_page_year = (
+            academic_year.replace("–", "-").replace("/", "-").strip()
+            if academic_year and not course_ids else None
+        )
         include_archived = bool(opts.get("include_archived", False))
         interactive = bool(opts.get("interactive", False))
         allow_auto_reauth: bool | None = opts.get("allow_auto_reauth")
@@ -2295,6 +2564,8 @@ class MoodleConnector(SourceConnector):
             "courses_excluded_archived": disc_diag.get("courses_excluded_archived", 0),
             "courses_excluded_by_year": disc_diag.get("courses_excluded_by_year", 0),
             "courses_unknown_year": disc_diag.get("courses_unknown_year", 0),
+            "year_decision_counts": dict(disc_diag.get("year_decision_counts") or {}),
+            "course_filter_summary": list(disc_diag.get("course_filter_summary") or []),
             "discovery_sources_used": disc_diag.get("discovery_sources_used", []),
             "discovery_incomplete": bool(disc_diag.get("discovery_incomplete", False)),
             "my_courses_timeout": bool(disc_diag.get("my_courses_timeout", False)),
@@ -2323,6 +2594,7 @@ class MoodleConnector(SourceConnector):
                     interactive=interactive,
                     allow_auto_reauth=allow_auto_reauth,
                     stats=stats,
+                    requested_academic_year=requested_page_year,
                 )
                 stats["courses_traversed"] += 1
                 for item in items:
@@ -2550,21 +2822,32 @@ class MoodleConnector(SourceConnector):
             mime = guess_mime_type(filename)
         return content, filename, mime
 
-    def _load_persisted_moodle_cookies(self) -> list[dict[str, Any]]:
-        """Read allowlisted Moodle cookies from the private 0o600 session snapshot (no browser launch)."""
+    def _load_persisted_moodle_cookies_with_sig(self) -> tuple[list[dict[str, Any]], tuple[int, int] | None]:
+        """Read allowlisted Moodle cookies from the private 0o600 snapshot, cached by ``(mtime_ns, size)``."""
         import json
         import os
 
         profile_dir = self._auth.profile_dir_for(SourceKind.MOODLE)
         cookie_path = profile_dir / SESSION_COOKIES_FILENAME
-        if not cookie_path.is_file():
-            return []
+        if not cookie_path.is_file() or cookie_path.is_symlink():
+            with self._cookie_cache_lock:
+                self._cookie_snapshot_cache = None
+            return [], None
+        try:
+            st = cookie_path.stat()
+            sig = (int(st.st_mtime_ns), int(st.st_size))
+        except OSError:
+            return [], None
+        with self._cookie_cache_lock:
+            cached = self._cookie_snapshot_cache
+            if cached is not None and cached[0] == sig:
+                return cached[1], sig
         try:
             fd = os.open(str(cookie_path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             with os.fdopen(fd, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
         except Exception:
-            return []
+            return [], None
         raw_cookies = data.get("cookies", []) if isinstance(data, dict) else []
         moodle_host = urlparse(self._config.moodle_base_url).netloc.lower()
         valid: list[dict[str, Any]] = []
@@ -2572,7 +2855,14 @@ class MoodleConnector(SourceConnector):
             dom = str(c.get("domain") or "").lstrip(".").lower()
             if dom and (moodle_host == dom or moodle_host.endswith(f".{dom}")):
                 valid.append(c)
-        return valid
+        with self._cookie_cache_lock:
+            self._cookie_snapshot_cache = (sig, valid)
+        return valid, sig
+
+    def _load_persisted_moodle_cookies(self) -> list[dict[str, Any]]:
+        """Read allowlisted Moodle cookies from the private 0o600 session snapshot (no browser launch)."""
+        cookies, _ = self._load_persisted_moodle_cookies_with_sig()
+        return cookies
 
     def _cookie_session_download_once(
         self,
@@ -2581,24 +2871,16 @@ class MoodleConnector(SourceConnector):
         *,
         resource_kind: str = "resource",
     ) -> tuple[bytes, str, str] | None:
-        """Fast authenticated streaming download using persisted Moodle session cookies.
+        """Fast authenticated streaming download using a pooled Moodle cookie session.
 
-        Returns None if no persisted Moodle cookies are available so caller falls back to Playwright.
-        Enforces strict same-origin pre-follow redirect validation and CAS redirect detection.
+        Returns ``None`` if no persisted Moodle cookies are available so caller falls back
+        to Playwright. Enforces strict same-origin pre-follow redirect validation and CAS
+        redirect detection.
         """
-        cookies = self._load_persisted_moodle_cookies()
-        if not cookies:
+        pooled = self._get_pooled_cookie_session()
+        if pooled is None:
             return None
-
-        session = requests.Session()
-        session.headers.update({"User-Agent": DEFAULT_ENSAI_USER_AGENT})
-        for c in cookies:
-            session.cookies.set(
-                str(c["name"]),
-                str(c["value"]),
-                domain=str(c.get("domain") or "").lstrip(".") or None,
-                path=str(c.get("path") or "/"),
-            )
+        session, is_pooled = pooled
 
         max_redirects = 6
 
@@ -2712,7 +2994,8 @@ class MoodleConnector(SourceConnector):
                 resource_kind=resource_kind,
             )
         finally:
-            session.close()
+            if not is_pooled:
+                session.close()
 
     def _browser_download_once(
         self,
@@ -2976,5 +3259,58 @@ class MoodleConnector(SourceConnector):
             source_url=url,
         )
 
+    def fetch_blobs_concurrent(
+        self,
+        items: Sequence[SourceRecord],
+        *,
+        max_workers: int = 2,
+        interactive: bool = False,
+        allow_auto_reauth: bool | None = False,
+    ) -> list[tuple[SourceRecord, FetchResult | None, Exception | None]]:
+        """Download multiple Moodle resources concurrently with conservative institutional pacing.
+
+        Caps concurrency at 3 workers so institutional Moodle servers are never flooded;
+        each worker uses its own thread-local pooled ``requests.Session`` while sharing
+        the connector's thread-safe ``RateLimiter``.
+
+        Args:
+            items: Ordered sequence of Moodle ``SourceRecord`` items to download.
+            max_workers: Requested concurrency level (clamped to ``1..3``).
+            interactive: Passed through to ``fetch_blob``.
+            allow_auto_reauth: Passed through to ``fetch_blob``.
+
+        Returns:
+            Input-ordered list of ``(record, fetch_result_or_none, exception_or_none)``.
+        """
+        if not items:
+            return []
+        workers = max(1, min(int(max_workers), 3, len(items)))
+        if workers == 1:
+            out: list[tuple[SourceRecord, FetchResult | None, Exception | None]] = []
+            for rec in items:
+                try:
+                    out.append((rec, self.fetch_blob(rec, interactive=interactive, allow_auto_reauth=allow_auto_reauth), None))
+                except Exception as exc:
+                    out.append((rec, None, exc))
+            return out
+
+        results: list[tuple[SourceRecord, FetchResult | None, Exception | None] | None] = [None] * len(items)
+
+        def _worker(idx_rec: tuple[int, SourceRecord]) -> tuple[int, SourceRecord, FetchResult | None, Exception | None]:
+            idx, rec = idx_rec
+            try:
+                blob = self.fetch_blob(rec, interactive=interactive, allow_auto_reauth=allow_auto_reauth)
+                return idx, rec, blob, None
+            except Exception as exc:
+                return idx, rec, None, exc
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_worker, (i, rec)) for i, rec in enumerate(items)]
+            for fut in as_completed(futures):
+                idx, rec, blob, exc = fut.result()
+                results[idx] = (rec, blob, exc)
+        return [r for r in results if r is not None]
+
     def disconnect(self) -> AuthStatus:
+        self.close()
         return self._auth.disconnect(SourceKind.MOODLE)
