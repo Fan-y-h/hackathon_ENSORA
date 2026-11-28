@@ -715,6 +715,18 @@
       "ArtifactGenerateRequest": {
         "additionalProperties": false,
         "properties": {
+          "chapter_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chapter Id"
+          },
           "concept_ids": {
             "items": {
               "type": "string"
@@ -11929,6 +11941,18 @@
       "TutorAnswerRequest": {
         "additionalProperties": false,
         "properties": {
+          "chapter_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chapter Id"
+          },
           "conversation_id": {
             "anyOf": [
               {

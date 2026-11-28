@@ -7,6 +7,7 @@ from decimal import Decimal as D
 from fastapi.testclient import TestClient
 
 from app.modules.grades import domain, validation_rules
+from app.modules.grades.models import AcademicProgram
 from app.modules.grades.source_results import build_results, import_results_into_program
 from tests.integration.test_grades_api import mark, setup_program
 
@@ -232,6 +233,11 @@ def test_pamplemousse_bridge_imports_coefficients_preserves_manual_edits_and_fee
     assert req["required_mean"] == "10.6666667" and req["feasibility"] == "feasible"
     sigs = {s["subject_id"]: s for s in client.get(f"{G}/signals", params={"program_id": report.program_id}).json()["signals"]}
     assert sigs["2ASTA05"]["score"] == "1" and sigs["2ASTA02"]["score"] == "0"
+    with client.app.state.db.session_factory() as db:
+        from app.modules.grades.service import academic_signals_by_subject
+        program = db.get(AcademicProgram, report.program_id)
+        planner_signals = academic_signals_by_subject(db, program.user_id)
+        assert planner_signals["sub2"] == planner_signals["2ASTA05"]
 
     # Academic Optimizer time allocation includes explanation & disclaimer (not a guarantee).
     alloc = client.post(f"{G}/time-allocation", json={"program_id": report.program_id, "available_min": 180}).json()

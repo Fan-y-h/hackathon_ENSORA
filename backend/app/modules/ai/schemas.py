@@ -192,6 +192,7 @@ class TutorAnswerRequest(_Strict):
     question: str = Field(min_length=1, max_length=5000)
     conversation_id: str | None = Field(default=None, max_length=64)
     subject_id: str | None = Field(default=None, max_length=64)
+    chapter_id: str | None = Field(default=None, max_length=256)
     document_ids: list[str] = Field(default_factory=list, max_length=50)
     mode: TutorMode = "explain"
     locale: Literal["fr", "en"] = "fr"
@@ -221,6 +222,7 @@ class TutorAnswerOut(BaseModel):
 class ArtifactGenerateRequest(_Strict):
     type: StudioArtifactType
     subject_id: str | None = Field(default=None, max_length=64)
+    chapter_id: str | None = Field(default=None, max_length=256)
     document_ids: list[str] = Field(default_factory=list, max_length=50)
     concept_ids: list[str] = Field(default_factory=list, max_length=50)
     topic: str | None = Field(default=None, max_length=300)

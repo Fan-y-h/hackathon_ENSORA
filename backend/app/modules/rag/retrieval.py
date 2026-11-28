@@ -64,6 +64,10 @@ _CODE_OR_MATH_RE = re.compile(
     r"(?:\\[a-zA-Z]+|[A-Za-z_][A-Za-z0-9_]*_[A-Za-z0-9_]+|[A-Za-z_][A-Za-z0-9_]*\([^)]*\)|[∀∃∈∉⊂⊆∪∩∑∏∫√∞≈≠≤≥±×÷→⇒⇔λμσθβαγΩΔ∇])"
 )
 
+# Direct translations of the same concept can be searched on the first lexical pass.
+_BACKPROP_TERMS = frozenset({"retropropagation", "backpropagation", "backprop"})
+_BACKPROP_PHRASE = re.compile(r"\b(back|r[eé]tro)[\s\-‐‑–]+propagation\b", re.IGNORECASE)
+
 # Conservative bilingual expansion for sparse-hit query reformulation (French <-> English)
 _BILINGUAL_QUERY_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "econometrie": ("econometrics", "regression", "ols", "mco"),
@@ -83,6 +87,9 @@ _BILINGUAL_QUERY_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "jointure": ("join", "sql"),
     "join": ("jointure", "sql"),
     "gradient": ("descente", "optimisation", "backpropagation"),
+    "retropropagation": ("backpropagation", "backprop"),
+    "backpropagation": ("retropropagation", "backprop"),
+    "backprop": ("retropropagation", "backpropagation"),
     "vraisemblance": ("likelihood", "mle"),
     "likelihood": ("vraisemblance", "estimateur"),
 }
@@ -102,7 +109,8 @@ def extract_query_terms(query: str) -> list[str]:
     """Extract distinctive folded terms for scoring and coverage analysis."""
     terms: list[str] = []
     seen: set[str] = set()
-    for raw in _QUERY_TOKEN_RE.findall(query or ""):
+    joined = _BACKPROP_PHRASE.sub(lambda match: match.group(1) + "propagation", query or "")
+    for raw in _QUERY_TOKEN_RE.findall(joined):
         folded = _fold_ascii(raw).strip("-")
         if len(folded) < 2 or folded in _QUERY_STOPWORDS:
             continue
@@ -145,11 +153,44 @@ def build_fts5_query(query: str, *, expand_bilingual: bool = False) -> str:
         st = _stem_token(t)
         if st != t and len(st) >= 4:
             _add(st)
-        if expand_bilingual:
+        if t in _BACKPROP_TERMS:
+            _add("back propagation")
+            _add("retro propagation")
+        if expand_bilingual or t in _BACKPROP_TERMS:
             for alt in _BILINGUAL_QUERY_EXPANSIONS.get(t, ()) or _BILINGUAL_QUERY_EXPANSIONS.get(st, ()):
                 _add(alt)
 
     return " OR ".join(clauses)
+
+
+def _term_stems(term: str) -> set[str]:
+    stem = _stem_token(term)
+    translations = _BILINGUAL_QUERY_EXPANSIONS.get(term, ()) or _BILINGUAL_QUERY_EXPANSIONS.get(stem, ())
+    return {stem, *(_stem_token(word) for word in translations)}
+
+
+def _query_excerpt(text: str, query: str, *, width: int = 420) -> str:
+    """Select a verbatim passage around a distinctive query term instead of the opening."""
+    excerpt = " ".join(text.split())
+    if len(excerpt) <= width:
+        return excerpt
+    terms = [term for term in extract_query_terms(query) if term not in _GENERIC_ACADEMIC_TERMS]
+    positions: dict[str, int] = {}
+    for match in _BACKPROP_PHRASE.finditer(excerpt):
+        stem = _stem_token(_fold_ascii(match.group(1) + "propagation"))
+        positions.setdefault(stem, match.start())
+    for match in _QUERY_TOKEN_RE.finditer(excerpt):
+        stem = _stem_token(_fold_ascii(match.group()))
+        positions.setdefault(stem, match.start())
+    for term in sorted(terms, key=len, reverse=True):
+        candidates = [positions[stem] for stem in _term_stems(term) if stem in positions]
+        if not candidates:
+            continue
+        center = min(candidates)
+        start = max(0, min(center - width // 3, len(excerpt) - width + 2))
+        end = start + width - 2
+        return ("…" if start else "") + excerpt[start:end].strip() + ("…" if end < len(excerpt) else "")
+    return excerpt[:width - 1].rstrip() + "…"
 
 
 def _row_to_chunk(
@@ -217,7 +258,7 @@ class AcademicCrossFeatureReranker:
         if not candidates:
             return []
         q_terms = extract_query_terms(query)
-        q_stems = {_stem_token(t) for t in q_terms}
+        q_stems = [_term_stems(term) for term in q_terms]
         q_symbols = [m.group(0) for m in _CODE_OR_MATH_RE.finditer(query or "")]
         exam_practice = scope.purpose in ("exam_prep", "annale_search", "practice")
 
@@ -229,8 +270,8 @@ class AcademicCrossFeatureReranker:
             header_folded = _fold_ascii(" ".join((ch.title, *ch.section)))
             header_stems = {_stem_token(t) for t in extract_query_terms(header_folded)}
 
-            coverage = (len(q_stems & text_stems) / len(q_stems)) if q_stems else 0.0
-            header_cov = (len(q_stems & header_stems) / len(q_stems)) if q_stems else 0.0
+            coverage = sum(bool(stems & text_stems) for stems in q_stems) / len(q_stems) if q_stems else 0.0
+            header_cov = sum(bool(stems & header_stems) for stems in q_stems) / len(q_stems) if q_stems else 0.0
 
             symbol_bonus = 0.0
             if q_symbols:
@@ -315,7 +356,7 @@ class HybridRetriever:
             )
 
         # Live authorization & active-version check against P1 DB (blocks revoked/Global/tombstoned/superseded docs before reindex)
-        allowed_versions = self._store.live_scope_revisions(scope)
+        scope, allowed_versions = self._store.resolve_live_scope(scope)
         allowed_docs = set(allowed_versions.keys()) if allowed_versions is not None else None
         index_stale = False
 
@@ -502,7 +543,8 @@ class HybridRetriever:
             replace(ch, rank=idx) for idx, ch in enumerate(final_hits, start=1)
         )
         citations = tuple(
-            ch.to_citation(f"C{idx}") for idx, ch in enumerate(ranked_hits, start=1)
+            replace(ch.to_citation(f"C{idx}"), excerpt=_query_excerpt(ch.text, norm_q))
+            for idx, ch in enumerate(ranked_hits, start=1)
         )
         evidence_status = self._assess_evidence_status(norm_q, ranked_hits)
 
@@ -554,17 +596,9 @@ class HybridRetriever:
                 for t in extract_query_terms(" ".join((h.title, *h.section, h.text)))
             )
 
-        def _term_matched(term: str, candidate_stems: set[str]) -> bool:
-            st = _stem_token(term)
-            if st in candidate_stems:
-                return True
-            for alt in _BILINGUAL_QUERY_EXPANSIONS.get(term, ()) or _BILINGUAL_QUERY_EXPANSIONS.get(st, ()):
-                if _stem_token(alt) in candidate_stems:
-                    return True
-            return False
-
-        top_matched = sum(1 for t in eval_terms if _term_matched(t, top_text_stems))
-        union_matched = sum(1 for t in eval_terms if _term_matched(t, all_hit_stems))
+        variants = [_term_stems(term) for term in eval_terms]
+        top_matched = sum(bool(stems & top_text_stems) for stems in variants)
+        union_matched = sum(bool(stems & all_hit_stems) for stems in variants)
         top_cov = top_matched / len(eval_terms)
         union_cov = union_matched / len(eval_terms)
         strong_signal = max(top.lexical_score, top.semantic_score, top.fused_score)

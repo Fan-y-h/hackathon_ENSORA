@@ -725,12 +725,15 @@ def academic_signals_by_subject(db: Session, user_id: str) -> dict[str, SubjectS
         for s in domain.academic_signals(ld.tree, actual, objectives, svc._verified_risk(ld), dispensed=dispensed):
             if s.subject_id is None or s.score is None:
                 continue
-            cur = out.get(s.subject_id)
-            if cur is None or float(s.score) > cur.score:
-                out[s.subject_id] = SubjectSignal(
-                    s.subject_id, float(s.score), s.feasibility,
-                    None if s.required_mean is None else str(domain.q(s.required_mean)), s.reason_codes,
-                )
+            signal = SubjectSignal(
+                s.subject_id, float(s.score), s.feasibility,
+                None if s.required_mean is None else str(domain.q(s.required_mean)), s.reason_codes,
+            )
+            # Academic imports link the official short code to the canonical source key
+            # used by the library, generated quizzes, flashcards, and manually linked tasks.
+            for identifier in (s.subject_id, ld.by_key[s.node_key].source_key):
+                if identifier and (identifier not in out or signal.score > out[identifier].score):
+                    out[identifier] = signal
     return out
 
 

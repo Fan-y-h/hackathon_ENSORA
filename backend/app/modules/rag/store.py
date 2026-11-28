@@ -21,7 +21,7 @@ Architectural & security invariants:
 from __future__ import annotations
 
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from datetime import datetime, timezone
 import hashlib
@@ -93,19 +93,78 @@ class IndexableDocument:
     extraction_revision: str | None = None
 
 
+def _read_subject_aliases(
+    conn: sqlite3.Connection, allowed_conns: Mapping[str, str],
+) -> dict[tuple[str | None, str], str]:
+    """Resolve official codes and explicit Moodle aliases without guessing ambiguous matches."""
+    if not allowed_conns:
+        return {}
+    placeholders = ",".join("?" for _ in allowed_conns)
+    rows = conn.execute(
+        f"SELECT connection_id, external_id, payload FROM source_records "
+        f"WHERE kind = 'subject' AND connection_id IN ({placeholders})",
+        tuple(allowed_conns),
+    ).fetchall()
+    official: dict[str, str | None] = {}
+    candidates: dict[tuple[str | None, str], set[str]] = {}
+    moodle: list[tuple[str, dict[str, Any]]] = []
+    for row in rows:
+        source = allowed_conns[str(row["connection_id"])]
+        if source not in ("pamplemousse", "moodle"):
+            continue
+        payload = json.loads(row["payload"] or "{}")
+        external_id = str(row["external_id"])
+        if source == "moodle":
+            moodle.append((external_id, payload))
+            continue
+        year = (payload.get("provenance") or {}).get("academic_year")
+        official[external_id] = year
+        code = payload.get("code") or payload.get("source_code")
+        if isinstance(code, str) and code.strip():
+            key = code.strip().upper()
+            candidates.setdefault((None, key), set()).add(external_id)
+            if year:
+                candidates.setdefault((year, key), set()).add(external_id)
+    for external_id, payload in moodle:
+        aliases = {alias for alias in payload.get("aliases") or () if alias in official}
+        if len(aliases) == 1:
+            canonical = next(iter(aliases))
+            key = external_id.upper()
+            candidates.setdefault((None, key), set()).add(canonical)
+            if official[canonical]:
+                candidates.setdefault((official[canonical], key), set()).add(canonical)
+    return {key: next(iter(values)) for key, values in candidates.items() if len(values) == 1}
+
+
+def _canonical_subject(
+    subject_id: str | None, aliases: Mapping[tuple[str | None, str], str], year: str | None = None,
+) -> str | None:
+    if not subject_id:
+        return None
+    key = str(subject_id).strip()
+    return aliases.get((year, key.upper()), aliases.get((None, key.upper()), key))
+
+
+def _document_subject(meta: dict[str, Any]) -> str | None:
+    override = meta.get("user_override") or {}
+    match = meta.get("match") or {}
+    return override.get("subject_id") or (match.get("subject_id") if match.get("confirmed") else None) or meta.get("subject_id")
+
+
+def _document_chapter(meta: dict[str, Any]) -> str | None:
+    override = meta.get("user_override") or {}
+    match = meta.get("match") or {}
+    return override.get("chapter_id") or (match.get("chapter_id") if match.get("confirmed") else None) or meta.get("chapter_id")
+
+
 def _read_p1_authorized_state(
     p1_db_path: Path,
     *,
     user_id: str,
-) -> tuple[dict[str, dict[str, Any]], set[str]]:
-    """Read currently authorized active documents from Codex's P1 SQLite database (read-only).
-
-    Returns:
-        Tuple ``(authorized_docs_by_id, allowed_connection_ids)`` where each entry holds
-        normalized document + active-version metadata (excluding chunks until needed).
-    """
+) -> tuple[dict[str, dict[str, Any]], dict[tuple[str | None, str], str]]:
+    """Read authorized active documents and subject aliases from one read-only P1 snapshot."""
     if not p1_db_path.is_file():
-        return {}, set()
+        return {}, {}
     with closing(sqlite3.connect(p1_db_path.as_uri() + "?mode=ro", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         tables = {
@@ -115,7 +174,7 @@ def _read_p1_authorized_state(
             ).fetchall()
         }
         if not {"connections", "consents", "documents", "document_versions", "chunks"} <= tables:
-            return {}, set()
+            return {}, {}
 
         conn.execute("BEGIN")
         # Determine currently read-consented connections using latest consent row per connection
@@ -140,8 +199,9 @@ def _read_p1_authorized_state(
             if r["granted"] in (1, True)
         }
         if not allowed_conns:
-            return {}, set()
+            return {}, {}
 
+        aliases = _read_subject_aliases(conn, allowed_conns) if "source_records" in tables else {}
         placeholders = ",".join("?" for _ in allowed_conns)
         doc_rows = conn.execute(
             f"""
@@ -172,8 +232,9 @@ def _read_p1_authorized_state(
                 continue
             override = meta.get("user_override") or {}
             clf = meta.get("classification") or {}
-            subject_id = override.get("subject_id") or meta.get("subject_id")
-            chapter_id = override.get("chapter_id") or meta.get("chapter_id")
+            year = prov.get("academic_year")
+            subject_id = _canonical_subject(_document_subject(meta), aliases, year)
+            chapter_id = _document_chapter(meta)
             resource_type = override.get("resource_type") or clf.get("resource_type") or meta.get("resource_kind")
             authorized[str(row["document_id"])] = {
                 "document_id": str(row["document_id"]),
@@ -189,7 +250,7 @@ def _read_p1_authorized_state(
                 "folder": str(folder) if folder else None,
                 "source_url": str(prov.get("source_url")) if prov.get("source_url") else None,
             }
-        return authorized, set(allowed_conns.keys())
+        return authorized, aliases
 
 
 def _load_p1_version_chunks(p1_db_path: Path, version_ids: Sequence[str]) -> dict[str, list[IndexableChunk]]:
@@ -268,6 +329,10 @@ class LocalRagIndexStore:
             lambda blob: memoryview(unpack_vector(blob)).toreadonly()
         )
         self._lock = threading.RLock()
+        self._sync_lock = threading.RLock()
+        self._source_monitor: sqlite3.Connection | None = None
+        self._source_identity: tuple[Path, int, int] | None = None
+        self._indexed_data_versions: dict[str, int] = {}
         self._mem_conn: sqlite3.Connection | None = None
         if self._index_path is not None:
             self._index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -312,7 +377,13 @@ class LocalRagIndexStore:
             conn.close()
 
     def close(self) -> None:
-        """Close persistent in-memory SQLite connection if open."""
+        """Close persistent connections."""
+        with self._sync_lock:
+            if self._source_monitor is not None:
+                self._source_monitor.close()
+                self._source_monitor = None
+            self._source_identity = None
+            self._indexed_data_versions.clear()
         with self._lock:
             self._decode_vector.cache_clear()
             if self._mem_conn is not None:
@@ -610,12 +681,48 @@ class LocalRagIndexStore:
             finally:
                 self._release(conn)
 
+    def _read_source_version(self, path: Path) -> int:
+        metadata = path.stat()
+        identity = (path, metadata.st_dev, metadata.st_ino)
+        if self._source_monitor is None or self._source_identity != identity:
+            if self._source_monitor is not None:
+                self._source_monitor.close()
+                self._source_monitor = None
+            self._indexed_data_versions.clear()
+            self._source_monitor = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, check_same_thread=False)
+            self._source_identity = identity
+        return int(self._source_monitor.execute("PRAGMA data_version").fetchone()[0])
+
+    def refresh_from_p1(self, *, user_id: str) -> None:
+        """Check for P1 writes cheaply, then incrementally process only changes."""
+        path = self._p1_db_path
+        if path is None or not path.is_file():
+            return
+        with self._sync_lock:
+            version = self._read_source_version(path)
+            if self._indexed_data_versions.get(user_id) == version:
+                return
+            self.sync_from_p1_db(path, user_id=user_id)
+
     def sync_from_p1_db(
         self,
         p1_db_path: Path | None = None,
         *,
         user_id: str = "e0aa03f9-37fc-455b-97bb-648a35868d19",
     ) -> IndexReceipt:
+        """Refresh derived search data against committed, authorized source changes."""
+        db_path = p1_db_path or self._p1_db_path
+        if db_path is None:
+            raise ValueError("p1_db_path must be supplied to sync_from_p1_db().")
+        with self._sync_lock:
+            version = self._read_source_version(db_path) if db_path.is_file() else None
+            receipt = self._sync_from_p1_db(db_path, user_id=user_id)
+            if version is not None:
+                # Record the version seen before the sync. Writes during indexing remain pending.
+                self._indexed_data_versions[user_id] = version
+            return receipt
+
+    def _sync_from_p1_db(self, db_path: Path, *, user_id: str) -> IndexReceipt:
         """Incrementally synchronize derived RAG index from Codex's P1 SQLite database.
 
         - Removes any previously indexed document whose source consent was withdrawn,
@@ -628,9 +735,6 @@ class LocalRagIndexStore:
           embedding models, never mixing incompatible vector spaces.
         """
         started = time.perf_counter()
-        db_path = p1_db_path or self._p1_db_path
-        if db_path is None:
-            raise ValueError("p1_db_path must be supplied to sync_from_p1_db().")
         self._p1_db_path = db_path
 
         authorized, _ = _read_p1_authorized_state(db_path, user_id=user_id)
@@ -844,20 +948,29 @@ class LocalRagIndexStore:
             warnings=tuple(warnings),
         )
 
-    def live_scope_revisions(self, scope: QueryScope) -> dict[str, tuple[str, str]] | None:
-        """Read live versions and extraction revisions eligible for a retrieval scope."""
+    def resolve_live_scope(self, scope: QueryScope) -> tuple[QueryScope, dict[str, tuple[str, str]] | None]:
+        """Resolve subject aliases and live retrieval scope from one authorized snapshot."""
         if self._p1_db_path is None:
-            return None
-        authorized, _ = _read_p1_authorized_state(self._p1_db_path, user_id=scope.user_id)
-        return {
+            return scope, None
+        authorized, aliases = _read_p1_authorized_state(self._p1_db_path, user_id=scope.user_id)
+        canonical = _canonical_subject(scope.subject_id, aliases, scope.subject_year or scope.academic_year)
+        if canonical != scope.subject_id:
+            scope = replace(scope, subject_id=canonical)
+        revisions = {
             doc_id: (meta["version_id"], meta["extraction_revision"])
             for doc_id, meta in authorized.items()
-            if (not scope.subject_id or meta["subject_id"] == scope.subject_id)
+            if (not scope.document_ids or doc_id in scope.document_ids)
+            and (not scope.subject_id or meta["subject_id"] == scope.subject_id)
             and (not scope.chapter_id or meta["chapter_id"] == scope.chapter_id)
             and (not scope.academic_year or meta["academic_year"] == scope.academic_year)
             and (not scope.resource_types or meta["resource_type"] in scope.resource_types)
+            and (not scope.sources or meta["source"] in scope.sources)
             and (not scope.exam_mode or not _is_exam_correction(meta["resource_type"]))
         }
+        return scope, revisions
+
+    def live_scope_revisions(self, scope: QueryScope) -> dict[str, tuple[str, str]] | None:
+        return self.resolve_live_scope(scope)[1]
 
     def live_authorized_versions(self, *, user_id: str) -> dict[str, str] | None:
         """Read user-authorized active versions, or return None for standalone fixtures."""
@@ -1231,7 +1344,7 @@ class LocalRagIndexStore:
             try:
                 idx_rows = conn.execute(
                     """
-                    SELECT document_id, version_id, extraction_revision,
+                    SELECT document_id, version_id, extraction_revision, subject_id, chapter_id,
                            (SELECT COUNT(*) FROM rag_chunks c WHERE c.document_id = d.document_id) AS indexed_chunks
                     FROM rag_indexed_documents d
                     WHERE d.user_id = ?
@@ -1255,6 +1368,7 @@ class LocalRagIndexStore:
                     "index_stats": base_stats,
                     "documents": items,
                 }
+            p1.execute("BEGIN")
             consent_rows = p1.execute(
                 """
                 SELECT c.id AS connection_id, c.source AS source,
@@ -1274,6 +1388,8 @@ class LocalRagIndexStore:
                 str(r["connection_id"]): (str(r["source"]), r["granted"] in (1, True))
                 for r in consent_rows
             }
+            allowed_conns = {cid: source for cid, (source, granted) in conn_info.items() if granted}
+            aliases = _read_subject_aliases(p1, allowed_conns) if "source_records" in tables else {}
             doc_rows = p1.execute(
                 """
                 SELECT d.id AS document_id,
@@ -1305,6 +1421,8 @@ class LocalRagIndexStore:
             ver_id = str(row["version_id"]) if row["version_id"] else None
             ext_rev = json.dumps([row["parser_version"], row["parse_status"]]) if ver_id else None
             idx_row = indexed_map.get(doc_id)
+            subject_id = _canonical_subject(_document_subject(meta), aliases, prov.get("academic_year"))
+            chapter_id = _document_chapter(meta)
 
             if not read_granted or access_status != "active":
                 state = "revoked"
@@ -1320,7 +1438,10 @@ class LocalRagIndexStore:
                 state = "downloaded_unparsed"
             elif idx_row is None:
                 state = "parsed_partial" if parse_status == "partial" else "pending_index"
-            elif idx_row["version_id"] != ver_id or idx_row["extraction_revision"] != ext_rev:
+            elif (
+                idx_row["version_id"] != ver_id or idx_row["extraction_revision"] != ext_rev
+                or idx_row["subject_id"] != subject_id or idx_row["chapter_id"] != chapter_id
+            ):
                 state = "stale"
             else:
                 state = "indexed"
@@ -1335,7 +1456,7 @@ class LocalRagIndexStore:
                         "version_id": ver_id,
                         "title": "Unavailable source" if state in ("revoked", "excluded_scope") else str(meta.get("title") or doc_id),
                         "source": source,
-                        "subject_id": None if state in ("revoked", "excluded_scope") else (override.get("subject_id") or meta.get("subject_id")),
+                        "subject_id": None if state in ("revoked", "excluded_scope") else subject_id,
                         "resource_type": None if state in ("revoked", "excluded_scope") else (override.get("resource_type") or clf.get("resource_type") or meta.get("resource_kind")),
                         "parse_status": parse_status,
                         "p1_chunks": p1_chunks,

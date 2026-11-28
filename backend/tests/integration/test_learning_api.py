@@ -3,6 +3,7 @@ from datetime import timedelta
 from sqlalchemy import func, select
 
 from app.modules.learning.models import Evidence
+from app.modules.learning.service import LearningService
 from tests.conftest import NOW, clock_of
 
 API = "/api/v1"
@@ -143,6 +144,23 @@ def test_study_needs_from_weak_concepts_and_due_reviews(client):
     review = [n for n in needs if n["kind"] == "review"]
     assert review and review[0]["concept_ids"] == ["c-bias"] and review[0]["reason"] == "REVIEW_DUE"
     assert review[0]["earliest_at"] == (NOW + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+
+    def current_practice_need():
+        with client.app.state.db.session_factory() as db:
+            user_id = db.scalar(select(Evidence.user_id))
+            return next(
+                need.need_id for need in LearningService(db, clock_of(client)).study_needs(user_id, NOW)
+                if need.kind == "practice"
+            )
+
+    before = current_practice_need()
+    assert current_practice_need() == before
+    second = client.post(f"{API}/quizzes/{quiz['id']}/attempts", json={}).json()
+    client.patch(f"{API}/attempts/{second['id']}/responses", json={
+        "responses": [{"question_id": quiz["questions"][0]["id"], "response": "b"}],
+    })
+    client.post(f"{API}/attempts/{second['id']}/submit")
+    assert current_practice_need() != before
 
 
 def test_learning_isolation(client, as_bob):

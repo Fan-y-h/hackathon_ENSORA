@@ -11,11 +11,15 @@ Bridges:
 
 from __future__ import annotations
 
+from dataclasses import replace
+import json
 import logging
 from pathlib import Path
+import sqlite3
 import time
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.contracts.ai import (
@@ -36,6 +40,7 @@ from app.core.ai import (
 from app.core.common import Clock
 from app.core.database import LOCAL_USER as P1_LOCAL_USER
 from app.core.errors import AppError, Conflict, NotFound
+from app.modules.account.models import Profile
 from app.modules.ai.schemas import (
     AIPreferencesOut,
     AIPreferencesPatch,
@@ -322,16 +327,16 @@ class AIService:
         """Map to P1 ``LOCAL_USER`` when bound to P1's single-user store, else keep ``user_id``."""
         return P1_LOCAL_USER if self.ctx.p1_db_path is not None else user_id
 
-    def _ensure_initial_index(self, user_id: str) -> None:
-        """If bound to P1 and the derived index is currently empty, run one incremental sync."""
-        if self.ctx.p1_db_path is None or not self.ctx.p1_db_path.is_file():
-            return
-        rag_uid = self._rag_user_id(user_id)
-        if self.ctx.rag_store.stats(user_id=rag_uid)["indexed_documents"] == 0:
-            try:
-                self.ctx.rag_store.sync_from_p1_db(self.ctx.p1_db_path, user_id=rag_uid)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("Lazy RAG initial sync skipped (%s)", type(exc).__name__)
+    def _refresh_index(self, user_id: str) -> None:
+        try:
+            self.ctx.rag_store.refresh_from_p1(user_id=self._rag_user_id(user_id))
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            logger.warning("Source index refresh failed (%s)", type(exc).__name__)
+
+    def _subject_year(self, user_id: str, subject_id: str | None) -> str | None:
+        if not subject_id or self.ctx.p1_db_path is None:
+            return None
+        return self.db.scalar(select(Profile.academic_year).where(Profile.user_id == user_id))
 
     # --- Providers & Preferences ----------------------------------------------------------
     def list_providers(self, *, force_refresh: bool = False) -> AIProvidersOut:
@@ -417,11 +422,12 @@ class AIService:
         resource_type: str | None = None,
         limit: int = 8,
     ) -> SearchResponseOut:
-        self._ensure_initial_index(user_id)
+        self._refresh_index(user_id)
         rag_uid = self._rag_user_id(user_id)
         scope = QueryScope(
             user_id=rag_uid,
             subject_id=subject_id,
+            subject_year=self._subject_year(user_id, subject_id),
             document_ids=tuple(document_ids or ()),
             resource_types=(resource_type,) if resource_type else (),
             exam_mode=False,
@@ -492,7 +498,10 @@ class AIService:
                     else None
                 )
                 if live is not None:
-                    verified_cites.append(_citation_to_out(live))
+                    citation = _citation_to_out(live)
+                    if not citation.revoked and live.version_id == raw_c.get("version_id"):
+                        citation = citation.model_copy(update={"excerpt": raw_c.get("excerpt") or citation.excerpt})
+                    verified_cites.append(citation)
                 else:
                     verified_cites.append(
                         CitationOut(
@@ -507,14 +516,15 @@ class AIService:
                             revoked=True,
                         )
                     )
+            revoked = row["role"] == "assistant" and any(c.revoked for c in verified_cites)
             out.append(
                 ConversationMessageOut(
                     id=row["id"],
                     conversation_id=row["conversation_id"],
                     role=row["role"],
-                    content_markdown=row["content_markdown"],
+                    content_markdown="" if revoked else row["content_markdown"],
                     citations=verified_cites,
-                    evidence_status=row["evidence_status"],
+                    evidence_status="insufficient" if revoked else row["evidence_status"],
                     provider=row["provider"],
                     model=row["model"],
                     generation_mode=row["generation_mode"],
@@ -532,7 +542,7 @@ class AIService:
         *,
         conversation_id: str | None = None,
     ) -> TutorAnswerOut:
-        self._ensure_initial_index(user_id)
+        self._refresh_index(user_id)
         conv_id = conversation_id or body.conversation_id
         if conv_id is not None:
             conv = self.ctx.state_store.get_conversation(user_id, conv_id)
@@ -548,8 +558,11 @@ class AIService:
             conv_id = conv["id"]
             effective_subject = body.subject_id
 
-        history_rows = self.ctx.state_store.list_messages(user_id, conv_id)
-        history_pairs = [(r["role"], r["content_markdown"]) for r in history_rows[-6:]]
+        history_pairs: list[tuple[str, str]] = []
+        if not body.document_ids and not body.chapter_id and effective_subject == conv.get("subject_id"):
+            history_rows = self.ctx.state_store.list_messages(user_id, conv_id)
+            # Prior answers may quote a now-unavailable document or an earlier, narrower scope.
+            history_pairs = [(r["role"], r["content_markdown"]) for r in history_rows[-6:] if r["role"] == "user"]
 
         self.ctx.state_store.append_message(
             user_id=user_id,
@@ -562,6 +575,8 @@ class AIService:
         scope = QueryScope(
             user_id=rag_uid,
             subject_id=effective_subject,
+            subject_year=self._subject_year(user_id, effective_subject),
+            chapter_id=body.chapter_id,
             document_ids=tuple(body.document_ids),
             locale=body.locale,
             exam_mode=False,
@@ -690,12 +705,14 @@ class AIService:
         )
 
     def generate_artifact(self, user_id: str, body: ArtifactGenerateRequest) -> ArtifactOut:
-        self._ensure_initial_index(user_id)
+        self._refresh_index(user_id)
         rag_uid = self._rag_user_id(user_id)
         item_count = body.item_count or max(4, min(12, body.duration_min // 3))
         scope = QueryScope(
             user_id=rag_uid,
             subject_id=body.subject_id,
+            subject_year=self._subject_year(user_id, body.subject_id),
+            chapter_id=body.chapter_id,
             concept_ids=tuple(body.concept_ids),
             document_ids=tuple(body.document_ids),
             locale=body.locale,
@@ -732,60 +749,20 @@ class AIService:
         fallback_reason: str | None = None
         explicit_override = bool(body.provider_override or body.model_override)
 
-        # Store artifacts keyed under P3 user_id for strict user isolation
-        scoped_spec = ArtifactGenerationSpec(
-            kind=spec.kind,
-            scope=QueryScope(
-                user_id=rag_uid,
-                subject_id=scope.subject_id,
-                concept_ids=scope.concept_ids,
-                document_ids=scope.document_ids,
-                locale=scope.locale,
-                exam_mode=False,
-            ),
-            topic=spec.topic,
-            difficulty=spec.difficulty,
-            item_count=spec.item_count,
-            detail_level=spec.detail_level,
-            user_instructions=spec.user_instructions,
-            provider_override=spec.provider_override,
-            model_override=spec.model_override,
-            force_regenerate=spec.force_regenerate,
-        )
-
-        # Compute pre-generation per-user cache key over active scope snapshot to avoid redundant LLM calls
-        import json as _json
+        # Cache exactly the authorized versions and extraction revisions in this scope.
         from app.modules.rag.artifacts import compute_artifact_cache_key
 
-        active_versions = self.ctx.rag_store.active_version_map(user_id=rag_uid)
-        if scope.document_ids:
+        canonical_scope, revisions = self.ctx.rag_store.resolve_live_scope(scope)
+        if revisions is None:
+            active_versions = self.ctx.rag_store.active_version_map(user_id=rag_uid)
             scoped_pairs = sorted(
-                (doc_id, active_versions[doc_id])
-                for doc_id in scope.document_ids
-                if doc_id in active_versions
+                (doc_id, version) for doc_id, version in active_versions.items()
+                if not scope.document_ids or doc_id in scope.document_ids
             )
         else:
-            scoped_pairs = sorted(active_versions.items())
-        scope_snapshot_hash = f"{len(scoped_pairs)}:" + _json.dumps(scoped_pairs, separators=(",", ":"))
-        cache_spec = ArtifactGenerationSpec(
-            kind=spec.kind,
-            scope=QueryScope(
-                user_id=user_id,
-                subject_id=scope.subject_id,
-                concept_ids=scope.concept_ids,
-                document_ids=scope.document_ids,
-                locale=scope.locale,
-                exam_mode=False,
-            ),
-            topic=spec.topic,
-            difficulty=spec.difficulty,
-            item_count=spec.item_count,
-            detail_level=spec.detail_level,
-            user_instructions=spec.user_instructions,
-            provider_override=spec.provider_override,
-            model_override=spec.model_override,
-            force_regenerate=spec.force_regenerate,
-        )
+            scoped_pairs = sorted(revisions.items())
+        scope_snapshot_hash = json.dumps(scoped_pairs, separators=(",", ":"))
+        cache_spec = replace(spec, scope=replace(canonical_scope, user_id=user_id))
         ai_disabled = not prefs.get("enabled", True)
         cache_key = compute_artifact_cache_key(
             cache_spec,
@@ -801,7 +778,7 @@ class AIService:
                 return self._record_to_artifact_out(user_id, cached)
 
         try:
-            generated = engine.generate_artifact(scoped_spec, ai_disabled=ai_disabled)
+            generated = engine.generate_artifact(spec, ai_disabled=ai_disabled)
             if generated.provider == "extractive_local":
                 is_fallback = True
                 fallback_reason = "ai_disabled"
@@ -813,7 +790,7 @@ class AIService:
                 ) from None
             is_fallback = True
             fallback_reason = exc.code
-            generated = engine.generate_artifact(scoped_spec, ai_disabled=True)
+            generated = engine.generate_artifact(spec, ai_disabled=True)
 
         saved = self.ctx.artifact_store.save(generated, user_id=user_id, cache_key=cache_key)
 

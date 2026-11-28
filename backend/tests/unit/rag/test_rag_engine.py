@@ -909,3 +909,68 @@ def test_document_index_status_and_mind_map_and_versions(tmp_path: Path) -> None
         runtime.consent.record(CodexSourceKind.LOCAL, "read", False)
         revoked = engine.store.document_index_status()
         assert revoked["summary"]["revoked"] == 1
+
+
+def test_refresh_resolves_authorized_moodle_aliases_and_reads_new_chapters_without_reindex(tmp_path):
+    from backend.app.contracts.sources import Subject
+    from backend.app.core.database import LOCAL_USER
+
+    settings = Settings(config_dir=tmp_path / "config", local_data_dir=tmp_path / "sources")
+    with Runtime(settings) as runtime:
+        for source in (CodexSourceKind.PAMPLEMOUSSE, CodexSourceKind.MOODLE):
+            runtime.consent.record(source, "read", True)
+        canonical = "pamplemousse:subject:test:canonical"
+        alias = "moodle:course:fixture"
+        runtime.pipeline.ingest(runtime.connection_ids[CodexSourceKind.PAMPLEMOUSSE], Subject(
+            provenance=Provenance(external_id=canonical, source=CodexSourceKind.PAMPLEMOUSSE, academic_year="2026-2027"),
+            title="Synthetic lecture", code="TEST00",
+        ))
+        runtime.pipeline.ingest(runtime.connection_ids[CodexSourceKind.MOODLE], Subject(
+            provenance=Provenance(external_id=alias, source=CodexSourceKind.MOODLE),
+            title="Synthetic Moodle course", aliases=[canonical],
+        ))
+        store = LocalRagIndexStore(":memory:", p1_db_path=settings.local_data_dir / "ensora.sqlite3")
+        try:
+            store.refresh_from_p1(user_id=LOCAL_USER)
+            engine = RagEngine(store=store)
+            scopes = [QueryScope(subject_id=key, chapter_id="chapter-2", subject_year="2026-2027")
+                      for key in (canonical, alias, "test00")]
+            assert not engine.retrieve(scopes[0], "rétropropagation").hits
+
+            for index in (1, 2):
+                doc = Document(
+                    provenance=Provenance(external_id=f"lecture:{index}", source=CodexSourceKind.MOODLE),
+                    title=f"Course {index}.md",
+                    mime_type="text/markdown",
+                    subject_id=alias,
+                    chapter_id=f"chapter-{index}",
+                )
+                runtime.pipeline.ingest(
+                    runtime.connection_ids[CodexSourceKind.MOODLE], doc,
+                    lambda _: f"# Section {index}\nBackpropagation computes gradients using the chain rule. Example {index}.".encode(),
+                )
+            store.refresh_from_p1(user_id=LOCAL_USER)
+            for scope in scopes:
+                result = engine.retrieve(scope, "rétropropagation")
+                assert result.evidence_status == "grounded"
+                assert result.hits and all(h.subject_id == canonical and h.chapter_id == "chapter-2" for h in result.hits)
+            runtime.consent.record(CodexSourceKind.MOODLE, "read", False)
+            assert not engine.retrieve(scopes[0], "rétropropagation").hits
+        finally:
+            store.close()
+
+
+def test_cited_excerpt_centers_bilingual_topic_within_long_source_chunk():
+    store = LocalRagIndexStore(":memory:")
+    try:
+        intro = "This opening describes course organization and reading prerequisites. " * 9
+        chunk = IndexableChunk(
+            "chunk-long", 0, intro + "Back-propagation computes gradients using the chain rule.",
+            (), {"page": 4},
+        )
+        store.upsert_document(IndexableDocument("lecture", "version", "sha", "local", "Lecture", (chunk,)))
+        answer = RagEngine(store=store).answer(QueryScope(), "rétropropagation gradient", ai_disabled=True)
+        assert answer.citations and "Back-propagation computes gradients" in answer.citations[0].excerpt
+        assert answer.citations[0].locator == {"page": 4}
+    finally:
+        store.close()

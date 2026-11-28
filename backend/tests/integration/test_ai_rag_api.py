@@ -374,6 +374,11 @@ def test_unified_p1_to_rag_pipeline_and_learning_signals(tmp_path):
         cite = client.get(f"{API}/citations/{cid}").json()
         assert "BLUE" in cite["excerpt"] and cite["content_url"].endswith("/content")
 
+        tutor = client.post(f"{API}/tutor/answer", json={"question": "estimateur MCO BLUE"}).json()
+        assert tutor["citations"]
+        message_path = f"{API}/conversations/{tutor['conversation_id']}/messages"
+        assert any(row["role"] == "assistant" and row["content_markdown"] for row in client.get(message_path).json())
+
         # Revoke read consent -> citation immediately returns 404!
         client.put(
             f"{API}/sources/connections/{local_conn['id']}/consent",
@@ -381,6 +386,8 @@ def test_unified_p1_to_rag_pipeline_and_learning_signals(tmp_path):
             headers=headers,
         )
         assert client.get(f"{API}/citations/{cid}").status_code == 404
+        (answer,) = [row for row in client.get(message_path).json() if row["role"] == "assistant"]
+        assert answer["content_markdown"] == "" and all(cite["revoked"] for cite in answer["citations"])
 
         # Deterministic learning signals endpoint (with FSRS card alert)
         client.patch(f"{API}/profile", json={"preferences": {"repetition_algorithm": "fsrs"}})

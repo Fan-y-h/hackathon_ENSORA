@@ -869,7 +869,7 @@ class LearningService:
             elif status in ("learning", "weak"):
                 needs.append(
                     StudyNeed(
-                        need_id=f"practice:{m.concept_id}:{m.dimension}",
+                        need_id=f"practice:{m.concept_id}:{m.dimension}:{m.revision}",
                         kind="practice",
                         activity_type="practice",
                         subject_id=m.subject_id,

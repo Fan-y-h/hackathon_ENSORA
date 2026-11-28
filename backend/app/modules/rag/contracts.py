@@ -63,6 +63,7 @@ class QueryScope:
         mode: Retrieval strategy (``"lexical"``, ``"semantic"``, or ``"hybrid"``).
         top_k: Target number of final context passages (default 6).
         token_budget: Maximum prompt context token budget for retrieved passages.
+        subject_year: Optional curriculum year used only to disambiguate official subject codes.
         expand_neighbors: When ``True``, fetches adjacent chunks around proof/code hits.
         rerank: When ``True``, applies the configured reranker after candidate fusion.
     """
@@ -84,6 +85,7 @@ class QueryScope:
     token_budget: int = 2800
     expand_neighbors: bool = True
     rerank: bool = True
+    subject_year: str | None = None
 
 
 @dataclass(frozen=True)
