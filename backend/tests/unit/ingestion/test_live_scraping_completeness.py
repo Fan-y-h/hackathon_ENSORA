@@ -3306,3 +3306,120 @@ def test_sprint8_moodle_year_filter_drive_nonstalling_paging_and_academic_reconc
         cur = pg.next_cursor
     assert len(seen_ext) == 20
     assert get_calls == []  # ZERO redundant files.get calls during in-process multi-page traversal!
+
+
+def test_moodle_curriculum_scope_keeps_unique_enrolled_course_before_traversal(tmp_path: Path) -> None:
+    cfg = SourcesRuntimeConfig.load(config_dir=tmp_path, environ={})
+    fetched: list[str] = []
+
+    def fetch(url: str) -> str:
+        fetched.append(url)
+        return '<a href="/mod/resource/view.php?id=741">Lecture notes</a>'
+
+    connector = MoodleConnector(cfg, page_fetcher=fetch, rate_limiter=RateLimiter(0.0))
+    scope = {
+        "dashboard_html": """
+            <a href="/course/view.php?id=10">Systèmes distribués</a>
+            <a href="/course/view.php?id=20">Concurrence et système d'exploitation</a>
+            <a href="/course/view.php?id=30">Autre promotion 2025-2026</a>
+            <a href="/course/view.php?id=40">Introduction au calcul</a>
+        """,
+        "academic_year": "2026-2027",
+        "eligible_subjects": [
+            ("subject:20", "Concurrences et systèmes d'exploitation", "CO20"),
+            ("subject:40a", "Introduction au calcul", "CO40A"),
+            ("subject:40b", "Introduction au calcul", "CO40B"),
+        ],
+    }
+    result = connector.list_changes(scope)
+    assert len(fetched) == 1 and fetched[0].endswith("course/view.php?id=20")
+    assert result.items[0].payload["canonical_subject_id"] == "subject:20"
+    assert connector.last_stats["curriculum_filter_decisions"] == {
+        "unmatched": 1, "complete_title": 1, "ambiguous": 1,
+    }
+
+
+def test_moodle_rejects_disguised_pdf_download_and_identifies_login(tmp_path: Path) -> None:
+    from backend.app.modules.ingestion.connectors.base import AuthenticationRequiredError
+    from backend.app.modules.ingestion.contracts import SourceRecord
+
+    cfg = SourcesRuntimeConfig.load(config_dir=tmp_path, environ={})
+    payload = b"<html><p>Resource unavailable</p></html>"
+    connector = MoodleConnector(
+        cfg,
+        blob_fetcher=lambda _: (payload, "course.pdf", "application/octet-stream"),
+        rate_limiter=RateLimiter(0.0),
+    )
+    record = SourceRecord(
+        source_kind=SourceKind.MOODLE,
+        external_id="moodle:pdf:fixture",
+        title="Lecture",
+        download_url=f"{cfg.moodle_base_url.rstrip('/')}/pluginfile.php/course.pdf",
+        payload={"filename": "course.pdf"},
+    )
+    with pytest.raises(ValueError, match="PDF signature"):
+        connector.fetch_blob(record)
+    payload = b'<html><form id="login"><input name="password"></form></html>'
+    with pytest.raises(AuthenticationRequiredError):
+        connector.fetch_blob(record)
+    payload = b"%PDF-1.4\n%%EOF"
+    assert connector.fetch_blob(record).mime_type == "application/pdf"
+
+
+def test_moodle_assignment_page_published_due_date_uses_paris_time(tmp_path: Path) -> None:
+    cfg = SourcesRuntimeConfig.load(config_dir=tmp_path, environ={})
+    pages = {
+        "my/courses.php": '<a href="/course/view.php?id=11">Calcul</a>',
+        "user/profile.php": "",
+        "my/": "",
+        "course/view.php?id=11": '<a href="/mod/assign/view.php?id=121">Devoir</a>',
+        "mod/assign/view.php?id=121": """
+            <main><div data-region="activity-dates">
+                <div>Ouvert le : mercredi 20 mai 2026, 08:00</div>
+                <div>À rendre : lundi 25 mai 2026, 23:59</div>
+            </div></main>""",
+    }
+    connector = MoodleConnector(
+        cfg,
+        page_fetcher=lambda url: pages[url.removeprefix(cfg.moodle_base_url).lstrip("/")],
+        rate_limiter=RateLimiter(0.0),
+    )
+    bridge = CodexConnectorBridge(connector)
+    page = bridge.list_changes(SyncScope(source=CodexSourceKind.MOODLE), None)
+    deadline = next(item.deadline_at for item in page.items if item.kind == "assessment")
+    assert deadline is not None and deadline.astimezone(timezone.utc) == datetime(2026, 5, 25, 21, 59, tzinfo=timezone.utc)
+
+
+def test_drive_profile_scope_keeps_historical_annales_for_unique_current_subject() -> None:
+    from backend.app.modules.ingestion.contracts import ChangePage, SourceRecord
+
+    class FixtureDrive:
+        source_kind = SourceKind.ENSORA_DRIVE
+
+        def list_changes(self, scope, cursor):
+            assert scope["cohorts"] == ["3A"]
+            return ChangePage(items=(
+                SourceRecord(
+                    source_kind=self.source_kind,
+                    external_id="ensora_drive:annale",
+                    title="Annale 2021",
+                    folder_path="Ensora/3A/Calcul/Annales",
+                    payload={"subject_hint": "Calcul", "academic_year": "2021-2022"},
+                ),
+                SourceRecord(
+                    source_kind=self.source_kind,
+                    external_id="ensora_drive:outside",
+                    title="Autre cours",
+                    folder_path="Ensora/3A/Autre cours/Annales",
+                    payload={"subject_hint": "Autre cours"},
+                ),
+            ), next_cursor=None, complete=True)
+
+    bridge = CodexConnectorBridge(
+        FixtureDrive(), student_scope_loader=lambda _: ("2026-2027", "3A", [("subject:calcul", "Calcul", "CC3")])
+    )
+    page = bridge.list_changes(SyncScope(source=CodexSourceKind.ENSORA_DRIVE), None)
+    assert len(page.items) == 1
+    assert page.items[0].subject_id == "subject:calcul"
+    assert page.items[0].provenance.academic_year == "2021-2022"
+    assert page.observations["resources_excluded"] == 1

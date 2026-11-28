@@ -389,6 +389,8 @@ def test_final_block_003_drive_multipage_watermark_and_persisted_root_reconcilia
             rt: Runtime = app.state.runtime
             # Inject fake Drive service + connected auth onto the default build_components-created connector!
             drive_bridge = rt.sync.connectors[CodexSourceKind.ENSORA_DRIVE]
+            # These tests validate full authorized-tree reconciliation independently of student filtering.
+            drive_bridge._student_scope_loader = None
             drive_bridge._connector._service_factory = lambda _: _Svc()
             drive_bridge._connector._oauth = oauth
             drive_bridge._connector._rate_limiter = RateLimiter(0.0)
@@ -521,6 +523,8 @@ def test_final_block_003_return_to_root_with_old_timestamp_reactivates(tmp_path:
         async with app.router.lifespan_context(app):
             rt: Runtime = app.state.runtime
             drive_bridge = rt.sync.connectors[CodexSourceKind.ENSORA_DRIVE]
+            # These tests validate full authorized-tree reconciliation independently of student filtering.
+            drive_bridge._student_scope_loader = None
             drive_bridge._connector._service_factory = lambda _: _Svc()
             drive_bridge._connector._oauth = oauth
             drive_bridge._connector._rate_limiter = RateLimiter(0.0)

@@ -16,7 +16,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from ..contracts import (
     AcademicRecord,
@@ -240,6 +240,30 @@ def significant_tokens(text: str) -> set[str]:
 
 def significant_stemmed_tokens(text: str) -> set[str]:
     return {_stem_token(t) for t in significant_tokens(text)}
+
+
+def match_curriculum_subject(
+    title: str, shortname: str, subjects: Sequence[tuple[str, str, str]],
+) -> tuple[str | None, str]:
+    """Resolve unique codes first, then complete normalized course titles."""
+    def code_key(value: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", value.lower())
+
+    short = code_key(shortname)
+    codes = {subject_id for subject_id, _, code in subjects if short and code_key(code) == short}
+    if codes:
+        return (next(iter(codes)), "official_code") if len(codes) == 1 else (None, "ambiguous")
+    clean_title = re.sub(r"\b20\d{2}\s*[-/–]\s*(?:20)?\d{2}\b", "", title).strip(" ()[]-–")
+    normalized = normalize_text_key(clean_title)
+    tokens = significant_stemmed_tokens(clean_title)
+    titles = {
+        subject_id for subject_id, title, _ in subjects
+        if normalized == normalize_text_key(title)
+        or (len(tokens) >= 2 and tokens == significant_stemmed_tokens(title))
+    }
+    if len(titles) == 1:
+        return next(iter(titles)), "complete_title"
+    return None, "ambiguous" if titles else "unmatched"
 
 
 def _extract_subject_core_variants(title: str, code: str | None = None) -> tuple[list[str], str | None]:

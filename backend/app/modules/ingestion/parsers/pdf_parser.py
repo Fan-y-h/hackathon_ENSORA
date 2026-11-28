@@ -225,7 +225,7 @@ class PdfDocumentParser(DocumentParser):
     """
 
     name = "pdf_parser"
-    version = "1.1.0"
+    version = "1.1.1"
     supported_mimes = frozenset({"application/pdf"})
     supported_extensions = frozenset({".pdf"})
 
@@ -294,7 +294,9 @@ class PdfDocumentParser(DocumentParser):
         backend_used = "unknown"
         pages: list[str] | None = None
 
-        if not content or not content.lstrip().startswith(b"%PDF-"):
+        signature = content[:1024].lstrip()
+        if not signature.startswith(b"%PDF-"):
+            is_html = signature.lower().startswith((b"<!doctype html", b"<html", b"<head", b"<body"))
             return ParsedDocument(
                 parser_name=self.name,
                 parser_version=self.version,
@@ -305,7 +307,7 @@ class PdfDocumentParser(DocumentParser):
                 metadata=meta,
                 provenance=prov,
                 extraction_quality=0.0,
-                warnings=("Malformed or corrupted PDF file (missing %PDF- signature).",),
+                warnings=("pdf_html_payload" if is_html else "pdf_invalid_header",),
                 error="Malformed PDF header",
             )
 
@@ -402,13 +404,19 @@ class PdfDocumentParser(DocumentParser):
                     error=str(exc),
                 )
 
+        if not pages:
+            warnings.append("pdf_no_pages")
+            unsupported.append("pdf_no_pages")
         meta["pdf_backend"] = backend_used
         meta["page_count"] = len(pages)
         candidates = [number for number, page in enumerate(pages, start=1) if not page.strip()]
-        scanned_heavy = bool(candidates) and len(candidates) / len(pages) >= 0.30
-        ocr_pages = self._ocr_pages(content, pages, candidates) if (
-            self._enable_ocr and scanned_heavy and backend_used != "pure_python_pdf"
-        ) else set()
+        scanned_heavy = bool(pages and candidates) and len(candidates) / len(pages) >= 0.30
+        ocr_pages: set[int] = set()
+        if self._enable_ocr and scanned_heavy and backend_used != "pure_python_pdf":
+            try:
+                ocr_pages = self._ocr_pages(content, pages, candidates)
+            except OSError:
+                warnings.append("pdf_ocr_storage_unavailable")
         if self._enable_ocr and scanned_heavy and len(ocr_pages) < len(candidates):
             warnings.append("pdf_ocr_incomplete")
 

@@ -22,6 +22,7 @@ import logging
 import re
 import threading
 from dataclasses import dataclass, field, replace
+from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Callable, Sequence
 from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse, urlunparse
@@ -47,6 +48,7 @@ from ..contracts import (
     utc_now_iso,
 )
 from ..credentials import SecureCredentialManager, redact_sensitive_text
+from ..resolution.entity_resolver import match_curriculum_subject
 from .base import (
     AuthenticationRequiredError,
     PermissionDeniedError,
@@ -1007,7 +1009,7 @@ def parse_moodle_course_html(
 
 _DEADLINE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
-        r"(?:due\s*date|date\s+de\s+remise|à\s+remettre|échéance)\s*[:\-]?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T\s][0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)?)",
+        r"(?:due(?:\s*date)?|date\s+de\s+remise|à\s+(?:remettre|rendre)|échéance)\s*[:\-]?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T\s][0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)?)",
         re.IGNORECASE,
     ),
     re.compile(
@@ -1017,21 +1019,44 @@ _DEADLINE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+_FRENCH_MONTHS = {
+    name: number for number, name in enumerate(
+        ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+         "septembre", "octobre", "novembre", "décembre"), start=1,
+    )
+}
+_FRENCH_DUE_RE = re.compile(
+    r"(?:date de remise|à rendre|à remettre|échéance)\s*[:–-]\s*"
+    r"(?:[a-z]+\s+)?(\d{1,2})\s+([a-zéû]+)\s+(20\d{2})(?:\s*,?\s*(?:à\s*)?(\d{1,2}):(\d{2}))?",
+    re.IGNORECASE,
+)
+
+
 def extract_assignment_deadline(text: str) -> str | None:
-    """Extract an explicit ISO or DD/MM/YYYY assignment deadline from text when present."""
+    """Extract a published due date only when identified as such in Moodle."""
     for pattern in _DEADLINE_PATTERNS:
         m = pattern.search(text)
         if m:
             raw = m.group(1).strip()
             if "/" in raw:
-                # Convert DD/MM/YYYY [HH:MM] -> YYYY-MM-DD[THH:MM:00]
                 parts = raw.split()
                 d, mo, y = parts[0].split("/")
                 if len(parts) > 1:
                     return f"{y}-{mo}-{d}T{parts[1]}:00"
                 return f"{y}-{mo}-{d}"
             return raw.replace(" ", "T")
-    return None
+    match = _FRENCH_DUE_RE.search(text)
+    if not match:
+        return None
+    day, month, year, hour, minute = match.groups()
+    month_number = _FRENCH_MONTHS.get(month.lower())
+    if month_number is None:
+        return None
+    try:
+        due = datetime(int(year), month_number, int(day), int(hour or 0), int(minute or 0))
+    except ValueError:
+        return None
+    return due.isoformat() if hour is not None else due.date().isoformat()
 
 
 _REAL_REQUESTS_SESSION = requests.Session
@@ -2165,6 +2190,7 @@ class MoodleConnector(SourceConnector):
         - Expands nested `/mod/folder/` modules to surface `/pluginfile.php/` files.
         - Extracts embedded HTML educational instructions/code examples even when no file exists.
         """
+        assignment_page_deadlines: dict[str, str] = {}
         if course_html is None and self._use_rest_mode():
             items = self._extract_course_items_rest(course)
         else:
@@ -2363,6 +2389,10 @@ class MoodleConnector(SourceConnector):
                                 interactive=interactive,
                                 allow_auto_reauth=allow_auto_reauth,
                             )
+                            due_text = unescape(re.sub(r"<[^>]*>", " ", _extract_moodle_main_html(assign_html)))
+                            due = extract_assignment_deadline(" ".join(due_text.split()))
+                            if due:
+                                assignment_page_deadlines[it.module_id] = due
                             nested_assign = parse_moodle_course_html(
                                 assign_html,
                                 self._config.moodle_base_url,
@@ -2408,7 +2438,7 @@ class MoodleConnector(SourceConnector):
                 items = [*items, *expanded]
         enriched: list[MoodleResourceItem] = []
         for item in items:
-            deadline = item.deadline_at
+            deadline = item.deadline_at or assignment_page_deadlines.get(item.module_id)
             if item.resource_kind == "assignment" and not deadline:
                 deadline = extract_assignment_deadline(f"{item.title} {item.description or ''}")
             enriched.append(
@@ -2449,7 +2479,15 @@ class MoodleConnector(SourceConnector):
         )
         folder_path = f"Moodle/{raw_item.get('course_title', course_id)}/{raw_item.get('section_title', 'General')}"
         remote_version = raw_item.get("remote_version") or raw_item.get("modified_at")
-        if not remote_version:
+        if kind in ("assignment", "html_section"):
+            # Moodle can change a due date or embedded instructions without changing the module URL.
+            evidence = (
+                str(remote_version or ""), str(raw_item.get("title") or ""),
+                str(raw_item.get("deadline_at") or ""), str(raw_item.get("description") or ""),
+                str(raw_item.get("inline_html") or ""),
+            )
+            remote_version = hashlib.sha256("\x1f".join(evidence).encode("utf-8")).hexdigest()[:16]
+        elif not remote_version:
             fingerprint = f"{external_id}|{raw_item.get('title','')}|{raw_item.get('url','')}"
             remote_version = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16]
 
@@ -2473,6 +2511,7 @@ class MoodleConnector(SourceConnector):
                 "filename": raw_item.get("filename"),
                 "description": raw_item.get("description"),
                 "deadline_at": raw_item.get("deadline_at"),
+                "canonical_subject_id": raw_item.get("canonical_subject_id"),
                 "section_url": raw_item.get("section_url"),
                 "section_id": raw_item.get("section_id"),
                 "academic_year": raw_item.get("academic_year"),
@@ -2535,6 +2574,26 @@ class MoodleConnector(SourceConnector):
             interactive=interactive,
             allow_auto_reauth=allow_auto_reauth,
         )
+        curriculum = opts.get("eligible_subjects")
+        selected_subject = opts.get("selected_subject_id")
+        scope_decisions: dict[str, int] = {}
+        course_subjects: dict[str, str] = {}
+        if curriculum is not None:
+            approved = []
+            for course in all_discovered:
+                subject_id, decision = match_curriculum_subject(course.title, course.shortname or "", curriculum)
+                if subject_id and selected_subject and subject_id != selected_subject:
+                    decision = "other_subject"
+                elif subject_id:
+                    course_subjects[course.course_id] = subject_id
+                    approved.append(replace(course, academic_year=academic_year or course.academic_year))
+                elif course_ids:
+                    # The selected course is still checked through the authorized session.
+                    # Preserve a conflicting published year instead of relabelling that course.
+                    approved.append(replace(course, academic_year=course.academic_year or academic_year))
+                    decision = "explicit_course"
+                scope_decisions[decision] = scope_decisions.get(decision, 0) + 1
+            all_discovered = approved
         max_courses = 1 if (single_course_first and not course_ids) else opts.get("max_courses")
         courses = all_discovered[:max_courses] if (max_courses is not None and max_courses >= 0) else all_discovered
 
@@ -2570,6 +2629,7 @@ class MoodleConnector(SourceConnector):
             "discovery_incomplete": bool(disc_diag.get("discovery_incomplete", False)),
             "my_courses_timeout": bool(disc_diag.get("my_courses_timeout", False)),
             "courses_traversed": 0,
+            "curriculum_filter_decisions": scope_decisions,
             "sections_discovered": 0,
             "sections_traversed": 0,
             "folders_traversed": 0,
@@ -2601,6 +2661,7 @@ class MoodleConnector(SourceConnector):
                     rec = self.normalize(
                         {
                             "course_id": item.course_id,
+                            "canonical_subject_id": course_subjects.get(item.course_id),
                             "course_title": item.course_title,
                             "section_title": item.section_title,
                             "module_id": item.module_id,
@@ -2650,6 +2711,11 @@ class MoodleConnector(SourceConnector):
                     )
                 )
 
+        if curriculum is not None and not course_ids and not courses:
+            warnings.append(
+                "No enrolled Moodle course matched the selected Pamplemousse curriculum. "
+                "Set the academic year and sync Pamplemousse first, or select an enrolled Moodle course explicitly."
+            )
         if disc_diag.get("discovery_incomplete"):
             warnings.append(
                 "Moodle course discovery was incomplete (timeout or fallback error occurred); "
@@ -3249,15 +3315,38 @@ class MoodleConnector(SourceConnector):
                 limit_bytes=self._config.max_download_bytes,
             )
 
+        mime = self._verify_download_payload(content, filename, mime, str(fallback_filename), url, resource_kind)
         return FetchResult(
             external_id=item.external_id,
             content=content,
             content_hash=sha256_bytes(content),
-            mime_type=mime or guess_mime_type(filename),
+            mime_type=mime,
             size_bytes=len(content),
             filename=filename,
             source_url=url,
         )
+
+    def _verify_download_payload(
+        self, content: bytes, filename: str, mime: str | None, fallback_filename: str,
+        url: str, resource_kind: str,
+    ) -> str:
+        detected = (mime or guess_mime_type(filename)).split(";", 1)[0].strip().lower()
+        signature = content[:1024].lstrip()
+        looks_html = signature.lower().startswith((b"<!doctype html", b"<html", b"<head", b"<body"))
+        if looks_html and self._looks_like_login_html(content[:20000].decode("utf-8", errors="replace"), url):
+            raise AuthenticationRequiredError("Moodle returned a login page instead of the resource.")
+        expects_pdf = detected == "application/pdf" or any(
+            name.lower().endswith(".pdf") for name in (filename, fallback_filename)
+        )
+        if expects_pdf and not signature.startswith(b"%PDF-"):
+            raise ValueError("Moodle download did not contain a PDF signature.")
+        if signature.startswith(b"%PDF-"):
+            return "application/pdf"
+        if not content:
+            raise ValueError("Moodle returned an empty resource.")
+        if looks_html and resource_kind not in ("page", "announcement", "folder") and detected != "text/html":
+            raise ValueError("Moodle returned HTML in place of the requested resource.")
+        return detected
 
     def fetch_blobs_concurrent(
         self,

@@ -1837,8 +1837,6 @@ def parse_pamplemousse_notes_html(
             m_scale = re.search(r"/\s*(\d+(?:[.,]\d+)?)", note_raw)
             if m_scale:
                 scale_val = parse_decimal_strict(m_scale.group(1))
-            elif grade_val is not None:
-                scale_val = Decimal("20")
 
             # Classify row hierarchy level conservatively
             is_overall = any(
@@ -2261,12 +2259,24 @@ def reconcile_pamplemousse_academics(
         else:
             nt = _norm_title(nr.title)
             matches = by_sem_title.get((nr.semester or "", nt)) or by_title.get(nt) or []
+        had_candidates = bool(matches)
+        matches = [
+            item for item in matches
+            if not (nr.academic_year and item.academic_year and nr.academic_year != item.academic_year)
+            and not (nr.semester and item.semester and nr.semester != item.semester)
+        ]
+        parent = nr.parent_external_id
+        if parent:
+            enrolled_ue_id = id_remap.get(parent, parent)
+            matches_in_unit = [item for item in matches if item.parent_external_id == enrolled_ue_id]
+            if matches_in_unit:
+                matches = matches_in_unit
         if len(matches) == 1:
             target_id = matches[0].external_id
             id_remap[nr.external_id] = target_id
             idx = index_by_id[target_id]
             merged[idx] = _merge_weight(merged[idx], nr)
-        elif len(matches) > 1:
+        elif had_candidates:
             ambiguous_notes_subjects.add(nr.external_id)
 
     seen_ids: set[str] = {r.external_id for r in merged}
@@ -2376,7 +2386,7 @@ def parse_pamplemousse_academic_html(html: str) -> list[AcademicRecord]:
                 weight_mode="coefficient" if coef is not None else None,
                 weight_status=ValueStatus.CONFIRMED if coef is not None else ValueStatus.MISSING,
                 grade_value=grade,
-                grade_scale_max=scale if scale is not None else (Decimal("20") if grade is not None else None),
+                grade_scale_max=scale,
                 grade_kind="actual" if grade is not None else None,
                 grade_status=ValueStatus.CONFIRMED if grade is not None else ValueStatus.MISSING,
                 observed_at=utc_now_iso(),
@@ -3274,7 +3284,7 @@ class PamplemousseConnector(SourceConnector):
                         weight_mode=w_mode,
                         weight_status=ValueStatus.CONFIRMED if coef is not None else ValueStatus.MISSING,
                         grade_value=grade,
-                        grade_scale_max=scale if scale is not None else (Decimal("20") if grade is not None else None),
+                        grade_scale_max=scale,
                         grade_kind="actual" if grade is not None else None,
                         grade_status=ValueStatus.CONFIRMED if grade is not None else ValueStatus.MISSING,
                         observed_at=norm.get("observed_at") or utc_now_iso(),
@@ -3373,7 +3383,7 @@ class PamplemousseConnector(SourceConnector):
                     weight_mode=entry.get("weight_mode") or ("coefficient" if coef is not None else None),
                     weight_status=ValueStatus.CONFIRMED if coef is not None else ValueStatus.MISSING,
                     grade_value=grade,
-                    grade_scale_max=scale if scale is not None else (Decimal("20") if grade is not None else None),
+                    grade_scale_max=scale,
                     grade_kind="actual" if grade is not None else None,
                     grade_status=ValueStatus.CONFIRMED if grade is not None else ValueStatus.MISSING,
                     observed_at=entry.get("observed_at") or utc_now_iso(),
@@ -3416,7 +3426,7 @@ class PamplemousseConnector(SourceConnector):
             title=title,
             record_kind=kind,
             remote_version=version,
-            remote_modified_at=raw_item.get("observed_at") or raw_item.get("start_at"),
+            remote_modified_at=raw_item.get("remote_modified_at") or raw_item.get("start_at"),
             course_id=raw_item.get("course_id") or raw_item.get("subject_code"),
             course_title=raw_item.get("subject_hint") or title,
             source_url=self._config.pamplemousse_base_url,

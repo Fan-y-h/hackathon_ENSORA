@@ -452,7 +452,7 @@ def test_moodle_and_pamplemousse_pooled_cookie_sessions_reuse_and_invalidate_on_
     moodle_conn = MoodleConnector(
         cfg,
         auth_adapter=auth,
-        blob_fetcher=lambda u: (f"bytes:{u}".encode("utf-8"), u.rsplit("/", 1)[-1], "application/pdf"),
+        blob_fetcher=lambda u: (f"%PDF-1.4\n%{u}\n%%EOF".encode("utf-8"), u.rsplit("/", 1)[-1], "application/pdf"),
         rate_limiter=RateLimiter(0.0),
     )
     recs = [
@@ -534,7 +534,7 @@ def test_pdf_parser_stdin_pipe_and_registry_version_cache_and_parallel_batch() -
         title="Cours Statistique",
     )
     parser = PdfDocumentParser()
-    assert parser.version == "1.1.0"
+    assert parser.version == "1.1.1"
     parsed = parser.parse(pdf_bytes, filename="stat.pdf", mime_type="application/pdf")
     assert parsed.error is None
     assert len(parsed.blocks) == 2

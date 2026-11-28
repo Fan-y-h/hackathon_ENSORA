@@ -169,8 +169,10 @@ class GoogleCalendarConnector(SourceConnector):
         raw: dict[str, Any],
         *,
         calendar_tz: str = "Europe/Paris",
+        calendar_id: str | None = None,
         include_descriptions: bool = False,
     ) -> CalendarEventRecord:
+        calendar_id = calendar_id or self._calendar_id
         event_id = str(raw["id"])
         status_raw = str(raw.get("status") or "confirmed").lower()
         status = (
@@ -210,7 +212,7 @@ class GoogleCalendarConnector(SourceConnector):
 
         return CalendarEventRecord(
             source_kind=SourceKind.GOOGLE_CALENDAR,
-            external_id=f"google_calendar:{self._calendar_id}:{event_id}",
+            external_id=f"google_calendar:{calendar_id}:{event_id}",
             title=summary,
             event_type=CalendarEventType.PERSONAL,
             start_at=start_utc,
@@ -226,7 +228,7 @@ class GoogleCalendarConnector(SourceConnector):
             source_url=raw.get("htmlLink"),
             provenance={
                 "source": SourceKind.GOOGLE_CALENDAR.value,
-                "calendar_id": self._calendar_id,
+                "calendar_id": calendar_id,
                 "google_event_id": event_id,
                 "updated": raw.get("updated"),
                 "retrieved_at": utc_now_iso(),
@@ -504,6 +506,7 @@ class GoogleCalendarConnector(SourceConnector):
             ev = self._parse_google_event(
                 raw,
                 calendar_tz=cal_tz,
+                calendar_id=cal_id,
                 include_descriptions=include_descriptions,
             )
             if availability_only:

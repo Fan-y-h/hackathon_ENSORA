@@ -12,12 +12,15 @@ Implements Codex's exact shared contracts from:
 from __future__ import annotations
 
 from contextlib import closing
+from dataclasses import replace
+import json
 import logging
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from zoneinfo import ZoneInfo
 
 from pydantic import SecretStr
 
@@ -91,7 +94,7 @@ from .contracts import (
 )
 from .credentials import SecureCredentialManager, redact_sensitive_text
 from .parsers.registry import DocumentParserRegistry
-from .resolution.entity_resolver import AcademicEntityResolver, CanonicalSubject
+from .resolution.entity_resolver import AcademicEntityResolver, CanonicalSubject, match_curriculum_subject
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +173,7 @@ def runtime_config_from_codex_settings(settings: Settings) -> SourcesRuntimeConf
         google_cloud_project_id=settings.google_project_id,
         ensora_drive_root_folder_id=settings.ensora_drive_folder_id,
         google_calendar_id=settings.google_calendar_id,
+        google_calendar_include_personal_details=settings.google_calendar_include_personal_details,
         rate_limit_min_interval_sec=float(settings.request_delay_seconds),
         max_download_bytes=int(settings.max_document_bytes),
     )
@@ -266,13 +270,13 @@ def _to_codex_auth_result(
     )
 
 
-def _parse_iso_dt(value: str | None) -> datetime | None:
+def _parse_iso_dt(value: str | None, *, default_zone=timezone.utc) -> datetime | None:
     if not value:
         return None
     try:
         iso = value[:-1] + "+00:00" if value.endswith("Z") else value
         dt = datetime.fromisoformat(iso)
-        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=default_zone)
     except ValueError:
         return None
 
@@ -356,6 +360,7 @@ def _to_codex_records(
 
     # Emit Moodle parent Subject record before course documents or assignments
     moodle_subject_key: str | None = None
+    canonical_subject = rec_payload.get("canonical_subject_id")
     if rec.source_kind == InternalSourceKind.MOODLE and rec.course_id:
         moodle_subject_key = f"moodle:course:{rec.course_id}"
         if moodle_subject_key not in seen_parents:
@@ -372,6 +377,7 @@ def _to_codex_records(
                     title=rec.course_title or f"Course {rec.course_id}",
                     code=rec.course_id,
                     source_code=rec.course_id,
+                    aliases=[canonical_subject] if canonical_subject else [],
                 )
             )
 
@@ -394,7 +400,7 @@ def _to_codex_records(
                 provenance=prov,
                 title=title,
                 mime_type=rec.mime_type or "application/octet-stream",
-                subject_id=moodle_subject_key or rec.course_id,
+                subject_id=canonical_subject or moodle_subject_key or rec.course_id,
                 chapter_id=rec.section_title,
                 course_id=rec.course_id,
                 course_title=rec.course_title,
@@ -413,7 +419,7 @@ def _to_codex_records(
                 provenance=prov,
                 title=rec.title or rec.external_id,
                 parent_key=moodle_subject_key or rec.course_id,
-                deadline_at=_parse_iso_dt(rec_payload.get("deadline_at")),
+                deadline_at=_parse_iso_dt(rec_payload.get("deadline_at"), default_zone=ZoneInfo("Europe/Paris")),
                 format="assignment",
                 instructions=rec_payload.get("description"),
                 assessment_kind="assignment",
@@ -500,7 +506,8 @@ def _to_codex_records(
         weight_dec = Decimal(str(raw_weight)) if raw_weight is not None else None
         grade_dec = Decimal(str(raw_grade)) if raw_grade is not None else None
         ects_dec = Decimal(str(raw_ects)) if raw_ects is not None else None
-        scale_dec = Decimal(str(p.get("grade_scale_max") or "20"))
+        raw_scale = p.get("grade_scale_max")
+        scale_dec = Decimal(str(raw_scale)) if raw_scale is not None else None
         rec_status = "ambiguous" if prov_meta.get("reconciliation_status") == "ambiguous" else "known"
         src_code = p.get("subject_code")
 
@@ -606,7 +613,7 @@ def _to_codex_records(
                         maximum=scale_dec,
                         grade_kind="official_aggregate",
                         record_status=grade_status if grade_status in ("missing", "ambiguous") else rec_status,
-                        published_at=_parse_iso_dt(p.get("observed_at")),
+                        published_at=_parse_iso_dt(p.get("published_at") or prov_meta.get("published_at")),
                     )
                 )
             return out
@@ -684,7 +691,7 @@ def _to_codex_records(
                         maximum=scale_dec,
                         grade_kind="assessment",
                         record_status=grade_status if grade_status in ("missing", "ambiguous") else rec_status,
-                        published_at=_parse_iso_dt(p.get("observed_at")),
+                        published_at=_parse_iso_dt(p.get("published_at") or prov_meta.get("published_at")),
                     )
                 )
             return out
@@ -706,7 +713,7 @@ def _to_codex_records(
                         maximum=scale_dec,
                         grade_kind=g_kind,
                         record_status=grade_status if grade_status in ("missing", "ambiguous") else rec_status,
-                        published_at=_parse_iso_dt(p.get("observed_at")),
+                        published_at=_parse_iso_dt(p.get("published_at") or prov_meta.get("published_at")),
                     )
                 )
             if weight_dec is not None or str(p.get("weight_status") or prov_meta.get("weight_status") or "") in ("missing", "ambiguous"):
@@ -1040,6 +1047,67 @@ def _load_known_record_revisions(db_path: Path, source_value: str) -> dict[str, 
         return {}
 
 
+def _load_student_scope(
+    db_path: Path, settings: Settings, requested_year: str | None = None,
+) -> tuple[str | None, str | None, list[tuple[str, str, str]]]:
+    """Read the active profile and its consented institutional curriculum without opening a writer."""
+    from ...core.database import LOCAL_USER
+
+    year = requested_year or settings.academic_year
+    cohort = settings.study_year
+    if not db_path.is_file():
+        return year, cohort, []
+    try:
+        with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as conn:
+            profile = conn.execute(
+                "SELECT profile FROM users WHERE id = ?", (LOCAL_USER,)
+            ).fetchone()
+            profile_data = json.loads(profile[0]) if profile else {}
+            year = requested_year or profile_data.get("academic_year") or settings.academic_year
+            cohort = profile_data.get("study_year") or settings.study_year
+            if not year:
+                return None, cohort, []
+            rows = conn.execute(
+                """
+                SELECT r.external_id, r.payload
+                FROM source_records r
+                JOIN connections c ON c.id = r.connection_id
+                JOIN source_records unit ON unit.id = r.parent_id
+                WHERE c.user_id = ? AND c.source = 'pamplemousse'
+                  AND r.kind = 'subject' AND unit.kind = 'teaching_unit'
+                  AND json_extract(r.payload, '$.provenance.academic_year') = ?
+                  AND (SELECT granted FROM consents WHERE connection_id = c.id
+                       AND purpose = 'read' ORDER BY rowid DESC LIMIT 1) = 1
+                """,
+                (LOCAL_USER, year),
+            ).fetchall()
+            subjects = []
+            for external_id, raw_payload in rows:
+                payload = json.loads(raw_payload)
+                if payload.get("title"):
+                    subjects.append((external_id, payload["title"], payload.get("code") or payload.get("source_code") or ""))
+            return year, cohort, subjects
+    except (sqlite3.Error, ValueError):
+        return year, cohort, []
+
+
+def _match_drive_subject(
+    record: InternalSourceRecord, curriculum: list[tuple[str, str, str]], resolver: AcademicEntityResolver,
+) -> str | None:
+    """Use a unique path segment or a high-confidence curriculum match for historical resources."""
+    path_matches = {
+        subject_id
+        for segment in (record.folder_path or "").split("/")
+        if (subject_id := match_curriculum_subject(segment, "", curriculum)[0]) is not None
+    }
+    if path_matches:
+        return next(iter(path_matches)) if len(path_matches) == 1 else None
+    match = resolver.resolve_record(record)
+    if not match.needs_review and match.matched_by != "fuzzy":
+        return match.canonical_subject_id
+    return None
+
+
 class CodexConnectorBridge:
     """Bridges any Gemini SourceConnector to Codex's SourceConnector protocol."""
 
@@ -1052,9 +1120,11 @@ class CodexConnectorBridge:
         known_versions_loader: Callable[[], Mapping[str, str] | None] | None = None,
         drive_allowed_cohorts: tuple[str, ...] = ENSORA_DRIVE_ALLOWED_TOP_LEVEL_FOLDERS,
         page_size: int = MAX_PAGE_CACHE_ENTRIES,
+        student_scope_loader: Callable[[str | None], tuple[str | None, str | None, list[tuple[str, str, str]]]] | None = None,
     ) -> None:
         self._connector = connector
         self._calendar_availability_only = calendar_availability_only
+        self._student_scope_loader = student_scope_loader
         self._known_external_ids_loader = known_external_ids_loader
         self._known_versions_loader = known_versions_loader
         self._drive_allowed_cohorts = tuple(drive_allowed_cohorts)
@@ -1106,7 +1176,9 @@ class CodexConnectorBridge:
             # full and failed-resource retry runs alike.
             scope_dict["cohorts"] = list(self._drive_allowed_cohorts)
         if scope.subject_id:
-            scope_dict["course_ids"] = [scope.subject_id]
+            course_id = scope.subject_id.removeprefix("moodle:course:")
+            if course_id.isdigit():
+                scope_dict["course_ids"] = [course_id]
         if scope.folder_id:
             scope_dict["folder_id"] = scope.folder_id
             scope_dict["root_path"] = scope.folder_id
@@ -1116,6 +1188,17 @@ class CodexConnectorBridge:
             scope_dict["discovery_only"] = True
         if getattr(scope, "academic_year", None):
             scope_dict["academic_year"] = scope.academic_year
+        curriculum = None
+        if self._student_scope_loader is not None:
+            year, cohort, curriculum = self._student_scope_loader(scope.academic_year)
+            if self._connector.source_kind == InternalSourceKind.ENSORA_DRIVE:
+                if cohort and cohort.upper() in self._drive_allowed_cohorts:
+                    scope_dict["cohorts"] = [cohort.upper()]
+            elif year:
+                scope_dict["academic_year"] = year
+            if self._connector.source_kind == InternalSourceKind.MOODLE:
+                scope_dict["eligible_subjects"] = curriculum
+                scope_dict["selected_subject_id"] = scope.subject_id if not scope_dict.get("course_ids") else None
         if getattr(scope, "window_start", None) is not None:
             ws = scope.window_start
             scope_dict["range_start"] = ws
@@ -1202,7 +1285,26 @@ class CodexConnectorBridge:
         emitted_parents: set[str] = set()
         conversion_error_codes: list[str] = []
 
+        observed = getattr(self._connector, "last_stats", None)
+        wrong_academic_year = bool(
+            self._connector.source_kind == InternalSourceKind.PAMPLEMOUSSE
+            and self._student_scope_loader is not None
+            and isinstance(observed, dict)
+            and observed.get("source_confirmed_academic_year")
+            and scope_dict.get("academic_year")
+            and observed["source_confirmed_academic_year"] != scope_dict["academic_year"]
+        )
+        if wrong_academic_year:
+            conversion_error_codes.append("pamplemousse_selected_year_mismatch")
+        drive_documents_excluded = 0
+        drive_resolver = None
+        if curriculum is not None and self._connector.source_kind == InternalSourceKind.ENSORA_DRIVE:
+            drive_resolver = AcademicEntityResolver(student_cohort=cohort)
+            for subject_id, title, code in curriculum:
+                drive_resolver.register_subject(CanonicalSubject(subject_id, title, code))
         for item in page.items:
+            if wrong_academic_year and item.record_kind == "academic":
+                continue
             if (
                 self._connector.source_kind == InternalSourceKind.ENSORA_DRIVE
                 and item.access_status == AccessStatus.ACTIVE
@@ -1212,6 +1314,16 @@ class CodexConnectorBridge:
                 # never cache, normalize, download or expose active Global/unverified items,
                 # while still forwarding tombstones so moved/removed docs retire cleanly.
                 continue
+            if (
+                curriculum is not None
+                and drive_resolver is not None
+                and item.access_status == AccessStatus.ACTIVE
+            ):
+                subject_id = _match_drive_subject(item, curriculum, drive_resolver)
+                if not subject_id or (scope.subject_id and scope.subject_id != subject_id):
+                    drive_documents_excluded += 1
+                    continue
+                item = replace(item, payload={**item.payload, "canonical_subject_id": subject_id})
             if len(new_cache) < MAX_PAGE_CACHE_ENTRIES:
                 new_cache[item.external_id] = item
             try:
@@ -1328,6 +1440,8 @@ class CodexConnectorBridge:
         warning_codes: list[str] = []
         if page.warnings:
             warning_codes.append("source_warning")
+        if curriculum == [] and self._connector.source_kind == InternalSourceKind.ENSORA_DRIVE:
+            warning_codes.append("drive_curriculum_missing")
         error_codes: list[str] = []
         if page.errors:
             error_codes.append("source_listing_error")
@@ -1413,6 +1527,15 @@ class CodexConnectorBridge:
                 and "discovery_coverage_unknown" not in warning_codes
             ):
                 warning_codes.append("discovery_coverage_unknown")
+
+        if drive_documents_excluded:
+            observations["resources_excluded"] = observations.get("resources_excluded", 0) + drive_documents_excluded
+        if (
+            self._connector.source_kind == InternalSourceKind.MOODLE
+            and curriculum is not None and not scope_dict.get("course_ids")
+            and isinstance(raw_stats, dict) and raw_stats.get("courses_discovered") == 0
+        ):
+            warning_codes.append("moodle_curriculum_unmatched")
 
         if not page.complete:
             return CodexChangePage(
@@ -1583,6 +1706,16 @@ class CodexParserBridge:
             precomputed_sha256=content_sha,
         )
         if parsed.error and not parsed.blocks:
+            warning = next(
+                (code for code in parsed.warnings if code in {"pdf_html_payload", "pdf_invalid_header"}),
+                None,
+            )
+            if warning:
+                return ParsedContent(
+                    parser_version=f"{parsed.parser_name}-{parsed.parser_version}",
+                    status="partial",
+                    warning_codes=[warning],
+                )
             return None
         chunks: list[DocumentChunk] = []
         warning_codes: list[str] = []
@@ -1601,8 +1734,8 @@ class CodexParserBridge:
             low_w = str(w).lower()
             if "pdf_mixed_media_empty_pages" in low_w:
                 _add_warn("mixed_media_pages_present")
-            elif "pdf_ocr_incomplete" in low_w:
-                _add_warn("pdf_ocr_incomplete")
+            elif low_w in {"pdf_no_pages", "pdf_ocr_incomplete", "pdf_ocr_storage_unavailable"}:
+                _add_warn(low_w)
             elif "legacy_binary_office" in low_w:
                 _add_warn("legacy_binary_office")
             elif "zip_contains_no_parseable_text_members" in low_w:
@@ -2119,6 +2252,9 @@ def build_components(
     drive_oauth = GoogleOAuthAdapter(cfg, source=InternalSourceKind.ENSORA_DRIVE)
     cal_oauth = GoogleOAuthAdapter(cfg, source=InternalSourceKind.GOOGLE_CALENDAR)
 
+    def student_scope(requested_year: str | None) -> tuple[str | None, str | None, list[tuple[str, str, str]]]:
+        return _load_student_scope(settings.local_data_dir / "ensora.sqlite3", settings, requested_year)
+
     moodle_conn = MoodleConnector(cfg, auth_adapter=ensai_auth, credential_manager=cred_manager)
     pamp_conn = PamplemousseConnector(cfg, auth_adapter=ensai_auth)
     drive_conn = EnsoraDriveConnector(cfg, oauth_adapter=drive_oauth)
@@ -2162,18 +2298,21 @@ def build_components(
         connectors={
             CodexSourceKind.MOODLE: CodexConnectorBridge(
                 moodle_conn,
+                student_scope_loader=student_scope,
                 known_versions_loader=lambda db_path=settings.local_data_dir / "ensora.sqlite3": _load_known_document_revisions(
                     db_path, CodexSourceKind.MOODLE.value
                 ),
             ),
             CodexSourceKind.PAMPLEMOUSSE: CodexConnectorBridge(
                 pamp_conn,
+                student_scope_loader=student_scope,
                 known_versions_loader=lambda db_path=settings.local_data_dir / "ensora.sqlite3": _load_known_record_revisions(
                     db_path, CodexSourceKind.PAMPLEMOUSSE.value
                 ),
             ),
             CodexSourceKind.ENSORA_DRIVE: CodexConnectorBridge(
                 drive_conn,
+                student_scope_loader=student_scope,
                 known_external_ids_loader=lambda db_path=settings.local_data_dir / "ensora.sqlite3": _load_active_drive_documents(
                     db_path
                 ),

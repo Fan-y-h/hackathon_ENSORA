@@ -10,11 +10,11 @@ from sqlalchemy import insert, select, update
 from ..contracts.authentication import (
     AuthenticationResult, ConnectionStatus, ProfileBusy, ReauthenticationRequired, ServiceAccessDenied,
 )
-from ..contracts.sources import CalendarEvent, ChangePage, Document, RetryableSourceError, SourceKind, SyncScope
+from ..contracts.sources import CalendarEvent, ChangePage, Document, RetryableSourceError, SourceKind, Subject, SyncScope
 from ..contracts.sync import SourceSyncReport
 from .auth import now
 from .calendar import interval_time
-from .database import LOCAL_USER, connections, new_id, runs
+from .database import LOCAL_USER, connections, new_id, records, runs
 from .drive_scope import drive_document_in_scope
 from .etl import count
 
@@ -322,6 +322,16 @@ class SyncEngine:
         snapshot = None
         snapshot_ids = set()
         completed_courses = set()
+        matched_moodle_courses = set()
+        if scope.subject_id and source == SourceKind.MOODLE:
+            query = select(records.c.external_id, records.c.payload).where(
+                records.c.connection_id == connection_id, records.c.kind == "subject",
+            )
+            with self.engine.connect() as db:
+                matched_moodle_courses.update(
+                    key for key, payload in db.execute(query)
+                    if scope.subject_id in (payload or {}).get("aliases", [])
+                )
         report.stage = "listing"
         progress(report)
         report.metrics.update(dict.fromkeys((
@@ -369,6 +379,11 @@ class SyncEngine:
             if (source == SourceKind.MOODLE and scope.discovery_only and page.complete
                     and "courses_discovered" not in report.metrics):
                 report.warning_codes = sorted(set(report.warning_codes + ["discovery_coverage_unknown"]))
+            if scope.subject_id and source == SourceKind.MOODLE:
+                matched_moodle_courses.update(
+                    item.provenance.external_id for item in page.items
+                    if isinstance(item, Subject) and scope.subject_id in item.aliases
+                )
             for record in page.items:
                 if cancelled.is_set() or not authorized():
                     break
@@ -410,7 +425,7 @@ class SyncEngine:
                     if start is None or end is None or start >= window[1] or end <= window[0]:
                         continue
                 subject_key = getattr(record, "subject_id", getattr(record, "parent_key", None))
-                if scope.subject_id and scope.subject_id not in (
+                if scope.subject_id and subject_key not in matched_moodle_courses and record.provenance.external_id not in matched_moodle_courses and scope.subject_id not in (
                     subject_key, record.provenance.external_id, getattr(record, "course_id", None),
                     subject_key.removeprefix("moodle:course:") if subject_key else None,
                 ):
