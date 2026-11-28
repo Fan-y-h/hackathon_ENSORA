@@ -46,6 +46,7 @@ import { Card, Dialog, EmptyState, ErrorPanel, Loading, PageHeader, StatusLine }
 import { SyncButton } from "../sources/SyncButton";
 import {
   assessmentMark,
+  customDetailMarks,
   effectiveCoefficient,
   fmt,
   fmtCoef,
@@ -55,13 +56,17 @@ import {
   semesterAverage,
   subjectMark,
   unitAverage,
+  withCustomDetails,
+  type CustomAssessment,
   type CustomCoefficients,
+  type CustomDetails,
   type Simulations,
 } from "./average";
 import "./results.css";
 
 const SIM_KEY = "ensora.results.simulations.v1";
 const COEF_KEY = "ensora.results.custom_coefs.v1";
+const DETAIL_KEY = "ensora.results.custom_details.v1";
 
 function loadJson<T>(key: string, fallback: T): T {
   try {
@@ -107,7 +112,7 @@ export function GradesPage() {
   const hasPamplemousse = (results.data?.semesters.length ?? 0) > 0;
   const [tab, setTab] = useState<"calculator" | "pamplemousse" | null>(null);
   const activeTab: "calculator" | "pamplemousse" =
-    tab ?? (hasPrograms ? "calculator" : hasPamplemousse ? "pamplemousse" : "calculator");
+    tab ?? (hasPamplemousse ? "pamplemousse" : hasPrograms ? "calculator" : results.isPending ? "pamplemousse" : "calculator");
 
   const [selectedProgramId, setSelectedProgramId] = useState<string>("");
   const [creatingProgram, setCreatingProgram] = useState(false);
@@ -1022,6 +1027,7 @@ function PamplemousseView({
 }) {
   const [sims, setSims] = useState<Simulations>(() => loadJson(SIM_KEY, {}));
   const [customCoefs, setCustomCoefs] = useState<CustomCoefficients>(() => loadJson(COEF_KEY, {}));
+  const [details, setDetails] = useState<CustomDetails>(() => loadJson(DETAIL_KEY, {}));
   const [semKey, setSemKey] = useState<string | null>(null);
   const [targetStr, setTargetStr] = useState("12");
 
@@ -1033,8 +1039,22 @@ function PamplemousseView({
     localStorage.setItem(COEF_KEY, JSON.stringify(customCoefs));
   }, [customCoefs]);
 
+  useEffect(() => {
+    localStorage.setItem(DETAIL_KEY, JSON.stringify(details));
+  }, [details]);
+
   const semesters = useMemo(() => resultsQuery.data?.semesters ?? [], [resultsQuery.data]);
-  const sem = semesters.find((s) => s.key === semKey) ?? semesters.find((s) => s.units.length) ?? semesters[0];
+  const rawSem = semesters.find((s) => s.key === semKey) ?? semesters.find((s) => s.units.length) ?? semesters[0];
+  // Personal subdivisions join the tree as provisional assessments; their marks ride along the simulations.
+  const sem = useMemo(() => (rawSem ? withCustomDetails(rawSem, details) : rawSem), [rawSem, details]);
+  const marks = useMemo(() => ({ ...sims, ...customDetailMarks(details) }), [sims, details]);
+  const setDetail = (subjectKey: string, items: CustomAssessment[]) =>
+    setDetails((all) => {
+      const next = { ...all };
+      if (items.length) next[subjectKey] = items;
+      else delete next[subjectKey];
+      return next;
+    });
   const setSim = (key: string, value: string) => setSims((all) => ({ ...all, [key]: value }));
   const setCoef = (key: string, value: string) => setCustomCoefs((all) => ({ ...all, [key]: value }));
 
@@ -1066,7 +1086,7 @@ function PamplemousseView({
     );
   }
 
-  const semAvg = semesterAverage(sem, sims, customCoefs);
+  const semAvg = semesterAverage(sem, marks, customCoefs);
   const targetVal = parseMark(targetStr);
   const targetReq = targetVal !== null && targetVal >= 0 && targetVal <= 20 ? requiredForTarget(semAvg, targetVal) : null;
 
@@ -1076,7 +1096,7 @@ function PamplemousseView({
         semester={sem}
         semesters={semesters}
         onSemester={setSemKey}
-        sims={sims}
+        sims={marks}
         customCoefs={customCoefs}
         general={resultsQuery.data!.general_average}
         year={resultsQuery.data!.academic_year}
@@ -1137,7 +1157,17 @@ function PamplemousseView({
           </div>
         )}
         {sem.units.map((u) => (
-          <UnitCard key={u.key} unit={u} sims={sims} customCoefs={customCoefs} onSim={setSim} onCoef={setCoef} />
+          <UnitCard
+            key={u.key}
+            unit={u}
+            sims={sims}
+            marks={marks}
+            customCoefs={customCoefs}
+            details={details}
+            onSim={setSim}
+            onCoef={setCoef}
+            onDetail={setDetail}
+          />
         ))}
       </div>
     </div>
@@ -1234,17 +1264,23 @@ function ResultsHero({
 function UnitCard({
   unit,
   sims,
+  marks,
   customCoefs,
+  details,
   onSim,
   onCoef,
+  onDetail,
 }: {
   unit: ResultsUnit;
   sims: Simulations;
+  marks: Simulations;
   customCoefs: CustomCoefficients;
+  details: CustomDetails;
   onSim: (key: string, v: string) => void;
   onCoef: (key: string, v: string) => void;
+  onDetail: (subjectKey: string, items: CustomAssessment[]) => void;
 }) {
-  const avg = unitAverage(unit, sims, customCoefs);
+  const avg = unitAverage(unit, marks, customCoefs);
   const showOfficial = unit.official_average !== null && !avg.simulated;
   const value = showOfficial ? unit.official_average : avg.value;
 
@@ -1273,7 +1309,17 @@ function UnitCard({
         <span />
       </div>
       {unit.subjects.map((s) => (
-        <SubjectRow key={s.key} subject={s} sims={sims} customCoefs={customCoefs} onSim={onSim} onCoef={onCoef} />
+        <SubjectRow
+          key={s.key}
+          subject={s}
+          sims={sims}
+          marks={marks}
+          customCoefs={customCoefs}
+          custom={details[s.key] ?? []}
+          onSim={onSim}
+          onCoef={onCoef}
+          onCustom={(items) => onDetail(s.key, items)}
+        />
       ))}
     </section>
   );
@@ -1283,26 +1329,61 @@ function assessmentRows(items: ResultsAssessment[], depth = 0): { assessment: Re
   return items.flatMap((assessment) => [{ assessment, depth }, ...assessmentRows(assessment.children ?? [], depth + 1)]);
 }
 
+const isCustomAssessment = (a: ResultsAssessment) => a.key.startsWith("custom:");
+const newCustomId = () => Math.random().toString(36).slice(2, 10);
+const customRow = (title: string, note = "", coef = "1"): CustomAssessment => ({ id: newCustomId(), title, note, max: "20", coef });
+
 function SubjectRow({
   subject,
   sims,
+  marks,
   customCoefs,
+  custom,
   onSim,
   onCoef,
+  onCustom,
 }: {
+  /** Subject with personal subdivisions already appended (keys `custom:…`). */
   subject: ResultsSubject;
   sims: Simulations;
+  /** Simulations + personal subdivision marks: what every average is computed from. */
+  marks: Simulations;
   customCoefs: CustomCoefficients;
+  custom: CustomAssessment[];
   onSim: (key: string, v: string) => void;
   onCoef: (key: string, v: string) => void;
+  onCustom: (items: CustomAssessment[]) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const { mark, official, simulated } = subjectMark(subject, sims, customCoefs);
+  const { mark, official, simulated } = subjectMark(subject, marks, customCoefs);
   const coefInfo = effectiveCoefficient(subject.coefficient, subject.key, customCoefs);
-  const hasDetail = subject.assessments.length > 0;
-  const hasAnyAssessmentGrade = subject.assessments.some((a) => a.grade !== null);
-  const computedFromParts = !official && hasAnyAssessmentGrade && sims[subject.key] === undefined;
+  const published = subject.assessments.filter((a) => !isCustomAssessment(a));
+  // An official subject mark is final: personal subdivisions are only offered while it is missing.
+  const canAddCustom = subject.official_grade === null;
+  const canDetail = published.length > 0 || canAddCustom;
+  const hasAnyPartMark =
+    published.some((a) => a.grade !== null) || custom.some((c) => parseMark(c.note) !== null);
+  const computedFromParts = !official && hasAnyPartMark && !sims[subject.key];
   const invalid = (v: string, max = 20) => v !== "" && (parseMark(v) === null || parseMark(v)! < 0 || parseMark(v)! > max);
+
+  const toggle = () => {
+    if (!open && canAddCustom && published.length === 0 && custom.length === 0) {
+      // Same starting point as the student's sheet: the mark already typed becomes the first part.
+      onCustom([customRow("Contrôle continu", sims[subject.key] ?? "", "0,5"), customRow("Examen", "", "0,5")]);
+      if (sims[subject.key]) onSim(subject.key, "");
+    }
+    setOpen((o) => !o);
+  };
+  const editCustom = (id: string, patch: Partial<CustomAssessment>) =>
+    onCustom(custom.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+
+  let coverageTotal = 0;
+  let coverageDone = 0;
+  for (const c of custom) {
+    const coef = parseMark(c.coef) ?? 0;
+    coverageTotal += coef;
+    if (parseMark(c.note) !== null) coverageDone += coef;
+  }
 
   return (
     <>
@@ -1330,7 +1411,7 @@ function SubjectRow({
         {official || computedFromParts ? (
           <span
             className={`ue__mark${official ? " ue__mark--official" : " ue__mark--computed"}`}
-            title={official ? "Note officielle Pamplemousse" : "Calculée à partir des épreuves"}
+            title={official ? "Note officielle Pamplemousse" : "Calculée à partir des évaluations (provisoire)"}
           >
             {official ? `${fmt(subject.official_grade)}${subject.official_grade_maximum ? ` / ${subject.official_grade_maximum}` : " · barème non publié"}` : fmt(mark)}
           </span>
@@ -1345,27 +1426,28 @@ function SubjectRow({
           />
         )}
         <span>
-          {hasDetail && (
-            <button type="button" className={`btn btn--small${open ? " btn--on" : ""}`} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          {canDetail && (
+            <button type="button" className={`btn btn--small${open ? " btn--on" : ""}`} aria-expanded={open} onClick={toggle}>
               {open ? "Détail ▾" : "Détailler"}
             </button>
           )}
         </span>
       </div>
-      {open && hasDetail && (
+      {open && canDetail && (
         <div className="ue__detail">
           <div className="ue__sub ue__row--head" aria-hidden="true">
             <span>Évaluation</span>
             <span>Note</span>
             <span>Sur</span>
             <span>Coef</span>
+            <span />
           </div>
-          {assessmentRows(subject.assessments).map(({ assessment: a, depth }) => {
+          {assessmentRows(published).map(({ assessment: a, depth }) => {
             const { mark: am } = assessmentMark(a, sims);
             const aCoef = effectiveCoefficient(a.coefficient ?? a.weight, a.key, customCoefs);
             return (
               <div key={a.key} className="ue__sub">
-                <span style={{ paddingInlineStart: depth * 14 }}>{a.title}</span>
+                <span style={{ paddingInlineStart: depth * 14 }} title="Publiée sur Pamplemousse">{a.title}</span>
                 {a.grade !== null ? (
                   <span className="ue__mark ue__mark--official">{fmt(a.grade)}</span>
                 ) : a.maximum === null ? <span className="muted">Barème non publié</span> : (
@@ -1391,9 +1473,72 @@ function SubjectRow({
                     onChange={(e) => onCoef(a.key, e.target.value)}
                   />
                 )}
+                <span />
               </div>
             );
           })}
+          {canAddCustom &&
+            custom.map((c) => {
+              const max = parseMark(c.max);
+              return (
+                <div key={c.id} className="ue__sub">
+                  <input
+                    className="input"
+                    value={c.title}
+                    aria-label="Nom de l'évaluation"
+                    onChange={(e) => editCustom(c.id, { title: e.target.value })}
+                  />
+                  <input
+                    className={`input ue__input ue__input--sim${invalid(c.note, max ?? 20) ? " ue__input--bad" : ""}`}
+                    inputMode="decimal"
+                    placeholder="–"
+                    aria-label={`Note pour ${c.title}`}
+                    value={c.note}
+                    onChange={(e) => editCustom(c.id, { note: e.target.value })}
+                  />
+                  <input
+                    className={`input ue__input${max === null || max <= 0 ? " ue__input--bad" : ""}`}
+                    inputMode="decimal"
+                    aria-label={`Note maximale pour ${c.title}`}
+                    value={c.max}
+                    onChange={(e) => editCustom(c.id, { max: e.target.value })}
+                  />
+                  <input
+                    className="input ue__input"
+                    inputMode="decimal"
+                    aria-label={`Coefficient pour ${c.title}`}
+                    value={c.coef}
+                    onChange={(e) => editCustom(c.id, { coef: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn--small ue__del"
+                    aria-label={`Supprimer ${c.title}`}
+                    title="Supprimer l'évaluation"
+                    onClick={() => onCustom(custom.filter((x) => x.id !== c.id))}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          {canAddCustom && (
+            <div className="ue__detail-foot">
+              <button type="button" className="btn btn--small" onClick={() => onCustom([...custom, customRow("Nouvelle note")])}>
+                <Icon name="plus" size={14} /> Ajouter une note
+              </button>
+              {custom.length > 0 && (
+                <span className="xsmall muted">
+                  {coverageTotal === 0
+                    ? "Ajoutez des coefficients pour calculer la note."
+                    : coverageDone < coverageTotal
+                      ? `Note provisoire, calculée sur ${fmtCoef(Math.round((coverageDone / coverageTotal) * 100))} % des coefficients.`
+                      : "Toutes les notes sont saisies."}{" "}
+                  Vos saisies restent dans ce navigateur et ne remplacent jamais une note officielle.
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </>

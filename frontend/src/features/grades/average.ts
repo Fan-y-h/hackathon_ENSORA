@@ -201,6 +201,60 @@ export function requiredForTarget(avg: Average, target: number): TargetRequireme
   return { status: "feasible", requiredMark: Math.max(0, needed), maxReachable };
 }
 
+/**
+ * Personal subdivisions of a subject ("Détailler"): QCM, contrôle, examen… typed by the student
+ * when Pamplemousse publishes no detail. They are local, always provisional, and never replace an
+ * official Pamplemousse mark (subjectMark keeps the official grade first).
+ */
+export interface CustomAssessment {
+  id: string;
+  title: string;
+  note: string;
+  max: string;
+  coef: string;
+}
+export type CustomDetails = Record<string, CustomAssessment[]>;
+
+export const customAssessmentKey = (subjectKey: string, id: string) => `custom:${subjectKey}:${id}`;
+
+/** Appends each subject's personal subdivisions as assessments (missing coefficient = not counted). */
+export function withCustomDetails(sem: ResultsSemester, details: CustomDetails): ResultsSemester {
+  return {
+    ...sem,
+    units: sem.units.map((u) => ({
+      ...u,
+      subjects: u.subjects.map((s) => {
+        const extra = details[s.key];
+        if (!extra?.length) return s;
+        return {
+          ...s,
+          assessments: [
+            ...s.assessments,
+            ...extra.map((c) => ({
+              key: customAssessmentKey(s.key, c.id),
+              title: c.title,
+              coefficient: parseMark(c.coef) ?? 0,
+              weight: null,
+              grade: null,
+              maximum: parseMark(c.max),
+              minimum: 0,
+            })),
+          ],
+        };
+      }),
+    })),
+  };
+}
+
+/** Personal subdivision marks, keyed like simulations so they are flagged as provisional. */
+export function customDetailMarks(details: CustomDetails): Simulations {
+  const marks: Simulations = {};
+  for (const [subjectKey, items] of Object.entries(details)) {
+    for (const c of items) if (c.note.trim() !== "") marks[customAssessmentKey(subjectKey, c.id)] = c.note;
+  }
+  return marks;
+}
+
 export const fmt = (n: number | null | undefined, digits = 2) =>
   n === null || n === undefined ? "–" : n.toFixed(digits).replace(".", ",");
 

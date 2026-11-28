@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { ResultsSemester, ResultsSubject } from "../src/api/sources";
-import { semesterAverage, subjectMark, unitAverage } from "../src/features/grades/average";
+import {
+  customDetailMarks,
+  semesterAverage,
+  subjectMark,
+  unitAverage,
+  withCustomDetails,
+  type CustomDetails,
+} from "../src/features/grades/average";
 
 const subject = (over: Partial<ResultsSubject>): ResultsSubject => ({
   key: "s",
@@ -93,5 +100,50 @@ describe("results averages", () => {
   it("weights UE averages using official coefficients and coverage", () => {
     const avg = semesterAverage(sem, {});
     expect(avg.value).toBeCloseTo((12.04 * 4 + 15.6 * 2.5) / 6.5, 2);
+  });
+});
+
+describe("personal subdivisions (Détailler)", () => {
+  // Régression is not on the Pamplemousse bulletin yet: the student types QCM 3,2/5 and Contrôle 11,28/20.
+  const bare: ResultsSemester = {
+    key: "s1",
+    title: "S1",
+    official_average: null,
+    units: [
+      {
+        key: "ue1",
+        coefficient: 5,
+        title: "UE2-01",
+        official_average: null,
+        subjects: [subject({ key: "reg", coefficient: 4 }), subject({ key: "dv", coefficient: 1, official_grade: 16, official_grade_maximum: 20 })],
+      },
+    ],
+  };
+  const details: CustomDetails = {
+    reg: [
+      { id: "a", title: "QCM (moyenne)", note: "3,2", max: "5", coef: "0,25" },
+      { id: "b", title: "Contrôle intermédiaire", note: "11,28", max: "20", coef: "0,25" },
+      { id: "c", title: "Examen", note: "", max: "20", coef: "0,5" },
+    ],
+    dv: [{ id: "x", title: "Ignorée", note: "2", max: "20", coef: "1" }],
+  };
+  const tree = withCustomDetails(bare, details);
+  const marks = customDetailMarks(details);
+
+  it("computes a provisional subject mark from the typed parts, like the student's sheet", () => {
+    const reg = subjectMark(tree.units[0].subjects[0], marks);
+    expect(reg.mark).toBeCloseTo(12.04, 2);
+    expect(reg.simulated).toBe(true);
+    expect(reg.official).toBe(false);
+  });
+
+  it("never lets personal parts replace an official mark", () => {
+    expect(subjectMark(tree.units[0].subjects[1], marks).mark).toBe(16);
+  });
+
+  it("feeds the UE average and ignores parts without a coefficient", () => {
+    expect(unitAverage(tree.units[0], marks).value).toBeCloseTo((12.04 * 4 + 16) / 5, 2);
+    const noCoef = withCustomDetails(bare, { reg: [{ id: "z", title: "Sans coef", note: "18", max: "20", coef: "" }] });
+    expect(subjectMark(noCoef.units[0].subjects[0], customDetailMarks({ reg: [{ id: "z", title: "", note: "18", max: "20", coef: "" }] })).mark).toBeNull();
   });
 });

@@ -2083,7 +2083,9 @@ def parse_pamplemousse_notes_html(
                         and (
                             (current_subject_indent is not None and indent_px > current_subject_indent)
                             or has_dash_prefix
-                            or (not is_bold and current_subject_indent is not None and indent_px >= current_subject_indent and re.match(r"^(?:tp|td|ds|dm|cm|exam|partiel|projet|oral|contrôle|controle|test|qcm|final|midterm|devoir|soutenance)\b", low_label))
+                            # No keyword guess at the subject's own indentation: Pamplemousse lists
+                            # subjects such as "PROJET INFORMATIQUE" flush with their siblings and
+                            # marks assessments with a leading dash ("- EXAMEN").
                         )
                     )
                 )
