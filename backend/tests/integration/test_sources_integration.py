@@ -156,3 +156,27 @@ def test_without_sources_the_planner_still_works(tmp_path):
         bridge = test_client.post("/api/v1/agenda/import-from-sources")
         assert bridge.status_code == 503
         assert bridge.json()["error"]["code"] == "sources_unavailable"
+
+
+def test_finished_sync_reaches_the_agenda_without_a_click(client, p1_settings):
+    """A finished sync run (manual or scheduled) is applied to the agenda automatically."""
+    import time
+
+    headers = _auth(p1_settings)
+    _consent(client, headers, "academic_import")
+    assert client.post("/api/v1/sources/academic/import", json=[EXAM], headers=headers).status_code == 201
+    importer = client.app.state.agenda_importer
+    assert importer.run_once() is None  # no finished sync run yet: nothing applied
+
+    job = client.post("/api/v1/sources/sync", json={}, headers=headers).json()["id"]
+    for _ in range(50):
+        if client.get(f"/api/v1/sources/jobs/{job}", headers=headers).json()["status"] not in ("queued", "running"):
+            break
+        time.sleep(0.1)
+    results = importer.run_once()
+    assert results and results[0].result.created == 1
+    assert importer.run_once() is None  # once per finished run
+    titles = [e["title"] for e in client.get(
+        "/api/v1/events", params={"start": "2026-12-01T00:00:00Z", "end": "2026-12-31T00:00:00Z"}
+    ).json()["items"]]
+    assert "Partiel Économétrie" in titles

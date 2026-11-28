@@ -145,10 +145,84 @@ export function useConsent() {
   });
 }
 
+export interface ResultsAssessment {
+  key: string;
+  title: string;
+  coefficient: number | null;
+  weight: number | null;
+  grade: number | null;
+  maximum: number;
+}
+
+export interface ResultsSubject {
+  key: string;
+  code: string | null;
+  title: string;
+  coefficient: number | null;
+  ects: number | null;
+  official_grade: number | null;
+  assessments: ResultsAssessment[];
+}
+
+export interface ResultsUnit {
+  key: string;
+  title: string;
+  official_average: number | null;
+  subjects: ResultsSubject[];
+}
+
+export interface ResultsSemester {
+  key: string;
+  title: string;
+  official_average: number | null;
+  units: ResultsUnit[];
+}
+
+export interface Results {
+  source: string;
+  academic_year: string | null;
+  general_average: number | null;
+  semesters: ResultsSemester[];
+}
+
+/** UE / subject / coefficient / mark tree synced from Pamplemousse. */
+export const useResults = () =>
+  useQuery({ queryKey: ["results"], queryFn: () => api.get<Results>("/results"), retry: false });
+
+/** Subject catalog synced from Pamplemousse: course code -> official name (empty if unavailable). */
+export const useSourceSubjects = () =>
+  useQuery({
+    queryKey: ["sources", "subjects"],
+    queryFn: async () => {
+      try {
+        const page = await api.get<Page<{ payload: { code?: string | null; title?: string | null } }>>(`${S}/subjects`, { limit: 200 });
+        const names: Record<string, string> = {};
+        for (const item of page.items) {
+          const { code, title } = item.payload;
+          if (code && title) names[code.toUpperCase()] = title;
+        }
+        return names;
+      } catch {
+        return {}; // sources not running: names fall back to agenda titles
+      }
+    },
+    staleTime: 5 * 60_000,
+  });
+
 export const useSourceDocuments = () =>
   useQuery({
     queryKey: sourceKeys.documents,
-    queryFn: () => api.get<Page<SourceDocument>>(`${S}/documents`, { limit: 200 }),
+    // Follow the cursor: a Moodle sync alone brings several hundred documents.
+    queryFn: async () => {
+      const items: SourceDocument[] = [];
+      let cursor: string | null = null;
+      do {
+        const page: Page<SourceDocument> = await api.get<Page<SourceDocument>>(`${S}/documents`, { limit: 200, cursor });
+        items.push(...page.items);
+        cursor = page.next_cursor;
+      } while (cursor && items.length < 5000);
+      return { items, next_cursor: null } as Page<SourceDocument>;
+    },
     retry: false,
   });
 

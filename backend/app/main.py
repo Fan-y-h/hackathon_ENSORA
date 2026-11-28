@@ -30,9 +30,11 @@ from app.core.errors import install_error_handlers
 from app.modules.account.router import router as account_router
 from app.modules.analytics.router import router as analytics_router
 from app.modules.grades.router import router as grades_router
+from app.modules.grades.source_results import router as source_results_router
 from app.modules.learning.router import router as learning_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.planner.router import router as planner_router
+from app.modules.planner.source_bridge import AgendaAutoImporter
 from app.modules.planner.source_bridge import router as source_bridge_router
 from app.modules.workspace.router import router as workspace_router
 
@@ -73,8 +75,9 @@ def create_app(
     sources_app = _build_sources_app(p1_settings, p1_components) if enable_sources else None
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(app_: FastAPI):
         runtime = None
+        importer = None
         if sources_app is not None:
             try:
                 from backend.app.core.runtime import Runtime
@@ -83,6 +86,10 @@ def create_app(
                 runtime = Runtime(p1_settings or P1Settings.load(), p1_components).__enter__()
                 sources_app.state.runtime = runtime
                 runtime.start_schedule()
+                # Every finished sync (manual or scheduled) reaches the agenda without a click.
+                importer = AgendaAutoImporter(runtime.engine, app_.state.db.session_factory, app_.state.clock)
+                importer.start()
+                app_.state.agenda_importer = importer
             except Exception:
                 # Planner & co. keep working; /api/v1/sources/* answers 503.
                 logger.exception("P1 source runtime failed to start")
@@ -90,6 +97,8 @@ def create_app(
         try:
             yield
         finally:
+            if importer is not None:
+                importer.stop()
             if runtime is not None:
                 runtime.__exit__(None, None, None)
 
@@ -131,6 +140,7 @@ def create_app(
     api.include_router(source_bridge_router)
     api.include_router(learning_router)
     api.include_router(grades_router)
+    api.include_router(source_results_router)
     api.include_router(analytics_router)
     api.include_router(workspace_router)
     api.include_router(notifications_router)

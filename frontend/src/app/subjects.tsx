@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 
 import { useEvents, usePlan, useProfile, useTasks } from "../api/queries";
+import { useSourceSubjects } from "../api/sources";
 import { deriveSubjectNames, resolveSubjectColor, subjectAcronym } from "../lib/subjects";
 import { addDays, dayKey, dayRange, DEFAULT_TZ, mondayOf } from "../lib/time";
 import { usePreferences } from "./preferences";
@@ -25,6 +26,7 @@ export function SubjectsProvider({ children }: { children: ReactNode }) {
   const tasks = useTasks();
   const plan = usePlan();
   const prefs = usePreferences();
+  const catalog = useSourceSubjects();
 
   const value = useMemo<SubjectsCtx>(() => {
     const items: { subject_id?: string | null; title: string }[] = [
@@ -35,7 +37,8 @@ export function SubjectsProvider({ children }: { children: ReactNode }) {
     const ids: string[] = [];
     for (const item of items) if (item.subject_id && !ids.includes(item.subject_id)) ids.push(item.subject_id);
     ids.sort();
-    const names = deriveSubjectNames(events.data?.items ?? []);
+    // Official names from the synced Pamplemousse catalog first, agenda titles as fallback.
+    const names = { ...deriveSubjectNames(events.data?.items ?? []), ...catalog.data };
     const ctx = { overrides: prefs.subjectColors, accessible: prefs.accessible, dark: prefs.resolvedDark };
     return {
       ids,
@@ -44,7 +47,7 @@ export function SubjectsProvider({ children }: { children: ReactNode }) {
       acronym: (id) => subjectAcronym(id),
       color: (id) => (id ? resolveSubjectColor(id, ids, ctx) : undefined),
     };
-  }, [events.data, tasks.data, plan.data, prefs.subjectColors, prefs.accessible, prefs.resolvedDark, tz]);
+  }, [events.data, tasks.data, plan.data, catalog.data, prefs.subjectColors, prefs.accessible, prefs.resolvedDark, tz]);
 
   return <SubjectsContext.Provider value={value}>{children}</SubjectsContext.Provider>;
 }

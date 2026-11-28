@@ -5,6 +5,7 @@ import {
   useConnectionAction,
   useConnections,
   useConsent,
+  useStartSync,
   type ConnectionStatus,
 } from "../../api/sources";
 import { Card, EmptyState, ErrorPanel, Loading } from "../../components/ui";
@@ -20,11 +21,25 @@ const STATUS: Record<ConnectionStatus, { label: string; tone: "good" | "warning"
   ERROR: { label: "Erreur", tone: "critical" },
 };
 
+/** Why a connection attempt did not succeed (reasons returned by the P1 auth adapters). */
+const REASON: Record<string, string> = {
+  adapter_error: "Le module de connexion a échoué : consultez le terminal de l'API.",
+  adapter_missing: "Cette source n'est pas disponible sur ce poste.",
+  consent_required: "Autorisez d'abord la lecture.",
+  configuration_missing: "Configuration manquante (identifiants OAuth Google ?).",
+  profile_busy: "Une autre connexion ENSAI est déjà en cours.",
+  credential_expired: "Session expirée : reconnectez-vous.",
+  cancelled_by_user: "Connexion annulée.",
+  service_verification_required: "Connexion faite, accès au service non vérifié : réessayez « Vérifier ».",
+  transient_failure: "Service momentanément injoignable, réessayez.",
+};
+
 /** Read-only connections to Moodle, Pamplemousse, Drive Ensora, Google Agenda and local files. */
 export function SourcesCard() {
   const connections = useConnections();
   const consent = useConsent();
   const action = useConnectionAction();
+  const startSync = useStartSync();
   const busyId = action.isPending ? action.variables?.id : undefined;
 
   return (
@@ -68,7 +83,16 @@ export function SourcesCard() {
                     disabled={!c.consent.read || busyId === c.id}
                     title={c.consent.read ? undefined : "Autorisez d'abord la lecture"}
                     onClick={() =>
-                      action.mutate({ id: c.id, action: connected ? "validate" : c.status === "REAUTH_REQUIRED" ? "reauthorize" : "authorize" })
+                      action.mutate(
+                        { id: c.id, action: connected ? "validate" : c.status === "REAUTH_REQUIRED" ? "reauthorize" : "authorize" },
+                        {
+                          // A newly connected source is synced right away; the server then copies
+                          // its timetable into the agenda automatically when the job finishes.
+                          onSuccess: (result) => {
+                            if (!connected && result.status === "CONNECTED") startSync.mutate(c.source);
+                          },
+                        },
+                      )
                     }
                   >
                     {busyId === c.id ? "…" : connected ? "Vérifier" : "Connecter"}
@@ -80,6 +104,12 @@ export function SourcesCard() {
             <div className="status status--critical small">{errorMessage(consent.error ?? action.error)}</div>
           )}
           {action.isPending && <p className="xsmall muted">Une fenêtre de connexion ENSAI peut s'ouvrir.</p>}
+          {startSync.isSuccess && (
+            <div className="status status--good small">Synchronisation lancée : l'agenda se met à jour dans une minute.</div>
+          )}
+          {action.data && action.data.status !== "CONNECTED" && (
+            <div className="status status--warning small">{REASON[action.data.reason ?? ""] ?? `Connexion impossible (${action.data.reason ?? action.data.status}).`}</div>
+          )}
         </div>
       )}
     </Card>

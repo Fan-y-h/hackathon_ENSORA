@@ -203,181 +203,6 @@
         "title": "AnalyticsOut",
         "type": "object"
       },
-      "AssessmentOut": {
-        "properties": {
-          "concept_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Concept Ids",
-            "type": "array"
-          },
-          "confirmation_required": {
-            "title": "Confirmation Required",
-            "type": "boolean"
-          },
-          "deadline_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Deadline At"
-          },
-          "difficulty": {
-            "anyOf": [
-              {
-                "enum": [
-                  "easy",
-                  "medium",
-                  "hard"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Difficulty"
-          },
-          "duration_min": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Duration Min"
-          },
-          "event_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Event Id"
-          },
-          "format": {
-            "anyOf": [
-              {
-                "enum": [
-                  "written",
-                  "oral",
-                  "practical",
-                  "project",
-                  "online",
-                  "mixed",
-                  "other"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Format"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "revision": {
-            "title": "Revision",
-            "type": "integer"
-          },
-          "scope_revision": {
-            "title": "Scope Revision",
-            "type": "integer"
-          },
-          "scope_status": {
-            "enum": [
-              "unconfirmed",
-              "confirmed"
-            ],
-            "title": "Scope Status",
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "active",
-              "cancelled"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "subject_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Subject Id"
-          },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          },
-          "type": {
-            "anyOf": [
-              {
-                "enum": [
-                  "class",
-                  "td",
-                  "tp",
-                  "exam",
-                  "presentation",
-                  "deadline",
-                  "personal",
-                  "other"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Type"
-          }
-        },
-        "required": [
-          "id",
-          "event_id",
-          "title",
-          "type",
-          "subject_id",
-          "deadline_at",
-          "format",
-          "duration_min",
-          "difficulty",
-          "scope_status",
-          "scope_revision",
-          "concept_ids",
-          "status",
-          "confirmation_required",
-          "revision"
-        ],
-        "title": "AssessmentOut",
-        "type": "object"
-      },
       "AssessmentPatch": {
         "additionalProperties": false,
         "properties": {
@@ -5004,7 +4829,7 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/AssessmentOut"
+              "$ref": "#/components/schemas/app__modules__planner__schemas__AssessmentOut"
             },
             "title": "Items",
             "type": "array"
@@ -7270,6 +7095,51 @@
         "title": "ResponsesPatch",
         "type": "object"
       },
+      "ResultsOut": {
+        "properties": {
+          "academic_year": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Academic Year"
+          },
+          "general_average": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "General Average"
+          },
+          "semesters": {
+            "items": {
+              "$ref": "#/components/schemas/SemesterOut"
+            },
+            "title": "Semesters",
+            "type": "array"
+          },
+          "source": {
+            "default": "pamplemousse",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "academic_year",
+          "general_average",
+          "semesters"
+        ],
+        "title": "ResultsOut",
+        "type": "object"
+      },
       "ReviewRequest": {
         "additionalProperties": false,
         "properties": {
@@ -7736,6 +7606,44 @@
           }
         },
         "title": "ScenarioPatch",
+        "type": "object"
+      },
+      "SemesterOut": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "official_average": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Average"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "units": {
+            "items": {
+              "$ref": "#/components/schemas/UnitOut"
+            },
+            "title": "Units",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "official_average",
+          "units"
+        ],
+        "title": "SemesterOut",
         "type": "object"
       },
       "SessionFinish": {
@@ -8483,6 +8391,80 @@
         "title": "StudyNeedOut",
         "type": "object"
       },
+      "SubjectOut": {
+        "properties": {
+          "assessments": {
+            "items": {
+              "$ref": "#/components/schemas/app__modules__grades__source_results__AssessmentOut"
+            },
+            "title": "Assessments",
+            "type": "array"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "coefficient": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coefficient"
+          },
+          "ects": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ects"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "official_grade": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Grade"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "code",
+          "title",
+          "coefficient",
+          "ects",
+          "official_grade",
+          "assessments"
+        ],
+        "title": "SubjectOut",
+        "type": "object"
+      },
       "SubtasksCreate": {
         "additionalProperties": false,
         "properties": {
@@ -9148,6 +9130,44 @@
         "title": "TrendsOut",
         "type": "object"
       },
+      "UnitOut": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "official_average": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Average"
+          },
+          "subjects": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectOut"
+            },
+            "title": "Subjects",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "official_average",
+          "subjects"
+        ],
+        "title": "UnitOut",
+        "type": "object"
+      },
       "UnscheduledOut": {
         "properties": {
           "need_id": {
@@ -9263,6 +9283,240 @@
           "notes"
         ],
         "title": "ValidationOut",
+        "type": "object"
+      },
+      "app__modules__grades__source_results__AssessmentOut": {
+        "properties": {
+          "coefficient": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coefficient"
+          },
+          "grade": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "maximum": {
+            "title": "Maximum",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "coefficient",
+          "weight",
+          "grade",
+          "maximum"
+        ],
+        "title": "AssessmentOut",
+        "type": "object"
+      },
+      "app__modules__planner__schemas__AssessmentOut": {
+        "properties": {
+          "concept_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Concept Ids",
+            "type": "array"
+          },
+          "confirmation_required": {
+            "title": "Confirmation Required",
+            "type": "boolean"
+          },
+          "deadline_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline At"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "enum": [
+                  "easy",
+                  "medium",
+                  "hard"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty"
+          },
+          "duration_min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Min"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "enum": [
+                  "written",
+                  "oral",
+                  "practical",
+                  "project",
+                  "online",
+                  "mixed",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "scope_revision": {
+            "title": "Scope Revision",
+            "type": "integer"
+          },
+          "scope_status": {
+            "enum": [
+              "unconfirmed",
+              "confirmed"
+            ],
+            "title": "Scope Status",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "class",
+                  "td",
+                  "tp",
+                  "exam",
+                  "presentation",
+                  "deadline",
+                  "personal",
+                  "other"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "id",
+          "event_id",
+          "title",
+          "type",
+          "subject_id",
+          "deadline_at",
+          "format",
+          "duration_min",
+          "difficulty",
+          "scope_status",
+          "scope_revision",
+          "concept_ids",
+          "status",
+          "confirmation_required",
+          "revision"
+        ],
+        "title": "AssessmentOut",
         "type": "object"
       },
       "app__modules__planner__schemas__IntervalOut": {
@@ -9741,7 +9995,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AssessmentOut"
+                  "$ref": "#/components/schemas/app__modules__planner__schemas__AssessmentOut"
                 }
               }
             },
@@ -13697,6 +13951,28 @@
         "summary": "Start Attempt",
         "tags": [
           "learning"
+        ]
+      }
+    },
+    "/api/v1/results": {
+      "get": {
+        "description": "UE / subject / coefficient / mark tree synced from Pamplemousse.",
+        "operationId": "results_from_sources_api_v1_results_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Results From Sources",
+        "tags": [
+          "grades"
         ]
       }
     },

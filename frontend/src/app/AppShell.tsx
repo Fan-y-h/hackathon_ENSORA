@@ -39,7 +39,7 @@ export const NAV: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/focus", label: "Focus Room" },
       { to: "/analytics", label: "Learning Analytics" },
-      { to: "/grades", label: "Résultats & objectifs" },
+      { to: "/grades", label: "Mes résultats" },
     ],
   },
 ];

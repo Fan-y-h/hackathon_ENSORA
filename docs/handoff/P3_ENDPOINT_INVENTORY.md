@@ -80,7 +80,7 @@ path parameters normalized to `{}`. Full schemas: [`p3_openapi.json`](p3_openapi
 | `DELETE` | `/tasks/{}` |
 | `PATCH` | `/tasks/{}` |
 
-## Implemented but NOT in the contract — needs C1 review (37)
+## Implemented but NOT in the contract — needs C1 review (38)
 | Method | Path |
 |---|---|
 | `POST` | `/agenda/import-from-sources` |
@@ -119,6 +119,7 @@ path parameters normalized to `{}`. Full schemas: [`p3_openapi.json`](p3_openapi
 | `GET` | `/planner/status` |
 | `POST` | `/quizzes/mock` |
 | `GET` | `/quizzes/{}` |
+| `GET` | `/results` |
 | `POST` | `/tasks/{}/subtasks` |
 
 ## In the Person-3 part of the contract but not implemented (3)

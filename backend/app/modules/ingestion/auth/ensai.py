@@ -184,7 +184,10 @@ class PlaywrightEnvironmentStatus:
 
 def detect_playwright_environment() -> PlaywrightEnvironmentStatus:
     """Detect whether Playwright and a Chromium binary are available."""
-    install_cmd = ".venv/bin/python -m playwright install chromium"
+    install_cmd = (
+        r"backend\.venv\Scripts\python.exe -m playwright install chromium" if os.name == "nt"
+        else ".venv/bin/python -m playwright install chromium"
+    )
     spec = importlib.util.find_spec("playwright")
     if spec is None:
         return PlaywrightEnvironmentStatus(
@@ -200,7 +203,12 @@ def detect_playwright_environment() -> PlaywrightEnvironmentStatus:
     env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     if env_path and env_path != "0":
         cache_candidates.append(Path(env_path).expanduser())
+    # Playwright's default browser cache per OS (Linux, Windows, macOS).
     cache_candidates.append(Path.home() / ".cache" / "ms-playwright")
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        cache_candidates.append(Path(local_app_data) / "ms-playwright")
+    cache_candidates.append(Path.home() / "Library" / "Caches" / "ms-playwright")
 
     chromium_exec: str | None = None
     for base in cache_candidates:
@@ -209,8 +217,12 @@ def detect_playwright_environment() -> PlaywrightEnvironmentStatus:
         for pattern in (
             "chromium-*/chrome-linux/chrome",
             "chromium-*/chrome-linux64/chrome",
+            "chromium-*/chrome-win64/chrome.exe",
+            "chromium-*/chrome-win/chrome.exe",
+            "chromium-*/chrome-mac*/*.app",
             "chromium_headless_shell-*/chrome-linux/headless_shell",
             "chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell",
+            "chromium_headless_shell-*/chrome-headless-shell-win64/chrome-headless-shell.exe",
         ):
             matches = sorted(base.glob(pattern))
             if matches:
