@@ -35,6 +35,29 @@ export function effectiveCoefficient(
   return { value: null, source: "unknown" };
 }
 
+/**
+ * UE coefficient: the student's own value wins (always editable), then a published Pamplemousse
+ * value, otherwise the sum of the UE's subject coefficients (ENSAI rule). The sum stays unknown
+ * while one subject coefficient is unknown, so nothing is invented.
+ */
+export function unitCoefficient(
+  u: ResultsUnit,
+  customCoefs: CustomCoefficients = {},
+): { value: number | null; source: "custom" | "official" | "sum" | "unknown" } {
+  const typed = parseMark(customCoefs[u.key]);
+  if (typed !== null && typed >= 0) return { value: typed, source: "custom" };
+  if (u.coefficient !== null && u.coefficient !== undefined && Number.isFinite(u.coefficient) && u.coefficient >= 0) {
+    return { value: u.coefficient, source: "official" };
+  }
+  let sum = 0;
+  for (const s of u.subjects) {
+    const c = effectiveCoefficient(s.coefficient, s.key, customCoefs).value;
+    if (c === null) return { value: null, source: "unknown" };
+    sum += c;
+  }
+  return u.subjects.length ? { value: sum, source: "sum" } : { value: null, source: "unknown" };
+}
+
 export function assessmentMark(a: ResultsAssessment, sims: Simulations): { mark: number | null; simulated: boolean } {
   if (a.grade !== null) return { mark: a.grade, simulated: false };
   const sim = parseMark(sims[a.key]);
@@ -147,7 +170,7 @@ export function semesterAverage(
   let unknownCoefCount = 0;
   for (const u of sem.units) {
     if (u.unassigned) continue;
-    const coefficient = effectiveCoefficient(u.coefficient, u.key, customCoefs);
+    const coefficient = unitCoefficient(u, customCoefs);
     if (coefficient.value === null) {
       unknownCoefCount += 1;
       continue;

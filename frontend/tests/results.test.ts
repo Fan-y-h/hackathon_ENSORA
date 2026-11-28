@@ -6,6 +6,7 @@ import {
   semesterAverage,
   subjectMark,
   unitAverage,
+  unitCoefficient,
   withCustomDetails,
   type CustomDetails,
 } from "../src/features/grades/average";
@@ -145,5 +146,35 @@ describe("personal subdivisions (Détailler)", () => {
     expect(unitAverage(tree.units[0], marks).value).toBeCloseTo((12.04 * 4 + 16) / 5, 2);
     const noCoef = withCustomDetails(bare, { reg: [{ id: "z", title: "Sans coef", note: "18", max: "20", coef: "" }] });
     expect(subjectMark(noCoef.units[0].subjects[0], customDetailMarks({ reg: [{ id: "z", title: "", note: "18", max: "20", coef: "" }] })).mark).toBeNull();
+  });
+});
+
+describe("UE coefficient", () => {
+  const ue = {
+    key: "ue3",
+    title: "UE2-03",
+    coefficient: null,
+    official_average: null,
+    subjects: [
+      subject({ key: "ci", coefficient: 2, official_grade: 12.13, official_grade_maximum: 20 }),
+      subject({ key: "pi", coefficient: 4, official_grade: 15, official_grade_maximum: 20 }),
+    ],
+  };
+  const s1: ResultsSemester = { key: "s", title: "S1", official_average: null, units: [ue] };
+
+  it("defaults to the sum of its subject coefficients", () => {
+    expect(unitCoefficient(ue)).toEqual({ value: 6, source: "sum" });
+    expect(semesterAverage(s1, {}).totalCoef).toBe(6);
+  });
+
+  it("stays editable: a typed value wins, an empty field restores the sum", () => {
+    expect(unitCoefficient(ue, { ue3: "3" })).toEqual({ value: 3, source: "custom" });
+    expect(unitCoefficient(ue, { ue3: "" }).source).toBe("sum");
+  });
+
+  it("is unknown while a subject coefficient is unknown", () => {
+    const partial = { ...ue, subjects: [...ue.subjects, subject({ key: "x", coefficient: null })] };
+    expect(unitCoefficient(partial).value).toBeNull();
+    expect(unitCoefficient(partial, { x: "1" }).value).toBe(7);
   });
 });

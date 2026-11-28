@@ -56,6 +56,7 @@ import {
   semesterAverage,
   subjectMark,
   unitAverage,
+  unitCoefficient,
   withCustomDetails,
   type CustomAssessment,
   type CustomCoefficients,
@@ -1283,18 +1284,35 @@ function UnitCard({
   const avg = unitAverage(unit, marks, customCoefs);
   const showOfficial = unit.official_average !== null && !avg.simulated;
   const value = showOfficial ? unit.official_average : avg.value;
+  const ueCoef = unitCoefficient(unit, customCoefs);
+  const ueCoefHint =
+    ueCoef.source === "custom"
+      ? "Coefficient personnalisé — videz le champ pour revenir à la valeur par défaut"
+      : ueCoef.source === "official"
+        ? "Coefficient publié par Pamplemousse — modifiable"
+        : ueCoef.source === "sum"
+          ? "Somme des coefficients des matières — modifiable"
+          : "Un coefficient de matière manque — saisissez celui de l'UE";
 
   return (
     <section className="ue">
       <div className="ue__head">
         <h2>{unit.title}</h2>
         <span className="small muted">
-          {unit.unassigned ? "Hors moyenne du semestre" : `Coefficient UE ${fmtCoef(effectiveCoefficient(unit.coefficient, unit.key, customCoefs).value)}`}
+          {unit.unassigned ? "Hors moyenne du semestre" : ueCoef.source === "sum" ? "Coef. UE = somme des matières" : "Coef. UE"}
           {avg.value !== null && avg.markedCoef < avg.totalCoef && ` · ${fmtCoef(avg.markedCoef)} noté`}
           {avg.unknownCoefCount > 0 && ` · ${avg.unknownCoefCount} coef inconnu(s)`}
         </span>
-        {!unit.unassigned && unit.coefficient == null && (
-          <input className="input ue__input" inputMode="decimal" placeholder="Coef. UE" aria-label={`Coefficient personnalisé pour ${unit.title}`} value={customCoefs[unit.key] ?? ""} onChange={(event) => onCoef(unit.key, event.target.value)} />
+        {!unit.unassigned && (
+          <input
+            className={`input ue__input${ueCoef.source === "custom" ? " ue__input--sim" : ""}`}
+            inputMode="decimal"
+            placeholder={ueCoef.value === null ? "?" : fmtCoef(ueCoef.value)}
+            title={ueCoefHint}
+            aria-label={`Coefficient de l'UE ${unit.title}`}
+            value={customCoefs[unit.key] ?? ""}
+            onChange={(event) => onCoef(unit.key, event.target.value)}
+          />
         )}
         <span className="ue__avg">
           {fmt(value)}
