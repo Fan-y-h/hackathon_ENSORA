@@ -577,6 +577,49 @@ class AgendaService:
         self._emit(user_id, "TaskChanged", t.id, t.revision, action="created", agenda_revision=rev)
         return self._task_out(t)
 
+    def sync_moodle_task(
+        self, user_id: str, external_id: str, item: EventImportItem | None, *, cancelled: bool,
+    ) -> bool:
+        """Mirror an assignment while keeping task-specific preferences and progress."""
+        external_key = f"moodle:{hashlib.sha256(external_id.encode()).hexdigest()}"
+        task = self.db.scalar(select(Task).where(
+            Task.user_id == user_id, Task.origin == "imported", Task.external_key == external_key,
+        ))
+        if cancelled:
+            if task is None or task.status in _CLOSED_TASK:
+                return False
+            task.status = "cancelled"
+        elif item is None or task is not None and task.status == "cancelled":
+            return False
+        elif task is None:
+            task = Task(
+                user_id=user_id, origin="imported", external_key=external_key,
+                title=item.title, subject_id=item.subject_id, deadline_at=item.start_at,
+            )
+            self.db.add(task)
+            self.db.flush()
+            self._emit(user_id, "TaskChanged", task.id, task.revision, action="source_imported")
+            return True
+        else:
+            previous = self.db.scalar(select(Event).where(
+                Event.user_id == user_id, Event.source == "moodle", Event.external_id == external_id,
+            ))
+            if previous is None:
+                return False
+            current_fields = (task.title, task.subject_id, task.deadline_at)
+            new_fields = (
+                item.title if task.title == previous.title else task.title,
+                item.subject_id if task.subject_id == previous.subject_id else task.subject_id,
+                item.start_at if task.deadline_at == previous.start_at else task.deadline_at,
+            )
+            if current_fields == new_fields:
+                return False
+            task.title, task.subject_id, task.deadline_at = new_fields
+        task.revision += 1
+        self.db.flush()
+        self._emit(user_id, "TaskChanged", task.id, task.revision, action="source_changed")
+        return True
+
     def patch_task(self, user_id: str, task_id: str, body: TaskPatch) -> TaskOut:
         t = self._get_owned(Task, task_id, user_id)
         check_revision(t.revision, body.expected_revision)
@@ -605,6 +648,13 @@ class AgendaService:
     def delete_task(self, user_id: str, task_id: str, expected_revision: int | None) -> None:
         t = self._get_owned(Task, task_id, user_id)
         check_revision(t.revision, expected_revision)
+        if t.origin == "imported" and t.external_key and t.external_key.startswith("moodle:"):
+            if t.status != "cancelled":
+                t.status = "cancelled"
+                t.revision += 1
+                rev = self.bump_revision(user_id)
+                self._emit(user_id, "TaskChanged", t.id, t.revision, action="cancelled", agenda_revision=rev)
+            return
         children = self.db.scalar(
             select(func.count()).select_from(Task).where(Task.parent_task_id == t.id)
         )

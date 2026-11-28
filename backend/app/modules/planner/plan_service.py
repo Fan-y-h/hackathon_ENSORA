@@ -488,7 +488,11 @@ class PlannerService:
                 ok = alt is not None and not scheduling.check_invariants(
                     alt, needs, snap.free, kept, limits, start_at, horizon=horizon, prior_week_min=prior_week_min
                 )
-                if ok and cpsat.weighted_coverage(alt) >= cpsat.weighted_coverage(result):  # type: ignore[arg-type]
+                # Compare identically weighted work. The solver uses a slot grid to estimate
+                # available minutes, so its internal urgency weights differ from the greedy baseline.
+                if ok and alt is not None and (
+                    cpsat.weighted_coverage(alt, priorities=result.priorities) >= cpsat.weighted_coverage(result)
+                ):
                     warnings.append(f"SOLVER:{status}")
                     solver_status = status if status in ("OPTIMAL", "FEASIBLE") else "FEASIBLE"
                     if status != "OPTIMAL":

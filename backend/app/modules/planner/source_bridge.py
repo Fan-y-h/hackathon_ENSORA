@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.common import Clock, get_clock
@@ -122,7 +122,7 @@ def to_import_item(external_id: str, payload: dict[str, Any], source: str | None
         if due is None:
             return None
         title = str(payload.get("title") or "").strip()[:200] or "Devoir Moodle"
-        subject_id = payload.get("subject_id") or course_code(title, payload.get("course_title"))
+        subject_id = payload.get("subject_id") or course_code(title, payload.get("course_title")) or payload.get("parent_key")
         return EventImportItem(
             external_id=external_id[:255],
             type="deadline",
@@ -148,6 +148,12 @@ def to_import_item(external_id: str, payload: dict[str, Any], source: str | None
     all_day = _parse_date(payload.get("all_day_start")) if start is None else None
     if start is None and all_day is None:
         return None
+    all_day_end = _parse_date(payload.get("all_day_end")) if all_day is not None else None
+    if all_day is not None and all_day_end is not None and (all_day_end - all_day).days > 1:
+        # P3's all-day date carries one civil day. Preserve longer spans as local midnight intervals.
+        start = _parse_dt(all_day.isoformat(), tz_name)
+        end = _parse_dt(all_day_end.isoformat(), tz_name)
+        all_day = None
     if start is not None:
         if end is None:
             if event_type == "deadline":
@@ -184,7 +190,7 @@ def to_import_item(external_id: str, payload: dict[str, Any], source: str | None
 
 def read_source_events(engine) -> dict[str, list[tuple[str, dict[str, Any]]]]:
     """All P1 event and assignment records grouped by source, read from the P1 database."""
-    from backend.app.core.database import connections, records
+    from backend.app.core.database import LOCAL_USER, connections, latest_consent_granted, records
 
     grouped: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     cols = [connections.c.source, records.c.external_id, records.c.kind, records.c.payload]
@@ -193,13 +199,49 @@ def read_source_events(engine) -> dict[str, list[tuple[str, dict[str, Any]]]]:
     query = (
         select(*cols)
         .join(connections, records.c.connection_id == connections.c.id)
-        .where(records.c.kind.in_(("event", "assignment")))
+        .where(
+            or_(
+                records.c.kind.in_(("event", "assignment")),
+                and_(
+                    connections.c.source == "moodle",
+                    records.c.kind == "assessment",
+                    records.c.payload["assessment_kind"].as_string() == "assignment",
+                ),
+            ),
+            connections.c.user_id == LOCAL_USER,
+            latest_consent_granted(connections.c.id, "read").is_(True),
+        )
         .order_by(connections.c.source, records.c.external_id)
     )
     with engine.connect() as db:
+        subject_rows = db.execute(
+            select(connections.c.source, records.c.external_id, records.c.payload)
+            .join(connections, records.c.connection_id == connections.c.id)
+            .where(
+                records.c.kind == "subject", connections.c.user_id == LOCAL_USER,
+                connections.c.source.in_(("pamplemousse", "moodle")),
+                latest_consent_granted(connections.c.id, "read").is_(True),
+            )
+        )
+        official_codes: dict[str, str] = {}
+        moodle_subjects: dict[str, dict[str, Any]] = {}
+        for source, external_id, subject in subject_rows:
+            if source == "moodle":
+                moodle_subjects[external_id] = subject or {}
+            else:
+                code = course_code((subject or {}).get("code"), (subject or {}).get("source_code"))
+                if code:
+                    official_codes[external_id] = code
         for row in db.execute(query):
             source, external_id, kind, payload = row[0], row[1], row[2], dict(row[3] or {})
-            payload.setdefault("kind", kind)
+            if source == "moodle" and kind == "assessment":
+                payload["kind"] = "assignment"
+                subject = moodle_subjects.get(payload.get("parent_key"), {})
+                candidates = {official_codes[alias] for alias in subject.get("aliases", []) or [] if alias in official_codes}
+                if len(candidates) == 1:
+                    payload["subject_id"] = next(iter(candidates))
+            else:
+                payload.setdefault("kind", kind)
             if len(row) > 4 and row[4] and not payload.get("title"):
                 payload["title"] = row[4]
             grouped.setdefault(str(source), []).append((external_id, payload))
@@ -214,12 +256,18 @@ def apply_source_events(db: Session, clock: Clock, user_id: str, engine) -> list
         label = SOURCE_LABEL.get(source, "import")
         items: list[EventImportItem] = []
         cancelled_ids: set[str] = set()
+        task_changed = False
         for external_id, payload in rows:
             if payload.get("status") == "cancelled":
                 cancelled_ids.add(external_id[:255])
             item = to_import_item(external_id, payload, source)
             if item is not None:
                 items.append(item)
+            if source == "moodle" and payload.get("kind") == "assignment":
+                task_changed |= agenda.sync_moodle_task(
+                    user_id, external_id[:255], item,
+                    cancelled=payload.get("status") == "cancelled",
+                )
         result = agenda.import_events(user_id, label, items) if items else ImportResult(
             created=0, updated=0, unchanged=0, agenda_revision=agenda.agenda_revision(user_id)
         )
@@ -260,6 +308,8 @@ def apply_source_events(db: Session, clock: Clock, user_id: str, engine) -> list
                     unchanged=result.unchanged,
                     agenda_revision=rev,
                 )
+        if task_changed:
+            result.agenda_revision = agenda.bump_revision(user_id)
         results.append(
             SourceImportResult(source=source, agenda_source=label, read=len(rows), skipped=len(rows) - len(items), result=result)
         )

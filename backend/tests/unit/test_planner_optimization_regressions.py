@@ -130,6 +130,20 @@ def test_source_bridge_preserves_busy_false_and_imports_moodle_assignments():
     assert pt is not None and pt.end_at == pt.start_at + timedelta(minutes=1)
 
 
+def test_multiday_calendar_events_block_the_full_local_span_through_dst():
+    item = to_import_item(
+        "travel",
+        {
+            "kind": "event", "title": "Travel", "event_type": "personal", "busy": True,
+            "all_day_start": "2026-10-24", "all_day_end": "2026-10-27", "original_timezone": "Europe/Paris",
+        },
+        "google_calendar",
+    )
+    assert item is not None and item.all_day_date is None and item.busy is True
+    assert item.start_at.isoformat() == "2026-10-23T22:00:00+00:00"
+    assert item.end_at.isoformat() == "2026-10-26T23:00:00+00:00"
+
+
 def test_break_min_enforced_and_checked_by_invariants():
     limits = Limits("Europe/Paris", daily_max_min=240, weekly_max_min=1200, min_session_min=30, max_session_min=60, break_min=15)
     free = [Interval(utc(1, 13, 0), utc(1, 17, 0))]
@@ -200,6 +214,26 @@ def test_cpsat_infeasible_and_unknown_fall_back_to_valid_greedy_never_claimed_op
             assert p["summary"]["scheduled_min"] == 60
             assert f"SOLVER:{fake_status};FALLBACK_GREEDY_BASELINE" in p["warnings"]
             assert any("greedy" in r.lower() for r in p["recommendations"])
+
+
+def test_equally_covered_work_keeps_cp_sat_when_internal_slot_priorities_differ(client: TestClient):
+    setup_profile(client, daily=120)
+    client.post(f"{API}/tasks", json={"title": "Devoir", "estimated_min": 60, "deadline_at": "2026-12-03T18:00:00+01:00"})
+
+    def equally_good_with_different_scores(*args, **kwargs):
+        result = schedule(*args, **kwargs)
+        result.priorities = {key: value / 2 for key, value in result.priorities.items()}
+        return result, "OPTIMAL"
+
+    with patch.object(cpsat, "available", return_value=True), patch.object(
+        cpsat, "schedule_cpsat", side_effect=equally_good_with_different_scores,
+    ):
+        response = client.post(f"{API}/planner/preview", json={"horizon_days": 7, "algorithm": "cpsat"})
+    assert response.status_code == 200
+    result = response.json()
+    assert result["summary"]["scheduled_min"] == 60
+    assert result["solver_status"] == "OPTIMAL"
+    assert result["algorithm_version"] == cpsat.ALGORITHM_VERSION
 
 
 def test_preview_does_not_mutate_persisted_plan_and_accept_is_idempotent(client: TestClient):

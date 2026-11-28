@@ -180,3 +180,41 @@ def test_finished_sync_reaches_the_agenda_without_a_click(client, p1_settings):
         "/api/v1/events", params={"start": "2026-12-01T00:00:00Z", "end": "2026-12-31T00:00:00Z"}
     ).json()["items"]]
     assert "Partiel Économétrie" in titles
+
+
+def test_moodle_assessment_reaches_agenda_and_tasks_on_resync(client):
+    from backend.app.contracts.sources import Assessment, Provenance, SourceKind, Subject
+
+    runtime = client.app.state.sources_app.state.runtime
+    moodle = SourceKind.MOODLE
+    runtime.consent.record(moodle, "read", True)
+    conn = runtime.connection_ids[moodle]
+    runtime.pipeline.ingest(conn, Subject(
+        title="Synthetic course", provenance=Provenance(source=moodle, external_id="moodle:course:12"),
+    ))
+
+    def ingest(deadline_at, revision):
+        runtime.pipeline.ingest(conn, Assessment(
+            title="Synthetic assignment", parent_key="moodle:course:12",
+            assessment_kind="assignment", deadline_at=deadline_at,
+            provenance=Provenance(source=moodle, external_id="moodle:assignment:34", remote_revision=revision),
+        ))
+
+    ingest("2026-12-09T14:00:00Z", "1")
+    first = client.post("/api/v1/agenda/import-from-sources")
+    assert first.status_code == 200
+    assert first.json()["sources"][0]["result"]["created"] == 1
+    (task,) = client.get("/api/v1/tasks").json()["items"]
+    assert task["origin"] == "imported"
+    assert task["deadline_at"].startswith("2026-12-09T14:00")
+    assert task["estimated_min"] is None
+    edit = client.patch(f"/api/v1/tasks/{task['id']}", json={"title": "My task", "remaining_min": 45})
+    assert edit.status_code == 200
+
+    ingest("2026-12-10T14:00:00Z", "2")
+    assert client.post("/api/v1/agenda/import-from-sources").status_code == 200
+    assert client.post("/api/v1/agenda/import-from-sources").json()["sources"][0]["result"]["unchanged"] == 1
+    (updated,) = client.get("/api/v1/tasks").json()["items"]
+    assert updated["id"] == task["id"] and updated["title"] == "My task"
+    assert updated["remaining_min"] == 45
+    assert updated["deadline_at"].startswith("2026-12-10T14:00")

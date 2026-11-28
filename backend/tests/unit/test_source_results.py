@@ -44,3 +44,25 @@ def test_missing_values_stay_unknown_not_zero():
     assert dataviz.coefficient is None  # no coefficient record: unknown, never 0
     assert dataviz.official_grade is None and dataviz.assessments == []
     assert build_results(RECORDS).semesters[0].units[0].official_average is None
+
+
+def test_results_only_use_the_selected_year_and_preserve_unknown_grade_scale():
+    older_year = "pamplemousse:year:2025_2026"
+    older_semester = "pamplemousse:sem:2025_2026:s1"
+    records = {
+        older_year: {"kind": "academic_year", "title": "2025-2026"},
+        older_semester: {"kind": "semester", "title": "Older semester", "parent_key": older_year},
+        **RECORDS,
+        "orphan": {"kind": "subject", "title": "Optional activity", "parent_key": S1},
+        EXAM + ":grade": {"kind": "grade", "value": "32", "grade_kind": "assessment", "parent_key": EXAM},
+    }
+    active = build_results(records)
+    assert active.academic_years == ["2026-2027", "2025-2026"]
+    assert [semester.title for semester in active.semesters] == ["S1"]
+    unit, unassigned = active.semesters[0].units
+    assert unassigned.unassigned and unassigned.subjects[0].key == "orphan"
+    exam = unit.subjects[1].assessments[0]
+    assert exam.grade == 32 and exam.maximum is None
+    assert unit.subjects[1].official_grade_maximum is None
+    assert [s.title for s in build_results(records, "2025-2026").semesters] == ["Older semester"]
+    assert not build_results(records, "2024-2025").semesters

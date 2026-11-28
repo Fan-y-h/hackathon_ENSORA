@@ -196,6 +196,18 @@ def test_pamplemousse_bridge_imports_coefficients_preserves_manual_edits_and_fee
     assert report.created_nodes >= 7 and report.created_records == 1
     assert len(report.unknown_coefficient_nodes) == 2  # UE and semester weights are unknown
 
+    # Official data is immutable through the manual API.
+    (official,) = client.get(f"{G}/records", params={"program_id": report.program_id}).json()
+    assert official["provenance"] == "pamplemousse"
+    for response in (
+        client.patch(f"{G}/records/{official['id']}", json={"value": "14"}),
+        client.delete(f"{G}/records/{official['id']}"),
+        client.patch(f"{G}/nodes/{official['node_id']}", json={"scale_max": "100"}),
+        client.post(f"{G}/records", json={"node_id": official["node_id"], "kind": "retake", "value": "14"}),
+    ):
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "official_grade_read_only"
+
     # Manually enter UE1 coefficient persistently.
     cur = client.get(f"{G}/programs/{report.program_id}/curriculum").json()
     ue_node = next(n for n in cur["nodes"] if n["kind"] == "unit")

@@ -364,5 +364,6 @@ def schedule_cpsat(
     return ScheduleResult(placed, unscheduled, prios, [], dict(sorted(load.items()))), status_name
 
 
-def weighted_coverage(result: ScheduleResult) -> float:
-    return sum(p.minutes * result.priorities.get(p.need_key, 0.0) for p in result.placed)
+def weighted_coverage(result: ScheduleResult, priorities: dict[str, float] | None = None) -> float:
+    weights = result.priorities if priorities is None else priorities
+    return sum(p.minutes * weights.get(p.need_key, 0.0) for p in result.placed)

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.common import Clock, check_revision
 from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.core.events import record_event
+from app.modules.account.models import Profile
 from app.modules.grades import domain, validation_rules
 from app.modules.grades.models import (
     AcademicNode,
@@ -301,7 +302,15 @@ class GradesService:
         errors = []
         for r in records:
             old = ld.by_id.get(r.node_id)
-            if old is None or old.key not in tree.nodes:
+            if old is None:
+                continue
+            if r.provenance == "pamplemousse":
+                spec = tree.nodes.get(old.key)
+                if spec is None or (
+                    spec.scale_min != Decimal(old.scale_min) or spec.scale_max != Decimal(old.scale_max)
+                ):
+                    raise Conflict("A published grade and its scale are read-only", code="official_grade_read_only")
+            if old.key not in tree.nodes:
                 continue
             if not tree.is_leaf(old.key):
                 errors.append({"key": old.key, "code": "graded_node_not_leaf", "message": "graded node gained children"})
@@ -380,6 +389,8 @@ class GradesService:
         if fields & {"scale_min", "scale_max"}:
             recs = list(self.db.scalars(select(GradeRecord).where(GradeRecord.node_id == node.id)))
             for r in recs:
+                if r.provenance == "pamplemousse":
+                    raise Conflict("A published grade's scale is read-only", code="official_grade_read_only")
                 msg = domain.check_mark(tree.nodes[node.key], Decimal(r.value))
                 if msg:
                     raise ValidationFailed(msg, code="mark_out_of_scale")
@@ -426,8 +437,16 @@ class GradesService:
             select(GradeRecord).where(GradeRecord.node_id == node.id, GradeRecord.kind == body.kind)
         )
         if exists is not None:
+            self._check_editable_grade(exists)
             raise Conflict("A record of this kind already exists; PATCH it instead", code="record_exists",
                            details={"record_id": exists.id})
+        if body.kind == "retake" and provenance != "pamplemousse":
+            official = self.db.scalar(select(GradeRecord).where(
+                GradeRecord.node_id == node.id, GradeRecord.kind == "actual",
+                GradeRecord.provenance == "pamplemousse",
+            ))
+            if official is not None:
+                raise Conflict("Use an estimate or simulation alongside a published grade", code="official_grade_read_only")
         r = GradeRecord(
             user_id=user_id, program_id=ld.program.id, node_id=node.id, kind=body.kind,
             value=str(effective_value), grade_status=body.grade_status, provenance=provenance,
@@ -444,8 +463,14 @@ class GradesService:
             raise NotFound("Record not found")
         return r
 
+    @staticmethod
+    def _check_editable_grade(record: GradeRecord) -> None:
+        if record.provenance == "pamplemousse":
+            raise Conflict("A published grade is read-only", code="official_grade_read_only")
+
     def patch_record(self, user_id: str, record_id: str, body: RecordPatch) -> RecordOut:
         r = self._owned_record(user_id, record_id)
+        self._check_editable_grade(r)
         check_revision(r.revision, body.expected_revision)
         new_status = body.grade_status if body.grade_status is not None else (getattr(r, "grade_status", "graded") or "graded")
         new_val = Decimal(0) if new_status in ("absent_unjustified", "dispensed") else (
@@ -461,6 +486,7 @@ class GradesService:
 
     def delete_record(self, user_id: str, record_id: str) -> None:
         r = self._owned_record(user_id, record_id)
+        self._check_editable_grade(r)
         p = self._program(user_id, r.program_id)
         self.db.delete(r)
         self._bump(p, "grade.deleted", r.id, node_id=r.node_id)
@@ -680,10 +706,14 @@ class SubjectSignal:
 
 
 def academic_signals_by_subject(db: Session, user_id: str) -> dict[str, SubjectSignal]:
-    """Highest academic score per linked subject across the user's programs."""
+    """Highest academic score per linked subject in the student's active academic year."""
     svc = GradesService(db)
     out: dict[str, SubjectSignal] = {}
-    for p in db.scalars(select(AcademicProgram).where(AcademicProgram.user_id == user_id)):
+    year = db.scalar(select(Profile.academic_year).where(Profile.user_id == user_id))
+    query = select(AcademicProgram).where(AcademicProgram.user_id == user_id)
+    if year is not None:
+        query = query.where(AcademicProgram.academic_year == year)
+    for p in db.scalars(query):
         try:
             ld = svc._load(user_id, p.id)
         except domain.TreeError:
@@ -704,7 +734,10 @@ def academic_signals_by_subject(db: Session, user_id: str) -> dict[str, SubjectS
     return out
 
 
-def grades_revision(db: Session, user_id: str) -> int:
-    return db.scalar(
-        select(func.coalesce(func.sum(AcademicProgram.revision), 0)).where(AcademicProgram.user_id == user_id)
-    ) or 0
+def grades_revision(db: Session, user_id: str) -> str:
+    year = db.scalar(select(Profile.academic_year).where(Profile.user_id == user_id))
+    query = select(func.coalesce(func.sum(AcademicProgram.revision), 0)).where(AcademicProgram.user_id == user_id)
+    if year is not None:
+        query = query.where(AcademicProgram.academic_year == year)
+    revision = db.scalar(query) or 0
+    return f"{year or 'all'}@{revision}"

@@ -19,7 +19,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -29,6 +29,7 @@ from app.core.db import get_db
 from app.core.errors import AppError, ValidationFailed
 from app.core.events import record_event
 from app.core.identity import get_current_user_id
+from app.modules.account.models import Profile
 from app.modules.grades.models import AcademicNode, AcademicProgram, GradeRecord
 from app.modules.grades.schemas import CurriculumPut, NodeIn, ProgramCreate, RecordCreate
 from app.modules.grades.service import GradesService
@@ -49,7 +50,8 @@ class AssessmentOut(BaseModel):
     coefficient: float | None
     weight: float | None
     grade: float | None
-    maximum: float
+    maximum: float | None
+    minimum: float | None = None
     status: str | None = None
     children: list[AssessmentOut] = Field(default_factory=list)
 
@@ -64,6 +66,9 @@ class SubjectOut(BaseModel):
     coefficient: float | None
     ects: float | None
     official_grade: float | None
+    official_grade_maximum: float | None = None
+    official_grade_minimum: float | None = None
+    official_grade_status: str | None = None
     assessments: list[AssessmentOut]
 
 
@@ -74,6 +79,8 @@ class UnitOut(BaseModel):
     coefficient: float | None = None
     ects: float | None = None
     official_average: float | None
+    official_average_maximum: float | None = None
+    unassigned: bool = False
     subjects: list[SubjectOut]
 
 
@@ -82,6 +89,8 @@ class SemesterOut(BaseModel):
     title: str
     coefficient: float | None = None
     official_average: float | None
+    official_average_maximum: float | None = None
+    unassigned: bool = False
     units: list[UnitOut]
 
 
@@ -89,6 +98,8 @@ class ResultsOut(BaseModel):
     source: str = "pamplemousse"
     academic_year: str | None
     general_average: float | None
+    general_average_maximum: float | None = None
+    academic_years: list[str] = Field(default_factory=list)
     semesters: list[SemesterOut]
 
 
@@ -107,7 +118,8 @@ def _num(value: Any) -> float | None:
     if value in (None, ""):
         return None
     try:
-        return float(Decimal(str(value).replace(",", ".")))
+        number = Decimal(str(value).replace(",", "."))
+        return float(number) if number.is_finite() else None
     except (InvalidOperation, ValueError):
         return None
 
@@ -151,7 +163,7 @@ def read_records(engine, source: str = "pamplemousse") -> dict[str, dict[str, An
         return {external_id: payload or {} for external_id, payload in db.execute(query)}
 
 
-def build_results(records: dict[str, dict[str, Any]]) -> ResultsOut:
+def build_results(records: dict[str, dict[str, Any]], academic_year: str | None = None) -> ResultsOut:
     children: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for key, payload in records.items():
         parent = payload.get("parent_key")
@@ -161,17 +173,20 @@ def build_results(records: dict[str, dict[str, Any]]) -> ResultsOut:
     def kids(key: str, kind: str) -> list[tuple[str, dict[str, Any]]]:
         return [(k, p) for k, p in children.get(key, []) if p.get("kind") == kind]
 
-    def official(key: str) -> float | None:
-        for _, p in kids(key, "grade"):
-            if p.get("grade_kind") == "official_aggregate":
-                return _num(p.get("value"))
-        return None
+    def official(key: str) -> dict[str, Any]:
+        return next((
+            p for _, p in kids(key, "grade")
+            if p.get("grade_kind") == "official_aggregate" and p.get("record_status") != "ambiguous"
+        ), {})
 
     def coefficient(key: str, level: str, node_payload: dict[str, Any] | None = None) -> float | None:
-        values = [_num(p.get("weight")) for _, p in kids(key, "coefficient") if p.get("level") == level]
-        known = [v for v in values if v is not None and v >= 0]
+        values = (
+            _num(p.get("weight")) for _, p in kids(key, "coefficient")
+            if p.get("level") == level and p.get("record_status") not in ("missing", "ambiguous")
+        )
+        known = {v for v in values if v is not None and v >= 0}
         if known:
-            return known[-1]
+            return next(iter(known)) if len(known) == 1 else None
         if node_payload is not None:
             direct = _num(node_payload.get("coefficient"))
             if direct is not None and direct >= 0:
@@ -193,7 +208,8 @@ def build_results(records: dict[str, dict[str, Any]]) -> ResultsOut:
     def assessments(parent: str) -> list[AssessmentOut]:
         out: list[AssessmentOut] = []
         for key, p in sorted(kids(parent, "assessment"), key=lambda kv: kv[0]):
-            grade = next((g for _, g in kids(key, "grade")), None)
+            grades = [g for _, g in kids(key, "grade") if g.get("record_status") != "ambiguous"]
+            grade = next((g for g in grades if g.get("grade_kind") == "assessment"), next(iter(grades), {}))
             weight = next((_num(w.get("weight")) for _, w in kids(key, "assessment_weight")), None)
             sub_items = assessments(key)
             out.append(AssessmentOut(
@@ -201,27 +217,42 @@ def build_results(records: dict[str, dict[str, Any]]) -> ResultsOut:
                 title=_clean_title(p.get("title", "")),
                 coefficient=coefficient(key, "assessment", p),
                 weight=weight,
-                grade=_num(grade.get("value")) if grade else None,
-                maximum=_num(grade.get("maximum")) if grade and _num(grade.get("maximum")) else 20.0,
+                grade=_num(grade.get("value")),
+                maximum=_num(grade.get("maximum")),
+                minimum=_num(grade.get("minimum")),
                 status=_grade_status(grade),
                 children=sub_items,
             ))
         return out
 
     def subject(key: str, p: dict[str, Any]) -> SubjectOut:
+        grade = official(key)
         return SubjectOut(
             key=key,
             code=p.get("code") or p.get("source_code"),
             title=p.get("title", ""),
             coefficient=coefficient(key, "subject", p),
             ects=_num(p.get("ects")),
-            official_grade=official(key),
+            official_grade=_num(grade.get("value")),
+            official_grade_maximum=_num(grade.get("maximum")),
+            official_grade_minimum=_num(grade.get("minimum")),
+            official_grade_status=_grade_status(grade),
             assessments=assessments(key),
         )
 
-    year_key, year = next(((k, p) for k, p in records.items() if p.get("kind") == "academic_year"), (None, {}))
+    year_keys: dict[str, str] = {}
+    for key, payload in sorted(records.items()):
+        if payload.get("kind") == "academic_year":
+            provenance_year = (payload.get("provenance") or {}).get("academic_year") or ""
+            year = re.search(r"(?<!\d)(\d{4})\s*[-–_/]\s*(\d{4})(?!\d)",
+                             f"{provenance_year} {payload.get('title') or ''}")
+            if year:
+                year_keys.setdefault(f"{year[1]}-{year[2]}", key)
+    academic_years = sorted(year_keys, reverse=True)
+    selected_year = academic_year or next(iter(academic_years), None)
+    year_key = year_keys.get(selected_year) if selected_year else None
     semesters: list[SemesterOut] = []
-    for sem_key, sem in sorted(((k, p) for k, p in records.items() if p.get("kind") == "semester"), key=lambda kv: kv[1].get("title", "")):
+    for sem_key, sem in sorted(kids(year_key, "semester") if year_key else [], key=lambda kv: kv[1].get("title", "")):
         units = []
         for ue_key, ue in sorted(kids(sem_key, "teaching_unit"), key=lambda kv: kv[1].get("title", "")):
             subjects = [subject(k, p) for k, p in sorted(kids(ue_key, "subject"), key=lambda kv: kv[1].get("title", ""))]
@@ -231,31 +262,33 @@ def build_results(records: dict[str, dict[str, Any]]) -> ResultsOut:
                 title=ue.get("title", ""),
                 coefficient=coefficient(ue_key, "teaching_unit", ue),
                 ects=_num(ue.get("ects")),
-                official_average=official(ue_key),
+                official_average=_num(official(ue_key).get("value")),
+                official_average_maximum=_num(official(ue_key).get("maximum")),
                 subjects=subjects,
             ))
         standalone = sorted(kids(sem_key, "subject"), key=lambda kv: kv[1].get("title", ""))
         if standalone:
-            units.append(UnitOut(key=f"{sem_key}:unassigned", title="Sans UE", official_average=None,
+            units.append(UnitOut(key=f"{sem_key}:unassigned", title="Sans UE", official_average=None, unassigned=True,
                                  subjects=[subject(k, p) for k, p in standalone]))
         semesters.append(SemesterOut(
             key=sem_key, title=sem.get("title", ""), coefficient=coefficient(sem_key, "semester", sem),
-            official_average=official(sem_key), units=units,
+            official_average=_num(official(sem_key).get("value")),
+            official_average_maximum=_num(official(sem_key).get("maximum")), units=units,
         ))
 
-    general = None
+    general = official(year_key) if year_key else {}
     if year_key:
         standalone = sorted(kids(year_key, "subject"), key=lambda kv: kv[1].get("title", ""))
         if standalone:
             semesters.append(SemesterOut(
-                key=f"{year_key}:unassigned", title="Sans semestre", official_average=None,
-                units=[UnitOut(key=f"{year_key}:unassigned:unit", title="Sans UE", official_average=None,
+                key=f"{year_key}:unassigned", title="Sans semestre", official_average=None, unassigned=True,
+                units=[UnitOut(key=f"{year_key}:unassigned:unit", title="Sans UE", official_average=None, unassigned=True,
                                subjects=[subject(k, p) for k, p in standalone])],
             ))
-        for _, p in kids(year_key, "grade"):
-            if p.get("grade_kind") == "official_aggregate":
-                general = _num(p.get("value"))
-    return ResultsOut(academic_year=year.get("title"), general_average=general, semesters=semesters)
+    return ResultsOut(
+        academic_year=selected_year, academic_years=academic_years, semesters=semesters,
+        general_average=_num(general.get("value")), general_average_maximum=_num(general.get("maximum")),
+    )
 
 
 def import_results_into_program(
@@ -311,7 +344,8 @@ def import_results_into_program(
         title: str,
         weight: float | None,
         ects: float | None = None,
-        scale_max: float = 20.0,
+        scale_max: float | None = None,
+        scale_min: float | None = None,
         subject_id: str | None = None,
         is_root: bool = False,
     ) -> AcademicNode:
@@ -336,7 +370,7 @@ def import_results_into_program(
                 weight_status=w_status,
                 weight_provenance=w_prov,
                 ects=_dec_str(ects),
-                scale_min="0",
+                scale_min=_dec_str(scale_min) or "0",
                 scale_max=_dec_str(scale_max) or "20",
                 subject_id=subject_id,
                 source_key=source_key,
@@ -377,6 +411,15 @@ def import_results_into_program(
         if new_ects is not None and row.ects != new_ects and row.weight_provenance != "manual":
             row.ects = new_ects
             changed = True
+        if scale_max is not None and not db.scalar(select(GradeRecord.id).where(
+            GradeRecord.node_id == row.id,
+            GradeRecord.provenance != "pamplemousse",
+        ).limit(1)):
+            new_scale_min = _dec_str(scale_min) or "0"
+            new_scale_max = _dec_str(scale_max)
+            if (row.scale_min, row.scale_max) != (new_scale_min, new_scale_max):
+                row.scale_min, row.scale_max = new_scale_min, new_scale_max
+                changed = True
         if subject_id and not row.subject_id:
             row.subject_id = subject_id
             changed = True
@@ -384,10 +427,16 @@ def import_results_into_program(
             updated_nodes += 1
         return row
 
-    def upsert_official_grade(node: AcademicNode, value: float | None, status: str | None) -> None:
+    def upsert_official_grade(
+        node: AcademicNode, value: float | None, status: str | None,
+        maximum: float | None, minimum: float | None,
+    ) -> None:
         nonlocal created_records, updated_records
-        if value is None and status not in ("absent_unjustified", "dispensed"):
-            return
+        if status != "dispensed":
+            if maximum is None or value is None:
+                return
+            if Decimal(node.scale_max) != Decimal(str(maximum)) or Decimal(node.scale_min) != Decimal(str(minimum or 0)):
+                return
         # Never overwrite a leaf that gained custom children (subdivisions).
         has_children = any(n.parent_key == node.key for n in by_key.values())
         if has_children:
@@ -439,15 +488,18 @@ def import_results_into_program(
                 kind=kind,
                 title=a.title or "Évaluation",
                 weight=a_weight,
-                scale_max=a.maximum or 20.0,
+                scale_max=a.maximum,
+                scale_min=a.minimum,
                 subject_id=parent_node.subject_id,
             )
             if a.children:
                 sync_assessments(node, a.children)
             else:
-                upsert_official_grade(node, a.grade, a.status)
+                upsert_official_grade(node, a.grade, a.status, a.maximum, a.minimum)
 
     for sem in results.semesters:
+        if sem.unassigned:
+            continue
         sem_node = upsert_node(
             source_key=sem.key,
             key_prefix="sem",
@@ -457,6 +509,8 @@ def import_results_into_program(
             weight=sem.coefficient,
         )
         for unit in sem.units:
+            if unit.unassigned:
+                continue
             # Never invent a UE coefficient: if Pamplemousse provides none, keep weight_status="unknown"
             # unless the user already entered a manual value.
             unit_node = upsert_node(
@@ -478,11 +532,16 @@ def import_results_into_program(
                     weight=subj.coefficient,
                     ects=subj.ects,
                     subject_id=subj.code,
+                    scale_max=subj.official_grade_maximum if not subj.assessments else None,
+                    scale_min=subj.official_grade_minimum if not subj.assessments else None,
                 )
                 if subj.assessments:
                     sync_assessments(subj_node, subj.assessments)
-                elif subj.official_grade is not None:
-                    upsert_official_grade(subj_node, subj.official_grade, "graded")
+                else:
+                    upsert_official_grade(
+                        subj_node, subj.official_grade, subj.official_grade_status,
+                        subj.official_grade_maximum, subj.official_grade_minimum,
+                    )
 
     if created_nodes or updated_nodes or created_records or updated_records:
         program.revision += 1
@@ -513,14 +572,37 @@ def import_results_into_program(
     )
 
 
-@router.get("/results", response_model=ResultsOut, tags=["grades"])
-def results_from_sources(request: Request):
-    """UE / subject / coefficient / mark tree synced from Pamplemousse."""
+AcademicYearQuery = Annotated[str | None, Query(pattern=r"^\d{4}-\d{4}$")]
+
+
+def _source_results(request: Request, db: Session, user_id: str, academic_year: str | None) -> ResultsOut:
     sources_app = getattr(request.app.state, "sources_app", None)
     runtime = getattr(getattr(sources_app, "state", None), "runtime", None)
     if runtime is None:
         raise SourcesUnavailable("Source synchronization is not running")
-    return build_results(read_records(runtime.engine))
+    active_year = academic_year or db.scalar(select(Profile.academic_year).where(Profile.user_id == user_id))
+    return build_results(read_records(runtime.engine), active_year)
+
+
+@router.get("/results", response_model=ResultsOut, tags=["grades"])
+def results_from_sources(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    academic_year: AcademicYearQuery = None,
+):
+    """Read one academic year's authorized Pamplemousse results."""
+    return _source_results(request, db, user_id, academic_year)
+
+
+def _import_source_results(
+    request: Request, db: Session, clock: Clock, user_id: str, academic_year: str | None,
+) -> GradesImportOut:
+    results = _source_results(request, db, user_id, academic_year)
+    if not any(not semester.unassigned and any(not unit.unassigned for unit in semester.units)
+               for semester in results.semesters):
+        raise ValidationFailed("No authorized Pamplemousse curriculum is available for this year", code="source_results_empty")
+    return import_results_into_program(db, user_id, results, clock)
 
 
 @router.post("/grades/import-from-sources", response_model=GradesImportOut, tags=["grades"])
@@ -529,17 +611,10 @@ def import_grades_from_sources(
     db: Annotated[Session, Depends(get_db)],
     clock: Annotated[Clock, Depends(get_clock)],
     user_id: Annotated[str, Depends(get_current_user_id)],
+    academic_year: AcademicYearQuery = None,
 ):
-    """Sync Pamplemousse curriculum, coefficients, ECTS and official marks into Grade Tracker (idempotent)."""
-    sources_app = getattr(request.app.state, "sources_app", None)
-    runtime = getattr(getattr(sources_app, "state", None), "runtime", None)
-    if runtime is None:
-        raise SourcesUnavailable("Source synchronization is not running")
-    records = read_records(runtime.engine)
-    if not records:
-        raise ValidationFailed("No authorized Pamplemousse results are available", code="source_results_empty")
-    results = build_results(records)
-    return import_results_into_program(db, user_id, results, clock)
+    """Import the selected academic year into the local Grade Tracker."""
+    return _import_source_results(request, db, clock, user_id, academic_year)
 
 
 class ManualGradeImport(ProgramCreate):
@@ -551,6 +626,7 @@ class AcademicImportRequest(BaseModel):
     source: Literal["pamplemousse", "manual_json"]
     dry_run: bool = False
     program: ManualGradeImport | None = None
+    academic_year: str | None = Field(default=None, pattern=r"^\d{4}-\d{4}$")
 
 
 class AcademicImportOut(BaseModel):
@@ -575,7 +651,7 @@ def import_grades(
     transaction = db.begin_nested()
     try:
         if body.source == "pamplemousse":
-            imported = import_grades_from_sources(request, db, clock, user_id)
+            imported = _import_source_results(request, db, clock, user_id, body.academic_year)
             program = db.get(AcademicProgram, imported.program_id)
             nodes = imported.created_nodes + imported.updated_nodes
             marks = imported.created_records + imported.updated_records
