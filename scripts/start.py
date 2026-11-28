@@ -18,7 +18,6 @@ def main():
     arguments.add_argument("--no-sources", action="store_true", help="Run without mounting the P1 sources runtime")
     options = arguments.parse_args()
     install_missing()
-    settings = configure()
 
     for path in (str(BACKEND), str(ROOT)):
         if path not in sys.path:
@@ -26,6 +25,7 @@ def main():
 
     from sqlalchemy import select
     import uvicorn
+    from app.core.config import demo_root
     from app.main import create_app
     from backend.app.contracts.authentication import ConnectionStatus
     from backend.app.core.auth import INSTITUTIONAL_SOURCES
@@ -33,6 +33,12 @@ def main():
     from backend.app.core.runtime import Runtime, RuntimeBusy
     from onboarding import run_onboarding
 
+    if demo_root() is not None:
+        uvicorn.run(create_app(enable_sources=not options.no_sources), host=options.host,
+                    port=options.port, access_log=False, log_level="info")
+        return
+
+    settings = configure()
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
     if not options.no_sources and not options.skip_onboarding and sys.stdin.isatty():
         try:

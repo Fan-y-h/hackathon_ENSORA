@@ -12,7 +12,6 @@ Bridges:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 import time
 from typing import Any
@@ -260,16 +259,18 @@ def resolve_ai_runtime(app) -> AIRuntimeContext:
         return existing
 
     p1_path = _p1_db_path_from_app(app)
-    db_url = str(getattr(getattr(app.state, "db", None), "engine", None).url) if getattr(app.state, "db", None) else ""
-    if db_url in ("sqlite://", "sqlite:///:memory:"):
-        rag_db: Path | str = ":memory:"
-    elif p1_path is not None:
+    database = getattr(app.state, "db", None)
+    database_path = database.engine.url.database if database is not None else None
+    if p1_path is not None:
         rag_db = p1_path.parent / "rag_index.sqlite3"
+    elif database_path and database_path != ":memory:":
+        path = Path(database_path)
+        rag_db = path.with_name(f"{path.stem}.rag.sqlite3")
     else:
-        data_dir = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parents[4] / "data" / "runtime"))
-        rag_db = data_dir / "rag_index.sqlite3"
+        rag_db = ":memory:"
 
-    ctx = AIRuntimeContext(rag_db_path=rag_db, p1_db_path=p1_path)
+    adapters = {} if getattr(app.state, "demo_mode", False) else None
+    ctx = AIRuntimeContext(rag_db_path=rag_db, p1_db_path=p1_path, adapters=adapters)
     app.state.ai_runtime = ctx
     return ctx
 

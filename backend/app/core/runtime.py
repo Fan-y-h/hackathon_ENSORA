@@ -107,6 +107,19 @@ class Runtime:
         self.scheduler = None
         return self
 
+    def current_profile(self) -> Profile:
+        with self.engine.connect() as db:
+            raw = db.scalar(select(users.c.profile).where(users.c.id == LOCAL_USER))
+        return Profile.model_validate(raw or {})
+
+    def update_profile(self, **changes) -> None:
+        with self.engine.begin() as db:
+            raw = db.scalar(select(users.c.profile).where(users.c.id == LOCAL_USER)) or {}
+            profile = Profile.model_validate({**raw, **changes})
+            db.execute(users.update().where(users.c.id == LOCAL_USER).values(
+                profile=profile.model_dump(mode="json"),
+            ))
+
     def validate_local_import_path(self, path: str | Path) -> Path:
         return self.settings.validate_local_import_path(path)
 
@@ -283,8 +296,6 @@ class Runtime:
             if not row.enabled or row.next_scheduled_at is None or row.next_scheduled_at > current:
                 continue
             scope = SyncScope(source=row.source, pamplemousse_scope=row.scope_key if row.source == SourceKind.PAMPLEMOUSSE else None)
-            if row.source in {SourceKind.MOODLE, SourceKind.PAMPLEMOUSSE} and self.settings.academic_year:
-                scope = scope.model_copy(update={"academic_year": self.settings.academic_year})
             return self.sync.submit(scope, automatic=True)
         return None
 

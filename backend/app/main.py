@@ -14,9 +14,11 @@ The two parts keep separate SQLite databases (``data/runtime/ensora.db`` and the
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,10 +26,12 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import text
 
 from app.core.common import Clock, SystemClock
-from app.core.config import load_settings
+from app.core.config import demo_root, load_settings
 from app.core.db import Database
 from app.core.errors import install_error_handlers
 from app.core.exam_guard import require_not_exam_mode
+from app.core.identity import LOCAL_USER_EMAIL, ensure_user
+from app.modules.account.router import initialize_profile
 from app.modules.account.router import router as account_router
 from app.modules.ai.router import router as ai_router
 from app.modules.analytics.router import router as analytics_router
@@ -80,6 +84,20 @@ def create_app(
     settings = load_settings()
     if enable_sources is None:
         enable_sources = database_url is None
+    if settings.demo_mode and enable_sources:
+        from backend.app.core.runtime import Components
+        from backend.app.core.settings import Settings as P1Settings
+
+        root = demo_root()
+        config = root / "config"
+        p1_settings = P1Settings(
+            config_dir=config, local_data_dir=root / "sources",
+            ensai_profile_dir=config / "sessions/ensai",
+            google_credentials_path=config / "secrets/google_credentials.json",
+            google_token_path=config / "secrets/google_token.json",
+            adapter_factory=None,
+        )
+        p1_components = Components()
     sources_app = _build_sources_app(p1_settings, p1_components) if enable_sources else None
 
     @asynccontextmanager
@@ -93,7 +111,8 @@ def create_app(
 
                 runtime = Runtime(p1_settings or P1Settings.load(), p1_components).__enter__()
                 sources_app.state.runtime = runtime
-                runtime.start_schedule()
+                if not settings.demo_mode and os.environ.get("ENSORA_PAUSE_BACKGROUND_SYNC") != "true":
+                    runtime.start_schedule()
                 # Every finished sync (manual or scheduled) reaches the agenda without a click.
                 importer = AgendaAutoImporter(runtime.engine, app_.state.db.session_factory, app_.state.clock)
                 importer.start()
@@ -103,6 +122,9 @@ def create_app(
                 logger.exception("P1 source runtime failed to start")
                 runtime = None
         try:
+            with app_.state.db.session_factory.begin() as db:
+                local_user = ensure_user(db, LOCAL_USER_EMAIL, "Étudiant·e local·e")
+                initialize_profile(db, local_user.id, runtime)
             yield
         finally:
             ai_runtime = getattr(app_.state, "ai_runtime", None)
@@ -115,10 +137,11 @@ def create_app(
                 runtime.__exit__(None, None, None)
 
     app = FastAPI(title="Ensora+ API", version="0.2.0", lifespan=lifespan)
-    app.state.db = Database(database_url or settings.database_url)
+    app.state.db = Database(settings.database_url if settings.demo_mode else database_url or settings.database_url)
     app.state.db.create_schema()
     app.state.clock = clock or SystemClock()
     app.state.sources_app = sources_app
+    app.state.demo_mode = settings.demo_mode
 
     app.add_middleware(
         CORSMiddleware,
@@ -134,6 +157,10 @@ def create_app(
         return RedirectResponse(url="/docs")
 
     api = APIRouter(prefix=API_PREFIX)
+
+    @api.get("/runtime-mode", tags=["health"])
+    def runtime_mode() -> dict[str, Literal["real", "demo"]]:
+        return {"mode": "demo" if settings.demo_mode else "real"}
 
     @api.get("/health", tags=["health"])
     def health(request: Request):

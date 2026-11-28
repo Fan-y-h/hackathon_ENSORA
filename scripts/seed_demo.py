@@ -43,7 +43,10 @@ def main() -> None:
     args = parser.parse_args()
     fixture = json.loads(Path(args.fixture).read_text(encoding="utf-8"))
 
-    db = Database(load_settings().database_url)
+    settings = load_settings()
+    if not settings.demo_mode:
+        parser.error("Seeding requires DEMO_MODE=true and a dedicated ENSORA_DEMO_DIR")
+    db = Database(settings.database_url)
     db.create_schema()
     with db.session_factory() as session:
         user = ensure_user(session, LOCAL_USER_EMAIL, "Étudiant·e local·e")

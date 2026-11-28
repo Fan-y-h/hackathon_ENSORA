@@ -1,53 +1,69 @@
 # Ensora+
 
-A local-first study workspace for ENSAI students, with a shared agenda, revision planner, academic grade tracker and document-grounded study tools.
+Ensora+ runs as a local, single-student workspace. Real mode uses the student's authorized institutional sources. Demo mode owns separate databases, a separate source configuration and a separate RAG index.
 
-## Start the integrated app
+## Real mode
 
-From `/home/ensai/ensora-final`, start the backend using the existing Python environment:
+From the repository root, prepare a private copy of both existing stores. Stop any writer to the source stores while copying their document blobs. The command without `--copy-to` is a read-only provenance audit. It prints counts, never profile or document values.
 
 ```bash
 cd /home/ensai/ensora-final
-PYTHONPATH=backend:. /home/ensai/hackathon_ENSORA/.venv/bin/python -m uvicorn \
-  app.main:create_app --factory --host 127.0.0.1 --port 8000
+python3 scripts/real_store.py --planner data/runtime/ensora.db \
+  --source-store "$HOME/.local/share/ensora-plus" \
+  --copy-to /tmp/ensora-real-store
 ```
 
-In a separate terminal:
+Use a new destination, or reuse an existing validation copy directly for subsequent launches. In the backend terminal:
+
+```bash
+cd /home/ensai/ensora-final
+export DATA_DIR=/tmp/ensora-real-store/runtime
+export LOCAL_DATA_DIR=/tmp/ensora-real-store/sources
+export ENSORA_PAUSE_BACKGROUND_SYNC=true ENSAI_AUTO_LOGIN=false
+unset DEMO_MODE ENSORA_DEMO_DIR DATABASE_URL
+PYTHONPATH=backend:. /home/ensai/hackathon_ENSORA/.venv/bin/python -m uvicorn \
+  app.main:create_app --factory --host 127.0.0.1 --port 18080 --no-access-log
+```
+
+In a second terminal, install the locked frontend dependencies if needed and start Vite:
 
 ```bash
 cd /home/ensai/ensora-final
 npm --prefix frontend ci
-npm --prefix frontend run dev
+LOCAL_DATA_DIR=/tmp/ensora-real-store/sources VITE_API_PROXY_TARGET=http://127.0.0.1:18080 \
+  npm --prefix frontend run dev -- --port 15180 --strictPort --bypass-lock
 ```
 
-Open [the app](http://127.0.0.1:5173) or [the API documentation](http://127.0.0.1:8000/docs). The Vite proxy reads the source API token from the local source store. Configure a non-default source store by passing the same `LOCAL_DATA_DIR` to both processes. Authorize each source in Settings before syncing it. Live institutions and calendars require their own valid sessions and consent.
+Open [real mode](http://127.0.0.1:15180). Complete the local student profile, then open **Paramètres → Sources**. Validate a saved connection. If it has expired, choose **Reconnecter**, complete the official CAS or OAuth flow in the opened browser and return to Ensora+. Select Pamplemousse before Moodle to establish the academic catalog. Keep ambiguous matches for manual review. Use source-specific sync controls and verify each individual result.
 
-## Start an isolated demo
+Google Calendar imports availability by default. Set `GOOGLE_CALENDAR_ID` for the selected calendar and optionally `GOOGLE_CALENDAR_INCLUDE_PERSONAL_DETAILS=true` in the private source configuration to include event labels. The backend keeps these settings and OAuth credentials server-side. Remove `ENSORA_PAUSE_BACKGROUND_SYNC` and restart only when scheduled reads are desired.
 
-In the backend terminal, use a fresh directory for both databases and the source settings:
+For a mixed legacy planner database, run the audit above first. With the app stopped, explicitly add `--remove-unlinked-fixture-events --backup-file /path/to/new-private-backup.sqlite3` to remove only fixture events without linked assessments. For records whose provenance cannot be determined, preserve the original and start with a clean planner database. Manual tasks and notes can represent real work.
+
+## Demo mode
+
+Use a new private directory. Seeding requires an explicit demo mode and rejects an existing non-demo directory. The backend always derives demo storage paths from the dedicated directory.
 
 ```bash
 cd /home/ensai/ensora-final
-ENSORA_DEMO_DIR=$(mktemp -d /tmp/ensora-demo.XXXXXX)
-export DATA_DIR="$ENSORA_DEMO_DIR/runtime" LOCAL_DATA_DIR="$ENSORA_DEMO_DIR/sources"
-export ENSORA_SOURCES_ENV="$ENSORA_DEMO_DIR/config/sources.env"
-export SYNC_ON_STARTUP=false SYNC_INTERVAL_MINUTES=0 PYTHONPATH=backend:.
-mkdir -p "$DATA_DIR"
-printf 'Frontend LOCAL_DATA_DIR=%s\n' "$LOCAL_DATA_DIR"
+export ENSORA_DEMO_DIR=$(mktemp -d /tmp/ensora-demo.XXXXXX)
+export DEMO_MODE=true
+printf 'Frontend LOCAL_DATA_DIR=%s/sources\n' "$ENSORA_DEMO_DIR"
 /home/ensai/hackathon_ENSORA/.venv/bin/python scripts/seed_demo.py
-/home/ensai/hackathon_ENSORA/.venv/bin/python -m uvicorn \
-  app.main:create_app --factory --host 127.0.0.1 --port 8000
+PYTHONPATH=backend:. /home/ensai/hackathon_ENSORA/.venv/bin/python -m uvicorn \
+  app.main:create_app --factory --host 127.0.0.1 --port 18081 --no-access-log
 ```
 
-Set `LOCAL_DATA_DIR` to the printed path in the frontend terminal and start Vite with the demo label:
+Use the printed `LOCAL_DATA_DIR` value in the frontend terminal.
 
 ```bash
-VITE_DEMO_MODE=true npm --prefix frontend run dev
+LOCAL_DATA_DIR=/tmp/ensora-demo.REPLACE/sources VITE_API_PROXY_TARGET=http://127.0.0.1:18081 \
+  npm --prefix frontend run dev -- --port 15181 --strictPort --bypass-lock
 ```
 
-To demonstrate RAG, grant local-source read consent in Settings and import `data/demo/sample_econometrie_cours.md` from the Library. Ask the Tutor about Gauss–Markov. A configured model with appropriate consent can generate answers. When no model is reachable the tutor can display cited extracts from the local index. Official academic validation requires verified institutional rules.
+Open [demo mode](http://127.0.0.1:15181). The banner identifies synthetic records. For a cited tutor demo, grant read consent for local imports and use **Bibliothèque → Importer** to upload `data/demo/sample_econometrie_cours.md`. Ask the Tutor about Gauss–Markov. Demo uses the local extractive fallback.
 
-## Tests
+## Checks
 
 ```bash
 (cd backend && /home/ensai/hackathon_ENSORA/.venv/bin/python -m pytest -q)
@@ -55,4 +71,4 @@ npm --prefix frontend run build
 npm --prefix frontend test
 ```
 
-Point the Chromium suite at running isolated instances with `ENSORA_E2E_FRONTEND` and `ENSORA_E2E_BACKEND`, then run `python -m pytest frontend/e2e/test_e2e_browser.py -q` with Playwright and Chromium installed.
+Set `ENSORA_E2E_FRONTEND` and `ENSORA_E2E_BACKEND` to a throwaway instance before running `python -m pytest frontend/e2e/test_e2e_browser.py -q`. The Chromium QA suite writes test profile and task data, so keep it off a real store.

@@ -44,6 +44,7 @@ class Settings(Contract):
     google_project_id: str = "ensora-516015"
     ensora_drive_folder_id: str = "1bwHMmvVUOI7CJyeiVhvkofspfZdFNZuO"
     google_calendar_id: str = "primary"
+    google_calendar_include_personal_details: bool = False
     academic_year: str | None = None
     study_year: str | None = None
     specialization: str | None = None

@@ -226,6 +226,9 @@ def create_app(
                         connections.c.id, limit, cursor)
         for item in data["items"]:
             source = SourceKind(item["source"])
+            item["validation_required"] = ctx.auth.needs_validation(source)
+            if item["validation_required"]:
+                item["status"] = "NOT_CONFIGURED"
             item["consent"] = {purpose: ctx.consent.allowed(source, purpose)
                                for purpose in ("read", "automatic_sync")}
         return data
@@ -283,7 +286,8 @@ def create_app(
                 raise HTTPException(422, "Select a local import path")
             if scope.folder_id is not None and scope.source is None:
                 raise HTTPException(422, "Select a source for folder synchronization")
-            return {"id": runtime(request).sync.submit(scope, idempotency_key)}
+            ctx = runtime(request)
+            return {"id": ctx.sync.submit(scope, idempotency_key)}
         except ProtectedImportPath:
             raise HTTPException(403, "Selected path overlaps private application storage") from None
         except ValueError:

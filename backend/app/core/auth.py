@@ -56,6 +56,7 @@ class AuthenticationManager:
         self.consent = consent
         self.adapters = adapters
         self.require_institutional_evidence = require_institutional_evidence
+        self._validated_sources = set()
         self.locks = {source: RLock() for source in SourceKind}
         if shared_ensai_session:
             shared_lock = RLock()
@@ -113,6 +114,10 @@ class AuthenticationManager:
                     self._trace(source, operation, "retained_reauth", result)
                     return result
             self.set_status(source, result.status)
+            if result.status == ConnectionStatus.CONNECTED:
+                self._validated_sources.add(source)
+            else:
+                self._validated_sources.discard(source)
             self._trace(source, operation, "persisted", result)
             return result
 
@@ -191,7 +196,15 @@ class AuthenticationManager:
             state = db.scalar(select(connections.c.status).where(connections.c.id == self.connection_ids[source]))
         return ConnectionStatus(state)
 
+    def needs_validation(self, source) -> bool:
+        """Cached connection state is not a proof that this process can read the service."""
+        return (source not in (SourceKind.LOCAL, SourceKind.ACADEMIC_IMPORT)
+                and self.status(source) == ConnectionStatus.CONNECTED
+                and (source not in self._validated_sources or not self.consent.allowed(source, "read")))
+
     def set_status(self, source, status):
+        if status != ConnectionStatus.CONNECTED:
+            self._validated_sources.discard(source)
         with self.engine.begin() as db:
             db.execute(update(connections).where(connections.c.id == self.connection_ids[source]).values(status=status))
 
