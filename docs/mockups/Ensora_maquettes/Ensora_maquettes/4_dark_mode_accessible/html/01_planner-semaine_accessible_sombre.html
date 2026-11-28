@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;src:url('../../fonts/Inter-Regular.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url('../../fonts/Inter-Medium.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url('../../fonts/Inter-SemiBold.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:700;font-display:swap;src:url('../../fonts/Inter-Bold.woff') format('woff')}
+html,body,button,input,select,textarea,svg text{font-family:'Inter',sans-serif}
+</style>
+
+<meta charset="utf-8">
+<title>Ensora+ — Planner accessible, vue semaine — mode sombre</title>
+
+<style>
+body{margin:0;background:#0B141D}
+a{color:#DCE6F0}a:hover{color:#FFFFFF}
+</style></head>
+<body>
+
+
+<div style="font-family: Inter, sans-serif; color: #E8EEF4; background: #0B141D; min-height: 100%; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 20px">
+
+<header style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 15px; color: #A9B5C2">Smart Planner · semaine du 23 au 27 novembre · affichage accessible</div>
+<h1 style="margin: 0; font-family: Inter, sans-serif; font-size: 34px; color: #DCE6F0">11 h de révision réparties, 1 activité hors limites</h1>
+</div>
+<div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center">
+<nav aria-label="Vue" style="display: flex; padding: 4px; gap: 4px; background: #22303D; border-radius: 12px">
+<a href="02_planner-jour_accessible_sombre.html" style="min-height: 40px; min-width: 96px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; padding: 0 16px; border-radius: 9px; font: 600 15px Inter, sans-serif; color: #DCE6F0; text-decoration: none">Jour</a>
+<a href="01_planner-semaine_accessible_sombre.html" aria-current="page" style="min-height: 40px; min-width: 96px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; padding: 0 16px; border-radius: 9px; font: 700 15px Inter, sans-serif; color: #0B141D; background: #DCE6F0; text-decoration: none">Semaine</a>
+</nav>
+<button type="button" style="min-height: 44px; padding: 0 16px; border-radius: 10px; border: 2px solid #1C3A57; background: #111C27; color: #DCE6F0; font: 600 15px Inter, sans-serif">Ajouter une indisponibilité</button>
+<button type="button" style="min-height: 44px; padding: 0 20px; border-radius: 10px; border: 0; background: #B84A14; color: #FFFFFF; font: 600 15px Inter, sans-serif">Replanifier</button>
+</div>
+</header>
+
+<section aria-label="Légende" style="display: flex; flex-direction: column; gap: 10px; background: #111C27; border: 1px solid #2E3E4D; border-radius: 12px; padding: 14px 16px">
+<div style="display: flex; gap: 18px; font-size: 14px; color: #E8EEF4; flex-wrap: wrap; align-items: center">
+<span style="font-weight: 700; color: #DCE6F0; min-width: 96px">Type</span>
+
+<span style="display: flex; gap: 8px; align-items: center">
+<span style="width: 30px; height: 22px; box-sizing: border-box; border-radius: 5px; background: #111C27; border: 1px solid #8A98A8; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg></span>Cours</span>
+
+<span style="display: flex; gap: 8px; align-items: center">
+<span style="width: 30px; height: 22px; box-sizing: border-box; border-radius: 5px; background: #1A2A3B; border: 1px solid #3A4B5C; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg></span>Révision</span>
+
+<span style="display: flex; gap: 8px; align-items: center">
+<span style="width: 30px; height: 22px; box-sizing: border-box; border-radius: 5px; background: #111C27; border: 2px dashed #B7C2CD; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z M8 12l3 3 5-6"></path></svg></span>Devoir</span>
+
+<span style="display: flex; gap: 8px; align-items: center">
+<span style="width: 30px; height: 22px; box-sizing: border-box; border-radius: 5px; background: #DCE6F0; border: 2px solid #DCE6F0; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0B141D" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 7v5l3 2"></path></svg></span>Évaluation</span>
+
+</div>
+<div style="display: flex; gap: 18px; font-size: 14px; color: #E8EEF4; flex-wrap: wrap; align-items: center">
+<span style="font-weight: 700; color: #DCE6F0; min-width: 96px">Matière</span>
+
+<span style="display: flex; gap: 8px; align-items: center"><span style="width: 6px; height: 18px; border-radius: 2px; background: #4477AA; box-shadow: none"></span><span style="font-size: 12px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #4477AA">ECO</span>Économétrie</span>
+
+<span style="display: flex; gap: 8px; align-items: center"><span style="width: 6px; height: 18px; border-radius: 2px; background: #CC6677; box-shadow: none"></span><span style="font-size: 12px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #CC6677">STAT</span>Stat. inférentielle</span>
+
+<span style="display: flex; gap: 8px; align-items: center"><span style="width: 6px; height: 18px; border-radius: 2px; background: #EECC66; box-shadow: none"></span><span style="font-size: 12px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #EECC66">ST</span>Séries temporelles</span>
+
+<span style="display: flex; gap: 8px; align-items: center"><span style="width: 6px; height: 18px; border-radius: 2px; background: #99DDFF; box-shadow: none"></span><span style="font-size: 12px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #99DDFF">ML</span>Machine learning</span>
+
+<a href="../../2_dark_mode/html/05_couleurs-des-matieres_sombre.html" style="font-size: 14px; font-weight: 600">Changer les couleurs</a>
+</div>
+</section>
+
+<div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+
+<section aria-label="Agenda de la semaine" style="flex: 999 1 640px; min-width: 0; background: #111C27; border: 1px solid #2E3E4D; border-radius: 14px; padding: 16px; overflow-x: auto">
+<div style="min-width: 780px; display: grid; grid-template-columns: 52px repeat(5, minmax(0, 1fr)); gap: 0 6px">
+<span></span>
+
+<a href="02_planner-jour_accessible_sombre.html" style="padding: 4px 6px 10px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; text-decoration: none; border-radius: 6px"><span style="font-size: 14px; color: #A9B5C2">Lun</span><span style="font-size: 19px; font-weight: 700; color: #DCE6F0">23</span></a>
+
+<a href="02_planner-jour_accessible_sombre.html" style="padding: 4px 6px 10px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; text-decoration: none; border-radius: 6px"><span style="font-size: 14px; color: #A9B5C2">Mar</span><span style="font-size: 19px; font-weight: 700; color: #DCE6F0">24</span></a>
+
+<a href="02_planner-jour_accessible_sombre.html" style="padding: 4px 6px 10px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; text-decoration: none; border-radius: 6px"><span style="font-size: 14px; color: #A9B5C2">Mer</span><span style="font-size: 19px; font-weight: 700; color: #DCE6F0">25</span></a>
+
+<a href="02_planner-jour_accessible_sombre.html" style="padding: 4px 6px 10px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; text-decoration: none; border-radius: 6px"><span style="font-size: 14px; color: #A9B5C2">Jeu</span><span style="font-size: 19px; font-weight: 700; color: #DCE6F0">26</span></a>
+
+<a href="02_planner-jour_accessible_sombre.html" style="padding: 4px 6px 10px; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; text-decoration: none; border-radius: 6px"><span style="font-size: 14px; color: #A9B5C2">Ven</span><span style="font-size: 19px; font-weight: 700; color: #DCE6F0">27</span><span style="font-size: 12px; font-weight: 700; color: #FFFFFF; background: #1C3A57; padding: 2px 6px; border-radius: 999px">Aujourd'hui</span></a>
+
+<div style="position: relative; height: 672px">
+<span style="position: absolute; top: 0px; right: 6px; font-size: 13px; color: #A9B5C2; transform: translateY(-50%)">8 h</span><span style="position: absolute; top: 112px; right: 6px; font-size: 13px; color: #A9B5C2; transform: translateY(-50%)">10 h</span><span style="position: absolute; top: 224px; right: 6px; font-size: 13px; color: #A9B5C2; transform: translateY(-50%)">12 h</span><span style="position: absolute; top: 336px; right: 6px; font-size: 13px; color: #A9B5C2; transform: translateY(-50%)">14 h</span><span style="position: absolute; top: 448px; right: 6px; font-size: 13px; color: #A9B5C2; transform: translateY(-50%)">16 h</span><span style="position: absolute; top: 560px; right: 6px; font-size: 13px; color: #A9B5C2; transform: translateY(-50%)">18 h</span><span style="position: absolute; top: 672px; right: 6px; font-size: 13px; color: #A9B5C2; transform: translateY(-50%)">20 h</span>
+</div>
+
+<div style="position: relative; height: 672px; background-image: repeating-linear-gradient(to bottom, #22303D 0 1px, transparent 1px 112px); border-radius: 6px; background-color: transparent">
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 4.666666666666666px; height: 99.66666666666666px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 1px solid #8A98A8; border-left: 6px solid #4477AA; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cours" style="flex-shrink: 0; margin-top: 1px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">CM Économétrie</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #4477AA">ECO</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Cours</strong> · Amphi 1</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 126px; height: 95px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 1px solid #8A98A8; border-left: 6px solid #CC6677; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cours" style="flex-shrink: 0; margin-top: 1px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">TD Stat. inf.</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #CC6677">STAT</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Cours</strong> · S. 104</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 336px; height: 48.33333333333333px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #1A2A3B; border: 1px solid #3A4B5C; border-left: 6px solid #4477AA; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Révision" style="flex-shrink: 0; margin-top: 1px"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Découverte — Var. instrumentales</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #4477AA">ECO</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Révision</strong> · Fiche + vidéo</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 508.6666666666667px; height: 81px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 2px dashed #B7C2CD; border-left: 6px solid #8A98A8; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Devoir" style="flex-shrink: 0; margin-top: 1px"><path d="M6 3h12a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z M8 12l3 3 5-6"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Projet Python</span>
+
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Devoir</strong> · Étape 1/4</span>
+</div>
+
+
+</div>
+
+<div style="position: relative; height: 672px; background-image: repeating-linear-gradient(to bottom, #22303D 0 1px, transparent 1px 112px); border-radius: 6px; background-color: transparent">
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 28px; height: 155.66666666666669px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 1px solid #8A98A8; border-left: 6px solid #EECC66; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cours" style="flex-shrink: 0; margin-top: 1px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">CM Séries temp.</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #EECC66">ST</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Cours</strong> · Amphi 2</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 312.66666666666663px; height: 34.33333333333333px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #1A2A3B; border: 1px solid #3A4B5C; border-left: 6px solid #4477AA; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Révision" style="flex-shrink: 0; margin-top: 1px"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Rappel — MCO</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #4477AA">ECO</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Révision</strong> · Flashcards</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 392px; height: 99.66666666666666px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 1px solid #8A98A8; border-left: 6px solid #8A98A8; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cours" style="flex-shrink: 0; margin-top: 1px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">TP R</span>
+
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Cours</strong> · Salle info</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 564.6666666666667px; height: 48.33333333333333px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #1A2A3B; border: 1px solid #3A4B5C; border-left: 6px solid #4477AA; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Révision" style="flex-shrink: 0; margin-top: 1px"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Exercices — hétéroscédasticité</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #4477AA">ECO</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Révision</strong> · 3 exercices</span>
+</div>
+
+
+</div>
+
+<div style="position: relative; height: 672px; background-image: repeating-linear-gradient(to bottom, #22303D 0 1px, transparent 1px 112px); border-radius: 6px; background-color: transparent">
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 4.666666666666666px; height: 99.66666666666666px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 1px solid #8A98A8; border-left: 6px solid #CC6677; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cours" style="flex-shrink: 0; margin-top: 1px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">CM Stat. inf.</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #CC6677">STAT</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Cours</strong> · Amphi 1</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 140px; height: 76.33333333333334px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 2px dashed #B7C2CD; border-left: 6px solid #8A98A8; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Devoir" style="flex-shrink: 0; margin-top: 1px"><path d="M6 3h12a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z M8 12l3 3 5-6"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Projet Python</span>
+
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Devoir</strong> · Étape 2/4</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 336px; height: 81px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #1A2A3B; border: 1px solid #3A4B5C; border-left: 6px solid #4477AA; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Révision" style="flex-shrink: 0; margin-top: 1px"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Annale Économétrie 2023</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #4477AA">ECO</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Révision</strong> · Chronométré</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 448px; height: 43.66666666666667px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #1A2A3B; border: 1px solid #3A4B5C; border-left: 6px solid #CC6677; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Révision" style="flex-shrink: 0; margin-top: 1px"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Rappel — Tests</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #CC6677">STAT</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Révision</strong> · Quiz 10 Q</span>
+</div>
+
+
+</div>
+
+<div style="position: relative; height: 672px; background-image: repeating-linear-gradient(to bottom, #22303D 0 1px, transparent 1px 112px); border-radius: 6px; background-color: transparent">
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 4.666666666666666px; height: 207px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 1px solid #8A98A8; border-left: 6px solid #99DDFF; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cours" style="flex-shrink: 0; margin-top: 1px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">CM + TD ML</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #99DDFF">ML</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Cours</strong> · Amphi 3</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 280px; height: 34.33333333333333px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #1A2A3B; border: 1px solid #3A4B5C; border-left: 6px solid #4477AA; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Révision" style="flex-shrink: 0; margin-top: 1px"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Rappel — Gauss‑Markov</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #4477AA">ECO</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Révision</strong> · Restitution</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 336px; height: 109px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #DCE6F0; border: 2px solid #DCE6F0; border-left: 6px solid #99DDFF; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0B141D" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Évaluation" style="flex-shrink: 0; margin-top: 1px"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 7v5l3 2"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #0B141D; line-height: 1.25">Partiel blanc ML</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #99DDFF">ML</span>
+</div>
+<span style="font-size: 12px; color: #3E4A58; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Évaluation</strong> · Mode examen</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 504px; height: 81px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 2px dashed #B7C2CD; border-left: 6px solid #8A98A8; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Devoir" style="flex-shrink: 0; margin-top: 1px"><path d="M6 3h12a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z M8 12l3 3 5-6"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Projet Python</span>
+
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Devoir</strong> · Étape 3/4</span>
+</div>
+
+
+</div>
+
+<div style="position: relative; height: 672px; background-image: repeating-linear-gradient(to bottom, #22303D 0 1px, transparent 1px 112px); border-radius: 6px; background-color: #0F1922">
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 4.666666666666666px; height: 99.66666666666666px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 1px solid #8A98A8; border-left: 6px solid #4477AA; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cours" style="flex-shrink: 0; margin-top: 1px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">CM Économétrie</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #4477AA">ECO</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Cours</strong> · Amphi 1</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 121.33333333333333px; height: 99.66666666666666px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 1px solid #8A98A8; border-left: 6px solid #EECC66; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cours" style="flex-shrink: 0; margin-top: 1px"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">TD Séries temp.</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #EECC66">ST</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Cours</strong> · S. 104</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 326.66666666666663px; height: 39px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #1A2A3B; border: 1px solid #3A4B5C; border-left: 6px solid #CC6677; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Révision" style="flex-shrink: 0; margin-top: 1px"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Rappel actif — Tests</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #CC6677">STAT</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Révision</strong> · Flashcards</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 378px; height: 81px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #111C27; border: 2px dashed #B7C2CD; border-left: 6px solid #8A98A8; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Devoir" style="flex-shrink: 0; margin-top: 1px"><path d="M6 3h12a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z M8 12l3 3 5-6"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Projet Python</span>
+
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Devoir</strong> · Étape 4/4</span>
+</div>
+
+<div title="" style="position: absolute; left: 2px; right: 2px; top: 522.6666666666667px; height: 81px; box-sizing: border-box; border-radius: 6px; padding: 4px 6px; background: #1A2A3B; border: 1px solid #3A4B5C; border-left: 6px solid #4477AA; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 1px">
+<div style="display: flex; gap: 5px; align-items: flex-start">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E8EEF4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Révision" style="flex-shrink: 0; margin-top: 1px"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #E8EEF4; line-height: 1.25">Annale Économétrie 2024</span>
+<span style="flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; padding: 0 4px; border-radius: 4px; background: #111C27; color: #E8EEF4; border: 1.5px solid #4477AA">ECO</span>
+</div>
+<span style="font-size: 12px; color: #B7C2CD; line-height: 1.25; padding-left: 19px"><strong style="font-weight: 700">Révision</strong> · Ex. 1 et 2</span>
+</div>
+
+
+<div style="position: absolute; left: -4px; right: 0; top: 373.33333333333337px; height: 3px; background: #B84A14"><span style="position: absolute; left: 0; top: -4px; width: 10px; height: 10px; border-radius: 999px; background: #B84A14"></span><span style="position: absolute; right: 2px; top: -21px; font-size: 11px; font-weight: 700; color: #FFFFFF; background: #B84A14; padding: 1px 5px; border-radius: 4px">Maintenant · 14 h 40</span></div>
+
+</div>
+
+</div>
+</section>
+
+<aside style="flex: 1 1 300px; display: flex; flex-direction: column; gap: 16px">
+<section style="background: #111C27; border: 1px solid #2E3E4D; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 18px; color: #DCE6F0">Charge par jour</h2>
+
+<div style="display: grid; grid-template-columns: 36px 1fr 60px; gap: 10px; align-items: center; font-size: 14px" title="Lun : 2 h 30 sur un maximum de 4 h">
+<span style="color: #E8EEF4">Lun</span>
+<div style="position: relative; height: 12px; background: #22303D; border-radius: 4px; border: 1px solid #6B7A89"><div style="height: 100%; width: 62.5%; background: #7FB2E5; border-radius: 0 3px 3px 0"></div></div>
+<span style="text-align: right; font-variant-numeric: tabular-nums; font-weight: 700">2 h 30</span>
+</div>
+
+<div style="display: grid; grid-template-columns: 36px 1fr 60px; gap: 10px; align-items: center; font-size: 14px" title="Mar : 1 h 45 sur un maximum de 4 h">
+<span style="color: #E8EEF4">Mar</span>
+<div style="position: relative; height: 12px; background: #22303D; border-radius: 4px; border: 1px solid #6B7A89"><div style="height: 100%; width: 43.75%; background: #7FB2E5; border-radius: 0 3px 3px 0"></div></div>
+<span style="text-align: right; font-variant-numeric: tabular-nums; font-weight: 700">1 h 45</span>
+</div>
+
+<div style="display: grid; grid-template-columns: 36px 1fr 60px; gap: 10px; align-items: center; font-size: 14px" title="Mer : 4 h sur un maximum de 4 h">
+<span style="color: #E8EEF4">Mer</span>
+<div style="position: relative; height: 12px; background: #22303D; border-radius: 4px; border: 1px solid #6B7A89"><div style="height: 100%; width: 100%; background: #7FB2E5; border-radius: 0 3px 3px 0"></div></div>
+<span style="text-align: right; font-variant-numeric: tabular-nums; font-weight: 700">4 h</span>
+</div>
+
+<div style="display: grid; grid-template-columns: 36px 1fr 60px; gap: 10px; align-items: center; font-size: 14px" title="Jeu : 3 h 45 sur un maximum de 4 h">
+<span style="color: #E8EEF4">Jeu</span>
+<div style="position: relative; height: 12px; background: #22303D; border-radius: 4px; border: 1px solid #6B7A89"><div style="height: 100%; width: 93.75%; background: #7FB2E5; border-radius: 0 3px 3px 0"></div></div>
+<span style="text-align: right; font-variant-numeric: tabular-nums; font-weight: 700">3 h 45</span>
+</div>
+
+<div style="display: grid; grid-template-columns: 36px 1fr 60px; gap: 10px; align-items: center; font-size: 14px" title="Ven : 3 h 45 sur un maximum de 4 h">
+<span style="color: #E8EEF4">Ven</span>
+<div style="position: relative; height: 12px; background: #22303D; border-radius: 4px; border: 1px solid #6B7A89"><div style="height: 100%; width: 93.75%; background: #7FB2E5; border-radius: 0 3px 3px 0"></div></div>
+<span style="text-align: right; font-variant-numeric: tabular-nums; font-weight: 700">3 h 45</span>
+</div>
+
+<div style="font-size: 13px; color: #A9B5C2">Plafond fixé dans Mon profil : 4 h / jour.</div>
+</section>
+<section style="background: #2B2210; border: 2px solid #C9952E; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; gap: 8px; align-items: center"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F2C46B" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path></svg><h2 style="margin: 0; font-size: 17px; color: #F2C46B">Attention : non planifiable cette semaine</h2></div>
+<p style="margin: 0; font-size: 15px; line-height: 1.5">Annale Séries temporelles 2023 (1 h 30). Votre plafond serait dépassé jeudi.</p>
+<div style="display: flex; gap: 8px; flex-wrap: wrap">
+<button type="button" style="min-height: 44px; padding: 0 14px; border-radius: 8px; border: 2px solid #C9952E; background: #111C27; font: 600 14px Inter, sans-serif; color: #DCE6F0">Reporter à lundi</button>
+<button type="button" style="min-height: 44px; padding: 0 14px; border-radius: 8px; border: 2px solid #C9952E; background: #111C27; font: 600 14px Inter, sans-serif; color: #DCE6F0">Réduire à l'exercice 1</button>
+</div>
+</section>
+<section style="background: #111C27; border: 1px solid #2E3E4D; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<h2 style="margin: 0; font-size: 18px; color: #DCE6F0">Pourquoi ce planning ?</h2>
+<ul style="margin: 0; padding-left: 18px; font-size: 15px; line-height: 1.6; color: #E8EEF4">
+<li>Économétrie prioritaire : partiel à J‑6, préparation sous l'objectif.</li>
+<li>Gauss‑Markov rapproché : risque d'oubli élevé.</li>
+<li>Alternance matières et méthodes chaque jour.</li>
+<li>Rappels futurs déjà réservés jusqu'au partiel.</li>
+</ul>
+</section>
+</aside>
+</div>
+<p style="margin: 0; font-size: 13px; color: #A9B5C2">Données fictives à titre d'illustration. Cliquez sur un jour pour ouvrir la vue détaillée.</p>
+</div>
+
+
+
+
+</body></html>

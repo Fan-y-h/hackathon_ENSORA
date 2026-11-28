@@ -1,0 +1,41 @@
+/* Badge: white card so the JPG background blends in, on any theme. */
+.brand-logo {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 8px 22px 8px 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+.brand-logo--md { width: 200px; }
+.brand-logo--sm { width: 132px; padding: 6px 16px 6px 8px; }
+
+/*
+ * Crop to the drawing (x 118→578, y 32→332 of the 738×414 source).
+ * Percent margins are relative to the container width, hence the ratios.
+ */
+.brand-logo__crop {
+  width: 100%;
+  aspect-ratio: 460 / 300;
+  overflow: hidden;
+}
+.brand-logo__crop img {
+  display: block;
+  width: 160.4%;          /* 738 / 460 */
+  height: auto;
+  margin-left: -25.7%;    /* -118 / 460 */
+  margin-top: -7%;        /* -32 / 460 */
+}
+
+/* The "+" of Ensora+, in the 10 % accent colour, aligned on the ENSORA baseline. */
+.brand-logo__plus {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  font-size: 26px;
+  line-height: 1;
+  font-weight: 800;
+  color: #e8692a;
+}
+.brand-logo--sm .brand-logo__plus { font-size: 18px; right: 4px; bottom: 4px; }

@@ -1,0 +1,213 @@
+/*
+ * Design tokens taken from the Ensora+ mock-ups (palette sheet, contrasts WCAG 2.1).
+ * 60 % neutral surfaces · 30 % navy structure · 10 % coral action.
+ * Text ≥ 4.5:1, meaningful outlines and chart marks ≥ 3:1, nothing relies on colour alone.
+ */
+
+@font-face { font-family: "Inter"; font-weight: 400; font-display: swap; src: url("./fonts/Inter-Regular.woff") format("woff"); }
+@font-face { font-family: "Inter"; font-weight: 500; font-display: swap; src: url("./fonts/Inter-Medium.woff") format("woff"); }
+@font-face { font-family: "Inter"; font-weight: 600; font-display: swap; src: url("./fonts/Inter-SemiBold.woff") format("woff"); }
+@font-face { font-family: "Inter"; font-weight: 700; font-display: swap; src: url("./fonts/Inter-Bold.woff") format("woff"); }
+
+:root {
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* Surfaces (60 %) */
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --surface-2: #f5f7fa;
+  --surface-sunken: #eaf0f6;
+  --border: #e3e8ee;
+  --border-strong: #d5dce4;
+  --border-meaningful: #8a96a3;
+  --grid: #eef1f4;
+  --axis: #c2cbd5;
+
+  /* Structure (30 %) */
+  --navy: #15314b;
+  --sidebar: #15314b;
+  --sidebar-text: #c8d4e0;
+  --sidebar-muted: #9fb3c8;
+  --sidebar-active: rgba(255, 255, 255, 0.1);
+
+  /* Text */
+  --text: #172231;
+  --text-title: #15314b;
+  --text-2: #586474;
+  --text-inverse: #ffffff;
+
+  /* Action (10 %) */
+  --accent: #e8692a;
+  --action: #b84a14;
+  --action-hover: #9e3e0f;
+  --action-text: #ffffff;
+  --accent-soft: #fff3ec;
+  --accent-soft-border: #f6cdb5;
+  --accent-soft-text: #8a3a10;
+
+  /* Activity types (validated categorical trio) */
+  --type-course-bg: #f1f4f7;
+  --type-course-border: #d5dce4;
+  --type-course-bar: #aab4c0;
+  --type-revision: #2563eb;
+  --type-revision-bg: #e9eff6;
+  --type-revision-border: #cfe0fb;
+  --type-revision-text: #1b4fc4;
+  --type-task: #0f9d8a;
+  --type-task-bg: #e9f7f4;
+  --type-task-border: #c2e7e0;
+  --type-task-text: #0b5e53;
+  --type-exam-bg: #ffe6d8;
+  --type-exam-border: #e8692a;
+  --type-exam-text: #8a3a10;
+
+  /* Sequential mastery ramp (one hue, light -> dark) */
+  --seq-0: #cce3fd;
+  --seq-1: #84b9f3;
+  --seq-2: #338ced;
+  --seq-3: #2370cd;
+  --seq-4: #1757ac;
+  --seq-5: #0e3d7e;
+  --seq-empty: #eef1f4;
+  --seq-ink-light: #172231;
+  --seq-ink-dark: #ffffff;
+  --hatch: #c9d1da;
+
+  /* Status (reserved, always with icon + label) */
+  --good: #0aac23;
+  --good-text: #006c10;
+  --good-bg: #eaf7ec;
+  --warning: #b07800;
+  --warning-text: #7a5300;
+  --warning-bg: #fff6e0;
+  --warning-border: #f1d79a;
+  --critical: #dc3c3d;
+  --critical-text: #a92a2b;
+  --critical-bg: #fdecec;
+
+  --focus-ring: #2563eb;
+
+  --radius-s: 8px;
+  --radius-m: 10px;
+  --radius-l: 14px;
+  --shadow-s: 0 1px 2px rgba(21, 49, 75, 0.12);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+}
+
+/* -------------------------- Dark mode (selected) -------------------------- */
+:root[data-theme="dark"] {
+  --bg: #0b141d;
+  --surface: #111c27;
+  --surface-2: #18242f;
+  --surface-sunken: #18242f;
+  --border: #22303d;
+  --border-strong: #2e3e4d;
+  --border-meaningful: #6b7a89;
+  --grid: #1c2a37;
+  --axis: #33434f;
+
+  --navy: #dce6f0;
+  --sidebar: #1c3a57;
+  --sidebar-text: #c8d4e0;
+  --sidebar-muted: #9fb3c8;
+  --sidebar-active: rgba(255, 255, 255, 0.1);
+
+  --text: #e8eef4;
+  --text-title: #dce6f0;
+  --text-2: #9aa8b6;
+  --text-inverse: #0b141d;
+
+  --accent: #f2894f;
+  --action: #b84a14;
+  --action-hover: #c9531a;
+  --accent-soft: #38200f;
+  --accent-soft-border: #6b3a22;
+  --accent-soft-text: #f7a57a;
+
+  --type-course-bg: #18242f;
+  --type-course-border: #2e3e4d;
+  --type-course-bar: #4a5866;
+  --type-revision: #4f86f7;
+  --type-revision-bg: #142445;
+  --type-revision-border: #284777;
+  --type-revision-text: #a9c4ff;
+  --type-task: #1fa896;
+  --type-task-bg: #0f2b27;
+  --type-task-border: #1f5048;
+  --type-task-text: #5fd3c2;
+  --type-exam-bg: #38200f;
+  --type-exam-border: #e8692a;
+  --type-exam-text: #f7a57a;
+
+  /* Dark ramp: dark = low, light = high (selected, not flipped) */
+  --seq-0: #1c3a57;
+  --seq-1: #1f5596;
+  --seq-2: #2f72c4;
+  --seq-3: #4a90e2;
+  --seq-4: #8ab4f8;
+  --seq-5: #b9d6fa;
+  --seq-empty: #18242f;
+  --seq-ink-light: #ffffff;
+  --seq-ink-dark: #0b141d;
+  --hatch: #33434f;
+
+  --good: #5fd47a;
+  --good-text: #5fd47a;
+  --good-bg: #12301b;
+  --warning: #e0a93a;
+  --warning-text: #f2c46b;
+  --warning-bg: #2b2210;
+  --warning-border: #6b5520;
+  --critical: #eb6263;
+  --critical-text: #f19494;
+  --critical-bg: #3a1617;
+
+  --focus-ring: #7fb2e5;
+  --shadow-s: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* ----------------------- Accessible mode (planner) ------------------------ */
+/* Stronger outlines, navy evaluation blocks, dashed tasks: shape + icon + word. */
+:root[data-contrast="accessible"] {
+  --border: #c9d1da;
+  --border-strong: #8a96a3;
+  --text-2: #4a5563;
+  --type-course-bg: #ffffff;
+  --type-course-border: #8a96a3;
+  --type-revision-bg: #e9eff6;
+  --type-revision-border: #8a96a3;
+  --type-revision-text: #172231;
+  --type-task-bg: #ffffff;
+  --type-task-border: #4a5563;
+  --type-task-text: #172231;
+  --type-exam-bg: #15314b;
+  --type-exam-border: #15314b;
+  --type-exam-text: #ffffff;
+}
+
+:root[data-theme="dark"][data-contrast="accessible"] {
+  --border: #3a4b5c;
+  --border-strong: #6b7a89;
+  --text-2: #b7c2cd;
+  --type-course-bg: #111c27;
+  --type-course-border: #a9b5c2;
+  --type-revision-bg: #1a2a3b;
+  --type-revision-border: #6b7a89;
+  --type-revision-text: #e8eef4;
+  --type-task-bg: #111c27;
+  --type-task-border: #e8eef4;
+  --type-task-text: #e8eef4;
+  --type-exam-bg: #dce6f0;
+  --type-exam-border: #dce6f0;
+  --type-exam-text: #0b141d;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

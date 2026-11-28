@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;src:url('../../fonts/Inter-Regular.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url('../../fonts/Inter-Medium.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url('../../fonts/Inter-SemiBold.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:700;font-display:swap;src:url('../../fonts/Inter-Bold.woff') format('woff')}
+html,body,button,input,select,textarea,svg text{font-family:'Inter',sans-serif}
+</style>
+
+<meta charset="utf-8">
+<title>Ensora+ — Learning Analytics — mode sombre</title>
+
+<style>
+body{margin:0;background:#0B141D}
+a{color:#C8D4E0;text-decoration:none}a:hover{color:#FFFFFF}
+</style></head>
+<body>
+
+
+<div style="font-family: Inter, sans-serif; color: #E8EEF4; background: #0B141D; min-height: 100%; display: flex; flex-wrap: wrap">
+
+<nav aria-label="Navigation principale" style="flex: 1 1 232px; max-width: 100%; background: #1C3A57; color: #FFFFFF; padding: 24px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px">
+<div style="font-family: Inter, sans-serif; font-size: 24px; font-weight: 700; padding: 0 8px">ENSORA<span style="color: #F2894F">+</span></div>
+
+<div style="display: flex; flex-direction: column; gap: 2px">
+<div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #9FB3C8; padding: 0 8px 6px">Organisation</div>
+
+<a href="02_dashboard_sombre.html" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>Dashboard</a>
+
+<a href="#" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>Mes matières</a>
+
+<a href="#" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>Bibliothèque</a>
+
+<a href="04a_smart-planner-semaine_sombre.html" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>Smart Planner</a>
+
+<a href="#" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>Mes tâches</a>
+
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 2px">
+<div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #9FB3C8; padding: 0 8px 6px">Apprentissage</div>
+
+<a href="#" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>AI Tutor</a>
+
+<a href="#" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>Learning Studio</a>
+
+<a href="#" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>Flashcards</a>
+
+<a href="#" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>Exam Trainer</a>
+
+<a href="#" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>Mes notes</a>
+
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 2px">
+<div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #9FB3C8; padding: 0 8px 6px">Suivi</div>
+
+<a href="06_focus-room_sombre.html" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: transparent; color: #C8D4E0"><span style="width: 6px; height: 6px; border-radius: 999px; background: rgba(200,212,224,0.4)"></span>Focus Room</a>
+
+<a href="03_learning-analytics_sombre.html" style="display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: rgba(255,255,255,0.10); color: #FFFFFF"><span style="width: 6px; height: 6px; border-radius: 999px; background: #F2894F"></span>Learning Analytics</a>
+
+</div>
+
+</nav>
+
+<main style="flex: 999 1 640px; min-width: 0; padding: 32px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px">
+
+<header style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 14px; color: #9AA8B6">Learning Analytics</div>
+<h1 style="margin: 0; font-family: Inter, sans-serif; font-size: 34px; color: #DCE6F0">Économétrie — où en est ma maîtrise ?</h1>
+</div>
+<div role="group" aria-label="Période" style="display: flex; background: #111C27; border: 1px solid #2E3E4D; border-radius: 10px; padding: 3px; gap: 2px">
+<button type="button" style="min-height: 38px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; font: 500 13px Inter, sans-serif; color: #9AA8B6">7 j</button>
+<button type="button" style="min-height: 38px; padding: 0 14px; border: 0; border-radius: 8px; background: #1C3A57; font: 600 13px Inter, sans-serif; color: #FFFFFF">30 j</button>
+<button type="button" style="min-height: 38px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; font: 500 13px Inter, sans-serif; color: #9AA8B6">Semestre</button>
+</div>
+</header>
+
+<section aria-label="Synthèse" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px">
+
+<div style="background: #111C27; border: 1px solid #22303D; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 13px; color: #9AA8B6">Maîtrise moyenne</div>
+<div style="font-size: 30px; font-weight: 700; color: #DCE6F0">58 %</div>
+<div style="font-size: 13px; color: #5FD47A; font-weight: 600">+9 pts en 30 j</div>
+</div>
+
+<div style="background: #111C27; border: 1px solid #22303D; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 13px; color: #9AA8B6">Temps de travail</div>
+<div style="font-size: 30px; font-weight: 700; color: #DCE6F0">21 h 30</div>
+<div style="font-size: 13px; color: #9AA8B6; font-weight: 600">dont 64 % en rappel actif</div>
+</div>
+
+<div style="background: #111C27; border: 1px solid #22303D; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 13px; color: #9AA8B6">Score moyen aux quiz</div>
+<div style="font-size: 30px; font-weight: 700; color: #DCE6F0">13,4 / 20</div>
+<div style="font-size: 13px; color: #5FD47A; font-weight: 600">+1,2 vs. mois précédent</div>
+</div>
+
+<div style="background: #111C27; border: 1px solid #22303D; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 13px; color: #9AA8B6">Notions non évaluées</div>
+<div style="font-size: 30px; font-weight: 700; color: #DCE6F0">7 / 24</div>
+<div style="font-size: 13px; color: #F7A57A; font-weight: 600">à couvrir avant J‑6</div>
+</div>
+
+</section>
+
+<section style="background: #111C27; border: 1px solid #22303D; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 12px">
+<div style="display: flex; flex-direction: column; gap: 2px">
+<h2 style="margin: 0; font-size: 18px; color: #DCE6F0">Maîtrise par notion et par dimension</h2>
+<span style="font-size: 13px; color: #9AA8B6">Seules les activités de rappel, exercices et évaluations comptent — lire un cours ne fait pas monter le score.</span>
+</div>
+<div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #9AA8B6">
+<span style="width: 14px; height: 14px; border-radius: 3px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #4A5866 0 1.5px, transparent 1.5px 5px); border: 1px solid #2E3E4D"></span>Non évalué
+<span style="margin-left: 8px">0 %</span>
+<span style="display: flex; gap: 2px"><span style="width: 18px; height: 14px; background: #163A66; border-radius: 2px"></span><span style="width: 18px; height: 14px; background: #1F5596; border-radius: 2px"></span><span style="width: 18px; height: 14px; background: #2F74CC; border-radius: 2px"></span><span style="width: 18px; height: 14px; background: #4A90E2; border-radius: 2px"></span><span style="width: 18px; height: 14px; background: #7DB2F0; border-radius: 2px"></span><span style="width: 18px; height: 14px; background: #B9D6FA; border-radius: 2px"></span></span>
+<span>100 %</span>
+</div>
+</div>
+<div style="overflow-x: auto">
+<div style="min-width: 760px; display: grid; grid-template-columns: 240px repeat(7, minmax(0, 1fr)); gap: 2px; font-size: 12px">
+<span></span>
+<span style="color: #9AA8B6; padding: 0 4px 6px; text-align: center; font-weight: 500">Compréhension</span><span style="color: #9AA8B6; padding: 0 4px 6px; text-align: center; font-weight: 500">Mémorisation</span><span style="color: #9AA8B6; padding: 0 4px 6px; text-align: center; font-weight: 500">Raisonnement</span><span style="color: #9AA8B6; padding: 0 4px 6px; text-align: center; font-weight: 500">Application</span><span style="color: #9AA8B6; padding: 0 4px 6px; text-align: center; font-weight: 500">Implémentation</span><span style="color: #9AA8B6; padding: 0 4px 6px; text-align: center; font-weight: 500">Autonomie</span><span style="color: #9AA8B6; padding: 0 4px 6px; text-align: center; font-weight: 500">Rétention</span>
+
+<span style="font-size: 14px; font-weight: 500; display: flex; align-items: center; padding-right: 8px">Moindres carrés ordinaires</span>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #B9D6FA; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">92</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #B9D6FA; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">88</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #7DB2F0; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">80</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #7DB2F0; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">85</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #B9D6FA; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">90</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #7DB2F0; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">78</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #7DB2F0; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">82</div>
+
+
+<span style="font-size: 14px; font-weight: 500; display: flex; align-items: center; padding-right: 8px">Théorème de Gauss‑Markov</span>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #4A90E2; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">74</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">48</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">55</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">40</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #1F5596; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #E8EEF4; font-variant-numeric: tabular-nums">35</div>
+
+
+<span style="font-size: 14px; font-weight: 500; display: flex; align-items: center; padding-right: 8px">Hétéroscédasticité</span>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #4A90E2; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">66</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #4A90E2; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">60</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">52</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">58</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #4A90E2; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">70</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">45</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+
+<span style="font-size: 14px; font-weight: 500; display: flex; align-items: center; padding-right: 8px">Variables instrumentales</span>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">42</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #1F5596; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #E8EEF4; font-variant-numeric: tabular-nums">30</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #1F5596; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #E8EEF4; font-variant-numeric: tabular-nums">25</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #163A66; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #E8EEF4; font-variant-numeric: tabular-nums">18</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+
+<span style="font-size: 14px; font-weight: 500; display: flex; align-items: center; padding-right: 8px">Tests de Wald / LM / LR</span>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">58</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #4A90E2; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">71</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">40</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">46</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #1F5596; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #E8EEF4; font-variant-numeric: tabular-nums">38</div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #2F74CC; background-image: none; border: 0; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #111C27; font-variant-numeric: tabular-nums">52</div>
+
+
+<span style="font-size: 14px; font-weight: 500; display: flex; align-items: center; padding-right: 8px">Modèles logit / probit</span>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+<div title="" style="height: 40px; border-radius: 4px; background-color: #111C27; background-image: repeating-linear-gradient(45deg, #2E3E4D 0 1.5px, transparent 1.5px 6px); border: 1px solid #22303D; display: flex; align-items: center; justify-content: center; font-weight: 600; color: #9AA8B6; font-variant-numeric: tabular-nums"></div>
+
+
+</div>
+</div>
+</section>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 16px">
+
+<section style="background: #111C27; border: 1px solid #22303D; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; flex-direction: column; gap: 2px">
+<h2 style="margin: 0; font-size: 18px; color: #DCE6F0">Rétention estimée — Gauss‑Markov</h2>
+<span style="font-size: 13px; color: #9AA8B6">Chaque rappel réussi aplatit la courbe et allonge l'intervalle suivant.</span>
+</div>
+<svg viewBox="0 0 520 240" role="img" aria-label="Courbe de rétention : remonte à 100 % après chaque révision des jours 0, 2, 6 et 15, prochain rappel prévu jour 30 au seuil de 70 %" style="width: 100%; height: auto; font-family: Inter, sans-serif">
+<g stroke="#22303D" stroke-width="1">
+<line x1="44" y1="20" x2="510" y2="20"></line><line x1="44" y1="70" x2="510" y2="70"></line><line x1="44" y1="120" x2="510" y2="120"></line><line x1="44" y1="170" x2="510" y2="170"></line>
+</g>
+<line x1="44" y1="200" x2="510" y2="200" stroke="#33434F" stroke-width="1"></line>
+<g font-size="11" fill="#9AA8B6" text-anchor="end"><text x="36" y="24">100 %</text><text x="36" y="74">75 %</text><text x="36" y="124">50 %</text><text x="36" y="174">25 %</text></g>
+<g font-size="11" fill="#9AA8B6" text-anchor="middle"><text x="44" y="218">J0</text><text x="122" y="218">J5</text><text x="199" y="218">J10</text><text x="277" y="218">J15</text><text x="354" y="218">J20</text><text x="432" y="218">J25</text><text x="510" y="218">J30</text></g>
+<line x1="44" y1="80" x2="510" y2="80" stroke="#E8EEF4" stroke-width="1" stroke-dasharray="4 4" opacity="0.6"></line>
+<text x="508" y="94" font-size="11" fill="#9AA8B6" text-anchor="end">seuil de rappel 70 %</text>
+<line x1="308" y1="20" x2="308" y2="200" stroke="#F2894F" stroke-width="1.5"></line>
+<text x="312" y="34" font-size="11" fill="#F7A57A" font-weight="600">aujourd'hui</text>
+<path d="M44 20 C60 60 70 80 75 84 L75 20 C100 55 125 72 137 80 L137 20 C180 50 240 70 277 79 L277 20 C330 40 400 62 466 80" fill="none" stroke="#7FA8FA" stroke-width="2" stroke-linejoin="round"></path>
+<path d="M466 80 C480 84 495 88 510 92" fill="none" stroke="#7FA8FA" stroke-width="2" stroke-dasharray="3 4"></path>
+<g fill="#4F86F7" stroke="#FFFFFF" stroke-width="2"><circle cx="44" cy="20" r="5"></circle><circle cx="75" cy="20" r="5"></circle><circle cx="137" cy="20" r="5"></circle><circle cx="277" cy="20" r="5"></circle></g>
+<circle cx="466" cy="80" r="6" fill="#111C27" stroke="#7FA8FA" stroke-width="2"></circle>
+<text x="462" y="68" font-size="11" fill="#E8EEF4" font-weight="600" text-anchor="end">prochain rappel J28</text>
+</svg>
+<div style="display: flex; gap: 16px; font-size: 12px; color: #9AA8B6; flex-wrap: wrap"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 999px; background: #4F86F7"></span>Révision réussie</span><span style="display: flex; gap: 6px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 999px; border: 2px solid #4F86F7; box-sizing: border-box"></span>Révision planifiée</span></div>
+</section>
+
+<section style="background: #111C27; border: 1px solid #22303D; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; flex-direction: column; gap: 2px">
+<h2 style="margin: 0; font-size: 18px; color: #DCE6F0">Régularité · 12 semaines</h2>
+<span style="font-size: 13px; color: #9AA8B6">Minutes de travail effectif par jour (Focus Room).</span>
+</div>
+<div style="display: flex; gap: 8px">
+<div style="display: grid; grid-template-rows: repeat(7, 18px); gap: 3px; font-size: 11px; color: #9AA8B6"><span>Lu</span><span></span><span>Me</span><span></span><span>Ve</span><span></span><span>Di</span></div>
+<div role="img" aria-label="Calendrier de régularité sur 12 semaines" style="flex: 1; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-template-rows: repeat(7, 18px); grid-auto-flow: column; gap: 3px">
+<div title="40 min" style="border-radius: 3px; background: #163A66"></div><div title="95 min" style="border-radius: 3px; background: #1F5596"></div><div title="120 min" style="border-radius: 3px; background: #4A90E2"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="150 min" style="border-radius: 3px; background: #4A90E2"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="60 min" style="border-radius: 3px; background: #1F5596"></div><div title="110 min" style="border-radius: 3px; background: #1F5596"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="140 min" style="border-radius: 3px; background: #4A90E2"></div><div title="90 min" style="border-radius: 3px; background: #1F5596"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="30 min" style="border-radius: 3px; background: #163A66"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="130 min" style="border-radius: 3px; background: #4A90E2"></div><div title="160 min" style="border-radius: 3px; background: #4A90E2"></div><div title="80 min" style="border-radius: 3px; background: #1F5596"></div><div title="100 min" style="border-radius: 3px; background: #1F5596"></div><div title="20 min" style="border-radius: 3px; background: #163A66"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="45 min" style="border-radius: 3px; background: #163A66"></div><div title="90 min" style="border-radius: 3px; background: #1F5596"></div><div title="120 min" style="border-radius: 3px; background: #4A90E2"></div><div title="150 min" style="border-radius: 3px; background: #4A90E2"></div><div title="170 min" style="border-radius: 3px; background: #4A90E2"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="80 min" style="border-radius: 3px; background: #1F5596"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="110 min" style="border-radius: 3px; background: #1F5596"></div><div title="140 min" style="border-radius: 3px; background: #4A90E2"></div><div title="95 min" style="border-radius: 3px; background: #1F5596"></div><div title="40 min" style="border-radius: 3px; background: #163A66"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="120 min" style="border-radius: 3px; background: #4A90E2"></div><div title="150 min" style="border-radius: 3px; background: #4A90E2"></div><div title="180 min" style="border-radius: 3px; background: #B9D6FA"></div><div title="60 min" style="border-radius: 3px; background: #1F5596"></div><div title="110 min" style="border-radius: 3px; background: #1F5596"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="25 min" style="border-radius: 3px; background: #163A66"></div><div title="90 min" style="border-radius: 3px; background: #1F5596"></div><div title="140 min" style="border-radius: 3px; background: #4A90E2"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="170 min" style="border-radius: 3px; background: #4A90E2"></div><div title="200 min" style="border-radius: 3px; background: #B9D6FA"></div><div title="30 min" style="border-radius: 3px; background: #163A66"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="110 min" style="border-radius: 3px; background: #1F5596"></div><div title="95 min" style="border-radius: 3px; background: #1F5596"></div><div title="150 min" style="border-radius: 3px; background: #4A90E2"></div><div title="130 min" style="border-radius: 3px; background: #4A90E2"></div><div title="160 min" style="border-radius: 3px; background: #4A90E2"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="45 min" style="border-radius: 3px; background: #163A66"></div><div title="140 min" style="border-radius: 3px; background: #4A90E2"></div><div title="170 min" style="border-radius: 3px; background: #4A90E2"></div><div title="120 min" style="border-radius: 3px; background: #4A90E2"></div><div title="190 min" style="border-radius: 3px; background: #B9D6FA"></div><div title="150 min" style="border-radius: 3px; background: #4A90E2"></div><div title="20 min" style="border-radius: 3px; background: #163A66"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="100 min" style="border-radius: 3px; background: #1F5596"></div><div title="160 min" style="border-radius: 3px; background: #4A90E2"></div><div title="190 min" style="border-radius: 3px; background: #B9D6FA"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="140 min" style="border-radius: 3px; background: #4A90E2"></div><div title="50 min" style="border-radius: 3px; background: #163A66"></div><div title="60 min" style="border-radius: 3px; background: #1F5596"></div><div title="150 min" style="border-radius: 3px; background: #4A90E2"></div><div title="180 min" style="border-radius: 3px; background: #B9D6FA"></div><div title="170 min" style="border-radius: 3px; background: #4A90E2"></div><div title="200 min" style="border-radius: 3px; background: #B9D6FA"></div><div title="210 min" style="border-radius: 3px; background: #B9D6FA"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="30 min" style="border-radius: 3px; background: #163A66"></div><div title="120 min" style="border-radius: 3px; background: #4A90E2"></div><div title="180 min" style="border-radius: 3px; background: #B9D6FA"></div><div title="150 min" style="border-radius: 3px; background: #4A90E2"></div><div title="95 min" style="border-radius: 3px; background: #1F5596"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div><div title="aucun travail" style="border-radius: 3px; background: #18242F"></div>
+</div>
+</div>
+<div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9AA8B6; justify-content: flex-end">0 min <span style="width: 14px; height: 14px; border-radius: 3px; background: #18242F"></span><span style="width: 14px; height: 14px; border-radius: 3px; background: #163A66"></span><span style="width: 14px; height: 14px; border-radius: 3px; background: #1F5596"></span><span style="width: 14px; height: 14px; border-radius: 3px; background: #4A90E2"></span><span style="width: 14px; height: 14px; border-radius: 3px; background: #B9D6FA"></span> 3 h +</div>
+<div style="padding: 12px; border-radius: 10px; background: #0B141D; font-size: 13px; line-height: 1.5; color: #E8EEF4">Les week‑ends sont creux : le Smart Planner propose de déplacer 2 rappels courts au samedi matin.</div>
+</section>
+
+</div>
+<p style="margin: 0; font-size: 12px; color: #9AA8B6">Données fictives à titre d'illustration. Les niveaux sont des estimations pédagogiques, pas des mesures exactes.</p>
+</main>
+</div>
+
+
+
+
+</body></html>

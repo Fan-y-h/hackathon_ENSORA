@@ -1,0 +1,4 @@
+.kanban { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.kanban__col { background: var(--surface-sunken); border-radius: var(--radius-l); padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 200px; }
+.task { background: var(--surface); border: 1.5px dashed var(--type-task-border); border-left: 4px solid; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.task--overdue { border-color: var(--critical); }

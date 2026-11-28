@@ -1,0 +1,7 @@
+.subject-color { border: 0; border-top: 1px solid var(--grid); padding: 16px 0 4px; margin: 0; display: flex; flex-direction: column; gap: 12px; }
+.subject-color:first-of-type { border-top: 0; }
+.subject-color__bar { width: 4px; height: 20px; border-radius: 2px; display: inline-block; }
+.subject-color__swatches { display: flex; gap: 12px; flex-wrap: wrap; }
+.subject-color__swatch { width: 36px; height: 36px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; color: #fff; cursor: pointer; }
+.subject-color__swatch:has(input:checked) { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--navy); }
+.subject-color__swatch:has(input:focus-visible) { outline: 3px solid var(--focus-ring); outline-offset: 4px; }

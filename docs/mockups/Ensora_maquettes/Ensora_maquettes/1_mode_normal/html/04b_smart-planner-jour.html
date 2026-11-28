@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;src:url('../../fonts/Inter-Regular.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url('../../fonts/Inter-Medium.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url('../../fonts/Inter-SemiBold.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:700;font-display:swap;src:url('../../fonts/Inter-Bold.woff') format('woff')}
+html,body,button,input,select,textarea,svg text{font-family:'Inter',sans-serif}
+</style>
+
+<meta charset="utf-8">
+<title>Ensora+ — Smart Planner, vue jour</title>
+
+<style>
+body{margin:0;background:#F5F7FA}
+</style></head>
+<body>
+
+
+<div style="font-family: Inter, sans-serif; color: #172231; background: #F5F7FA; min-height: 100%; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 20px">
+
+<header style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 14px; color: #586474">Smart Planner · vue détaillée</div>
+<h1 style="margin: 0; font-family: Inter, sans-serif; font-size: 34px; color: #15314B">Vendredi 27 novembre</h1>
+</div>
+<div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
+<nav aria-label="Vue" style="display: flex; padding: 4px; gap: 4px; background: #EAF0F6; border-radius: 12px">
+<a href="04b_smart-planner-jour.html" aria-current="page" style="min-height: 36px; min-width: 88px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; padding: 0 14px; border-radius: 9px; font: 600 14px Inter, sans-serif; color: #15314B; background: #FFFFFF; box-shadow: 0 1px 2px rgba(21,49,75,0.15); text-decoration: none">Jour</a>
+<a href="04a_smart-planner-semaine.html" style="min-height: 36px; min-width: 88px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; padding: 0 14px; border-radius: 9px; font: 600 14px Inter, sans-serif; color: #15314B; text-decoration: none">Semaine</a>
+</nav>
+<button type="button" style="min-height: 44px; padding: 0 20px; border-radius: 10px; border: 0; background: #B84A14; color: #FFFFFF; font: 600 14px Inter, sans-serif">Replanifier</button>
+</div>
+</header>
+
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: center">
+<nav aria-label="Choisir un jour" style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center">
+<button type="button" aria-label="Jour précédent : jeudi 26" style="width: 40px; height: 44px; border-radius: 10px; border: 1px solid #D5DCE4; background: #FFFFFF; color: #15314B; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg></button>
+
+<button type="button" aria-pressed="false" style="min-height: 44px; min-width: 64px; padding: 0 10px; border-radius: 10px; border: 1px solid #D5DCE4; background: #FFFFFF; color: #15314B; font: 600 13px Inter, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2"><span>Lun</span><span style="font-size: 12px; font-weight: 500">23</span></button>
+
+<button type="button" aria-pressed="false" style="min-height: 44px; min-width: 64px; padding: 0 10px; border-radius: 10px; border: 1px solid #D5DCE4; background: #FFFFFF; color: #15314B; font: 600 13px Inter, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2"><span>Mar</span><span style="font-size: 12px; font-weight: 500">24</span></button>
+
+<button type="button" aria-pressed="false" style="min-height: 44px; min-width: 64px; padding: 0 10px; border-radius: 10px; border: 1px solid #D5DCE4; background: #FFFFFF; color: #15314B; font: 600 13px Inter, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2"><span>Mer</span><span style="font-size: 12px; font-weight: 500">25</span></button>
+
+<button type="button" aria-pressed="false" style="min-height: 44px; min-width: 64px; padding: 0 10px; border-radius: 10px; border: 1px solid #D5DCE4; background: #FFFFFF; color: #15314B; font: 600 13px Inter, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2"><span>Jeu</span><span style="font-size: 12px; font-weight: 500">26</span></button>
+
+<button type="button" aria-pressed="true" style="min-height: 44px; min-width: 64px; padding: 0 10px; border-radius: 10px; border: 1px solid #15314B; background: #15314B; color: #FFFFFF; font: 600 13px Inter, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2"><span>Ven</span><span style="font-size: 12px; font-weight: 500">27</span></button>
+
+<button type="button" aria-label="Jour suivant : samedi 28" style="width: 40px; height: 44px; border-radius: 10px; border: 1px solid #D5DCE4; background: #FFFFFF; color: #15314B; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg></button>
+</nav>
+<div style="display: flex; gap: 14px; font-size: 13px; color: #586474; flex-wrap: wrap" aria-label="Légende">
+<span style="display: flex; gap: 6px; align-items: center"><span style="width: 12px; height: 12px; border-radius: 3px; background: #D5DCE4"></span>Cours</span>
+<span style="display: flex; gap: 6px; align-items: center"><span style="width: 12px; height: 12px; border-radius: 3px; background: #2563eb"></span>Révision</span>
+<span style="display: flex; gap: 6px; align-items: center"><span style="width: 12px; height: 12px; border-radius: 3px; background: #0f9d8a"></span>Devoir / tâche</span>
+<span style="display: flex; gap: 6px; align-items: center"><span style="width: 12px; height: 12px; border-radius: 3px; background: #E8692A"></span>Évaluation</span>
+</div>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+
+<section aria-label="Journée heure par heure" style="flex: 999 1 560px; min-width: 0; background: #FFFFFF; border: 1px solid #E3E8EE; border-radius: 14px; padding: 20px 16px; display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 0 10px">
+<div style="position: relative; height: 960px">
+<span style="position: absolute; top: 0px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">7 h 30</span><span style="position: absolute; top: 40px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">8 h</span><span style="position: absolute; top: 80px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">8 h 30</span><span style="position: absolute; top: 120px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">9 h</span><span style="position: absolute; top: 160px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">9 h 30</span><span style="position: absolute; top: 200px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">10 h</span><span style="position: absolute; top: 240px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">10 h 30</span><span style="position: absolute; top: 280px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">11 h</span><span style="position: absolute; top: 320px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">11 h 30</span><span style="position: absolute; top: 360px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">12 h</span><span style="position: absolute; top: 400px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">12 h 30</span><span style="position: absolute; top: 440px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">13 h</span><span style="position: absolute; top: 480px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">13 h 30</span><span style="position: absolute; top: 520px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">14 h</span><span style="position: absolute; top: 560px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">14 h 30</span><span style="position: absolute; top: 600px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">15 h</span><span style="position: absolute; top: 640px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">15 h 30</span><span style="position: absolute; top: 680px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">16 h</span><span style="position: absolute; top: 720px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">16 h 30</span><span style="position: absolute; top: 760px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">17 h</span><span style="position: absolute; top: 800px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">17 h 30</span><span style="position: absolute; top: 840px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">18 h</span><span style="position: absolute; top: 880px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">18 h 30</span><span style="position: absolute; top: 920px; right: 0; font-size: 13px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">19 h</span><span style="position: absolute; top: 960px; right: 0; font-size: 11px; font-weight: 500; color: #586474; transform: translateY(-50%); font-variant-numeric: tabular-nums">19 h 30</span>
+<span style="position: absolute; top: 573.3333333333334px; right: 0; transform: translateY(-50%); font-size: 11px; font-weight: 700; color: #FFFFFF; background: #B84A14; padding: 2px 5px; border-radius: 4px; font-variant-numeric: tabular-nums">14 h 40</span>
+</div>
+<div style="position: relative; height: 960px; background-image: repeating-linear-gradient(to bottom, #E3E8EE 0 1px, transparent 1px 80px), repeating-linear-gradient(to bottom, #F1F4F7 0 1px, transparent 1px 20px); background-position: 0 40px, 0 0; border-radius: 6px">
+
+<div style="position: absolute; left: 0; right: 0; top: 46.66666666666667px; height: 143.66666666666666px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: #F1F4F7; border: 1px solid #D5DCE4; border-left: 4px solid #4B2E9A; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<span style="flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: #172231; line-height: 1.25">CM Économétrie</span>
+<span style="flex-shrink: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 4px; border-radius: 4px; background: #FFFFFF; color: #172231; border: 1px solid #4B2E9A">ECO</span>
+</div>
+<span style="font-size: 12px; color: #586474; line-height: 1.3"><span style="font-weight: 600; font-variant-numeric: tabular-nums">8 h 05 – 9 h 55</span> · 1 h 50 · Amphi 1</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 213.33333333333331px; height: 143.66666666666666px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: #F1F4F7; border: 1px solid #D5DCE4; border-left: 4px solid #9C6B3F; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<span style="flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: #172231; line-height: 1.25">TD Séries temporelles</span>
+<span style="flex-shrink: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 4px; border-radius: 4px; background: #FFFFFF; color: #172231; border: 1px solid #9C6B3F">ST</span>
+</div>
+<span style="font-size: 12px; color: #586474; line-height: 1.3"><span style="font-weight: 600; font-variant-numeric: tabular-nums">10 h 10 – 12 h 00</span> · 1 h 50 · S. 104</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 360px; height: 143.66666666666666px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: repeating-linear-gradient(135deg, #FFFFFF 0 8px, #F5F7FA 8px 16px); border: 1px solid #E3E8EE; border-left: 1px solid #E3E8EE; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<span style="flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: #586474; line-height: 1.25">Pause déjeuner</span>
+
+</div>
+<span style="font-size: 12px; color: #586474; line-height: 1.3"><span style="font-weight: 600; font-variant-numeric: tabular-nums">12 h 00 – 13 h 50</span> · 1 h 50 · Rien de prévu</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 506.66666666666663px; height: 57px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: #EAF1FE; border: 1px solid #2563eb; border-left: 4px solid #D9487E; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<span style="flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: #1E3A8A; line-height: 1.25">Rappel actif — Tests</span>
+<span style="flex-shrink: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 4px; border-radius: 4px; background: #FFFFFF; color: #172231; border: 1px solid #D9487E">STAT</span>
+</div>
+<span style="font-size: 12px; color: #1E40AF; line-height: 1.3"><span style="font-weight: 600; font-variant-numeric: tabular-nums">13 h 50 – 14 h 35</span> · 45 min · Flashcards, 24 cartes</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 580px; height: 117px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: #E9F7F4; border: 1px solid #0f9d8a; border-left: 4px solid #0f9d8a; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<span style="flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: #0B5E53; line-height: 1.25">Projet Python</span>
+
+</div>
+<span style="font-size: 12px; color: #0B5E53; line-height: 1.3"><span style="font-weight: 600; font-variant-numeric: tabular-nums">14 h 45 – 16 h 15</span> · 1 h 30 · Étape 4/4 · rendu lundi</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 700px; height: 83.66666666666666px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: repeating-linear-gradient(135deg, #FFFFFF 0 8px, #F5F7FA 8px 16px); border: 1px solid #E3E8EE; border-left: 1px solid #E3E8EE; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<span style="flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: #586474; line-height: 1.25">Temps libre</span>
+
+</div>
+<span style="font-size: 12px; color: #586474; line-height: 1.3"><span style="font-weight: 600; font-variant-numeric: tabular-nums">16 h 15 – 17 h 20</span> · 1 h 05 · Rien de prévu</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 786.6666666666667px; height: 117px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: #EAF1FE; border: 1px solid #2563eb; border-left: 4px solid #4B2E9A; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<span style="flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: #1E3A8A; line-height: 1.25">Annale Économétrie 2024</span>
+<span style="flex-shrink: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 4px; border-radius: 4px; background: #FFFFFF; color: #172231; border: 1px solid #4B2E9A">ECO</span>
+</div>
+<span style="font-size: 12px; color: #1E40AF; line-height: 1.3"><span style="font-weight: 600; font-variant-numeric: tabular-nums">17 h 20 – 18 h 50</span> · 1 h 30 · Ex. 1 et 2, chronométré</span>
+</div>
+
+<div style="position: absolute; left: -10px; right: 0; top: 573.3333333333334px; height: 2px; background: #E8692A"><span style="position: absolute; left: 0; top: -3px; width: 8px; height: 8px; border-radius: 999px; background: #E8692A"></span></div>
+</div>
+</section>
+
+<aside style="flex: 1 1 320px; display: flex; flex-direction: column; gap: 16px">
+<section style="background: #15314B; color: #FFFFFF; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 13px; font-weight: 600; color: #9FB3C8">Prochaine activité · dans 5 min</div>
+<div style="font-family: Inter, sans-serif; font-size: 21px; font-weight: 600">Projet Python — étape 4/4</div>
+<div style="font-size: 14px; color: #C8D4E0; font-variant-numeric: tabular-nums">14 h 45 – 16 h 15 · 1 h 30</div>
+<button type="button" style="align-self: flex-start; margin-top: 6px; min-height: 44px; padding: 0 16px; border-radius: 10px; border: 0; background: #B84A14; color: #FFFFFF; font: 600 14px Inter, sans-serif">Lancer la Focus Room</button>
+</section>
+
+<section style="background: #FFFFFF; border: 1px solid #E3E8EE; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 17px; color: #15314B">Bilan de la journée</h2>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 13px; color: #586474">Cours</span><span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums">3 h 40</span></div>
+<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 13px; color: #586474">Travail perso</span><span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums">3 h 45 <span style="font-size: 13px; font-weight: 500; color: #586474">/ 4 h</span></span></div>
+<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 13px; color: #586474">Temps libre</span><span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums">2 h 55</span></div>
+<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 13px; color: #586474">Fin de journée</span><span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums">18 h 50</span></div>
+</div>
+<div style="position: relative; height: 10px; background: #EAF0F6; border-radius: 4px" title="3 h 45 sur un maximum de 4 h"><div style="height: 100%; width: 94%; background: #2563eb; border-radius: 0 4px 4px 0"></div></div>
+<div style="font-size: 12px; color: #586474">Plafond fixé dans Mon profil : 4 h / jour.</div>
+</section>
+
+<section style="background: #FFFFFF; border: 1px solid #E3E8EE; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 4px">
+<h2 style="margin: 0 0 8px; font-size: 17px; color: #15314B">Déroulé</h2>
+<ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column">
+
+<li style="display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #EEF1F4; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">8 h 05<br><span style="font-weight: 500; color: #586474">9 h 55</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #D5DCE4; flex-shrink: 0"></span><span style="font-weight: 600">CM Économétrie</span></span><span style="color: #586474; font-size: 13px">Cours · 1 h 50</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #EEF1F4; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">10 h 10<br><span style="font-weight: 500; color: #586474">12 h 00</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #D5DCE4; flex-shrink: 0"></span><span style="font-weight: 600">TD Séries temporelles</span></span><span style="color: #586474; font-size: 13px">Cours · 1 h 50</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #EEF1F4; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">12 h 00<br><span style="font-weight: 500; color: #586474">13 h 50</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #FFFFFF; flex-shrink: 0"></span><span style="font-weight: 600">Pause déjeuner</span></span><span style="color: #586474; font-size: 13px">Libre · 1 h 50</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #EEF1F4; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">13 h 50<br><span style="font-weight: 500; color: #586474">14 h 35</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #2563eb; flex-shrink: 0"></span><span style="font-weight: 600">Rappel actif — Tests</span></span><span style="color: #586474; font-size: 13px">Révision · 45 min</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #EEF1F4; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">14 h 45<br><span style="font-weight: 500; color: #586474">16 h 15</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #0f9d8a; flex-shrink: 0"></span><span style="font-weight: 600">Projet Python</span></span><span style="color: #586474; font-size: 13px">Devoir · 1 h 30</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #EEF1F4; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">16 h 15<br><span style="font-weight: 500; color: #586474">17 h 20</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #FFFFFF; flex-shrink: 0"></span><span style="font-weight: 600">Temps libre</span></span><span style="color: #586474; font-size: 13px">Libre · 1 h 05</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #EEF1F4; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">17 h 20<br><span style="font-weight: 500; color: #586474">18 h 50</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #2563eb; flex-shrink: 0"></span><span style="font-weight: 600">Annale Économétrie 2024</span></span><span style="color: #586474; font-size: 13px">Révision · 1 h 30</span></span>
+</li>
+
+</ol>
+</section>
+</aside>
+</div>
+<p style="margin: 0; font-size: 12px; color: #586474">Données fictives à titre d'illustration. Graduation tous les quarts d'heure ; horaires affichés à la minute.</p>
+</div>
+
+
+
+
+</body></html>

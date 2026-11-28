@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;src:url('../../fonts/Inter-Regular.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url('../../fonts/Inter-Medium.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url('../../fonts/Inter-SemiBold.woff') format('woff')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:700;font-display:swap;src:url('../../fonts/Inter-Bold.woff') format('woff')}
+html,body,button,input,select,textarea,svg text{font-family:'Inter',sans-serif}
+</style>
+
+<meta charset="utf-8">
+<title>Ensora+ — Planner accessible, vue jour</title>
+
+<style>
+body{margin:0;background:#F5F7FA}
+a{color:#15314B}a:hover{color:#0B1F33}
+</style></head>
+<body>
+
+
+<div style="font-family: Inter, sans-serif; color: #172231; background: #F5F7FA; min-height: 100%; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 20px">
+
+<header style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<div style="font-size: 15px; color: #4A5563">Smart Planner · vue détaillée · affichage accessible</div>
+<h1 style="margin: 0; font-family: Inter, sans-serif; font-size: 34px; color: #15314B">Vendredi 27 novembre</h1>
+</div>
+<div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center">
+<nav aria-label="Vue" style="display: flex; padding: 4px; gap: 4px; background: #E3E8EE; border-radius: 12px">
+<a href="02_planner-jour_accessible.html" aria-current="page" style="min-height: 40px; min-width: 96px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; padding: 0 16px; border-radius: 9px; font: 700 15px Inter, sans-serif; color: #FFFFFF; background: #15314B; text-decoration: none">Jour</a>
+<a href="01_planner-semaine_accessible.html" style="min-height: 40px; min-width: 96px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; padding: 0 16px; border-radius: 9px; font: 600 15px Inter, sans-serif; color: #15314B; text-decoration: none">Semaine</a>
+</nav>
+<button type="button" style="min-height: 44px; padding: 0 20px; border-radius: 10px; border: 0; background: #B84A14; color: #FFFFFF; font: 600 15px Inter, sans-serif">Replanifier</button>
+</div>
+</header>
+
+<nav aria-label="Choisir un jour" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
+<button type="button" aria-label="Jour précédent : jeudi 26" style="width: 44px; height: 44px; border-radius: 10px; border: 1px solid #C9D1DA; background: #FFFFFF; color: #15314B; display: flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"></path></svg></button>
+
+<button type="button" aria-pressed="false" style="min-height: 44px; min-width: 72px; padding: 0 12px; border-radius: 10px; border: 1px solid #C9D1DA; background: #FFFFFF; color: #15314B; font: 600 14px Inter, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; line-height: 1.2"><span>Lun</span><span style="font-size: 12px; font-weight: 500">23</span></button>
+
+<button type="button" aria-pressed="false" style="min-height: 44px; min-width: 72px; padding: 0 12px; border-radius: 10px; border: 1px solid #C9D1DA; background: #FFFFFF; color: #15314B; font: 600 14px Inter, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; line-height: 1.2"><span>Mar</span><span style="font-size: 12px; font-weight: 500">24</span></button>
+
+<button type="button" aria-pressed="false" style="min-height: 44px; min-width: 72px; padding: 0 12px; border-radius: 10px; border: 1px solid #C9D1DA; background: #FFFFFF; color: #15314B; font: 600 14px Inter, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; line-height: 1.2"><span>Mer</span><span style="font-size: 12px; font-weight: 500">25</span></button>
+
+<button type="button" aria-pressed="false" style="min-height: 44px; min-width: 72px; padding: 0 12px; border-radius: 10px; border: 1px solid #C9D1DA; background: #FFFFFF; color: #15314B; font: 600 14px Inter, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; line-height: 1.2"><span>Jeu</span><span style="font-size: 12px; font-weight: 500">26</span></button>
+
+<button type="button" aria-pressed="true" style="min-height: 44px; min-width: 72px; padding: 0 12px; border-radius: 10px; border: 2px solid #15314B; background: #15314B; color: #FFFFFF; font: 600 14px Inter, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; line-height: 1.2"><span>Ven</span><span style="font-size: 12px; font-weight: 500">27</span></button>
+
+<button type="button" aria-label="Jour suivant : samedi 28" style="width: 44px; height: 44px; border-radius: 10px; border: 1px solid #C9D1DA; background: #FFFFFF; color: #15314B; display: flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg></button>
+</nav>
+
+<div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+
+<section aria-label="Journée heure par heure" style="flex: 999 1 560px; min-width: 0; background: #FFFFFF; border: 1px solid #C9D1DA; border-radius: 14px; padding: 20px 16px; display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 0 10px">
+<div style="position: relative; height: 960px">
+<span style="position: absolute; top: 0px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">7 h 30</span><span style="position: absolute; top: 40px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">8 h</span><span style="position: absolute; top: 80px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">8 h 30</span><span style="position: absolute; top: 120px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">9 h</span><span style="position: absolute; top: 160px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">9 h 30</span><span style="position: absolute; top: 200px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">10 h</span><span style="position: absolute; top: 240px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">10 h 30</span><span style="position: absolute; top: 280px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">11 h</span><span style="position: absolute; top: 320px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">11 h 30</span><span style="position: absolute; top: 360px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">12 h</span><span style="position: absolute; top: 400px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">12 h 30</span><span style="position: absolute; top: 440px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">13 h</span><span style="position: absolute; top: 480px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">13 h 30</span><span style="position: absolute; top: 520px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">14 h</span><span style="position: absolute; top: 560px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">14 h 30</span><span style="position: absolute; top: 600px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">15 h</span><span style="position: absolute; top: 640px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">15 h 30</span><span style="position: absolute; top: 680px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">16 h</span><span style="position: absolute; top: 720px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">16 h 30</span><span style="position: absolute; top: 760px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">17 h</span><span style="position: absolute; top: 800px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">17 h 30</span><span style="position: absolute; top: 840px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">18 h</span><span style="position: absolute; top: 880px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">18 h 30</span><span style="position: absolute; top: 920px; right: 0; font-size: 14px; font-weight: 700; color: #172231; transform: translateY(-50%); font-variant-numeric: tabular-nums">19 h</span><span style="position: absolute; top: 960px; right: 0; font-size: 12px; font-weight: 500; color: #4A5563; transform: translateY(-50%); font-variant-numeric: tabular-nums">19 h 30</span>
+<span style="position: absolute; top: 573.3333333333334px; right: 0; transform: translateY(-50%); font-size: 12px; font-weight: 700; color: #FFFFFF; background: #B84A14; padding: 2px 6px; border-radius: 4px; font-variant-numeric: tabular-nums">14 h 40</span>
+</div>
+<div style="position: relative; height: 960px; background-image: repeating-linear-gradient(to bottom, #C9D1DA 0 1px, transparent 1px 80px), repeating-linear-gradient(to bottom, #EEF1F4 0 1px, transparent 1px 20px); background-position: 0 40px, 0 0; border-radius: 6px">
+
+<div style="position: absolute; left: 0; right: 0; top: 46.66666666666667px; height: 143.66666666666666px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: #FFFFFF; border: 1px solid #8A96A3; border-left: 6px solid #004488; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#172231" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cours" style="flex-shrink: 0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: #172231; line-height: 1.25">CM Économétrie</span>
+<span style="flex-shrink: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: #FFFFFF; color: #172231; border: 1.5px solid #004488">ECO</span>
+</div>
+<span style="font-size: 13px; color: #3E4A58; line-height: 1.3; padding-left: 24px"><strong style="font-weight: 700; font-variant-numeric: tabular-nums">8 h 05 – 9 h 55</strong> · 1 h 50 · Cours · Amphi 1</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 213.33333333333331px; height: 143.66666666666666px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: #FFFFFF; border: 1px solid #8A96A3; border-left: 6px solid #EECC66; box-shadow: -1px 0 0 0 #3E4A58; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#172231" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Cours" style="flex-shrink: 0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: #172231; line-height: 1.25">TD Séries temporelles</span>
+<span style="flex-shrink: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: #FFFFFF; color: #172231; border: 1.5px solid #EECC66">ST</span>
+</div>
+<span style="font-size: 13px; color: #3E4A58; line-height: 1.3; padding-left: 24px"><strong style="font-weight: 700; font-variant-numeric: tabular-nums">10 h 10 – 12 h 00</strong> · 1 h 50 · Cours · S. 104</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 360px; height: 143.66666666666666px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: repeating-linear-gradient(135deg, #FFFFFF 0 8px, #F5F7FA 8px 16px); border: 1px dotted #8A96A3; border-left: 1px dotted #8A96A3; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4A5563" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Libre" style="flex-shrink: 0"><path d="M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6l1.4 1.4 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4 M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: #4A5563; line-height: 1.25">Pause déjeuner</span>
+
+</div>
+<span style="font-size: 13px; color: #4A5563; line-height: 1.3; padding-left: 24px"><strong style="font-weight: 700; font-variant-numeric: tabular-nums">12 h 00 – 13 h 50</strong> · 1 h 50 · Libre · Rien de prévu</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 506.66666666666663px; height: 57px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: #E9EFF6; border: 1px solid #C3CEDA; border-left: 6px solid #994455; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#172231" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Révision" style="flex-shrink: 0"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: #172231; line-height: 1.25">Rappel actif — Tests</span>
+<span style="flex-shrink: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: #FFFFFF; color: #172231; border: 1.5px solid #994455">STAT</span>
+</div>
+<span style="font-size: 13px; color: #3E4A58; line-height: 1.3; padding-left: 24px"><strong style="font-weight: 700; font-variant-numeric: tabular-nums">13 h 50 – 14 h 35</strong> · 45 min · Révision · Flashcards, 24 cartes</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 580px; height: 117px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: #FFFFFF; border: 2px dashed #3E4A58; border-left: 6px solid #8A96A3; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#172231" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Devoir" style="flex-shrink: 0"><path d="M6 3h12a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z M8 12l3 3 5-6"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: #172231; line-height: 1.25">Projet Python</span>
+
+</div>
+<span style="font-size: 13px; color: #3E4A58; line-height: 1.3; padding-left: 24px"><strong style="font-weight: 700; font-variant-numeric: tabular-nums">14 h 45 – 16 h 15</strong> · 1 h 30 · Devoir · Étape 4/4 · rendu lundi</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 700px; height: 83.66666666666666px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: repeating-linear-gradient(135deg, #FFFFFF 0 8px, #F5F7FA 8px 16px); border: 1px dotted #8A96A3; border-left: 1px dotted #8A96A3; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4A5563" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Libre" style="flex-shrink: 0"><path d="M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6l1.4 1.4 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4 M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: #4A5563; line-height: 1.25">Temps libre</span>
+
+</div>
+<span style="font-size: 13px; color: #4A5563; line-height: 1.3; padding-left: 24px"><strong style="font-weight: 700; font-variant-numeric: tabular-nums">16 h 15 – 17 h 20</strong> · 1 h 05 · Libre · Rien de prévu</span>
+</div>
+
+<div style="position: absolute; left: 0; right: 0; top: 786.6666666666667px; height: 117px; box-sizing: border-box; border-radius: 8px; padding: 6px 10px; background: #E9EFF6; border: 1px solid #C3CEDA; border-left: 6px solid #004488; box-shadow: none; overflow: hidden; display: flex; flex-direction: column; gap: 2px">
+<div style="display: flex; gap: 8px; align-items: center">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#172231" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Révision" style="flex-shrink: 0"><path d="M3 12a9 9 0 0 1 15-6.7L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-15 6.7L3 16 M3 21v-5h5"></path></svg>
+<span style="flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: #172231; line-height: 1.25">Annale Économétrie 2024</span>
+<span style="flex-shrink: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: #FFFFFF; color: #172231; border: 1.5px solid #004488">ECO</span>
+</div>
+<span style="font-size: 13px; color: #3E4A58; line-height: 1.3; padding-left: 24px"><strong style="font-weight: 700; font-variant-numeric: tabular-nums">17 h 20 – 18 h 50</strong> · 1 h 30 · Révision · Ex. 1 et 2, chronométré</span>
+</div>
+
+<div style="position: absolute; left: -10px; right: 0; top: 573.3333333333334px; height: 3px; background: #B84A14"><span style="position: absolute; left: 0; top: -4px; width: 10px; height: 10px; border-radius: 999px; background: #B84A14"></span></div>
+</div>
+</section>
+
+<aside style="flex: 1 1 340px; display: flex; flex-direction: column; gap: 16px">
+<section style="background: #15314B; color: #FFFFFF; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 13px; font-weight: 600; color: #C9D6E3">Prochaine activité · dans 5 min</div>
+<div style="font-family: Inter, sans-serif; font-size: 22px; font-weight: 600">Projet Python — étape 4/4</div>
+<div style="font-size: 15px; color: #E3EAF1; font-variant-numeric: tabular-nums">14 h 45 – 16 h 15 · 1 h 30</div>
+<button type="button" style="align-self: flex-start; margin-top: 6px; min-height: 44px; padding: 0 16px; border-radius: 10px; border: 0; background: #FFFFFF; color: #15314B; font: 700 15px Inter, sans-serif">Lancer la Focus Room</button>
+</section>
+
+<section style="background: #FFFFFF; border: 1px solid #C9D1DA; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 18px; color: #15314B">Bilan de la journée</h2>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 13px; color: #4A5563">Cours</span><span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums">3 h 40</span></div>
+<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 13px; color: #4A5563">Travail perso</span><span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums">3 h 45 <span style="font-size: 14px; font-weight: 500; color: #4A5563">/ 4 h</span></span></div>
+<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 13px; color: #4A5563">Temps libre</span><span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums">2 h 55</span></div>
+<div style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 13px; color: #4A5563">Fin de journée</span><span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums">18 h 50</span></div>
+</div>
+</section>
+
+<section style="background: #FFFFFF; border: 1px solid #C9D1DA; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 4px">
+<h2 style="margin: 0 0 8px; font-size: 18px; color: #15314B">Déroulé</h2>
+<ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column">
+
+<li style="display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #E3E8EE; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">8 h 05<br><span style="font-weight: 500; color: #4A5563">9 h 55</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 4px; height: 14px; border-radius: 2px; background: #004488; box-shadow: none; flex-shrink: 0"></span><span style="font-weight: 600">CM Économétrie</span></span><span style="color: #4A5563; font-size: 13px">Cours · 1 h 50</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #E3E8EE; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">10 h 10<br><span style="font-weight: 500; color: #4A5563">12 h 00</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 4px; height: 14px; border-radius: 2px; background: #EECC66; box-shadow: 0 0 0 1px #3E4A58; flex-shrink: 0"></span><span style="font-weight: 600">TD Séries temporelles</span></span><span style="color: #4A5563; font-size: 13px">Cours · 1 h 50</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #E3E8EE; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">12 h 00<br><span style="font-weight: 500; color: #4A5563">13 h 50</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 4px; height: 14px; border-radius: 2px; background: #C9D1DA; box-shadow: none; flex-shrink: 0"></span><span style="font-weight: 600">Pause déjeuner</span></span><span style="color: #4A5563; font-size: 13px">Libre · 1 h 50</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #E3E8EE; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">13 h 50<br><span style="font-weight: 500; color: #4A5563">14 h 35</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 4px; height: 14px; border-radius: 2px; background: #994455; box-shadow: none; flex-shrink: 0"></span><span style="font-weight: 600">Rappel actif — Tests</span></span><span style="color: #4A5563; font-size: 13px">Révision · 45 min</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #E3E8EE; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">14 h 45<br><span style="font-weight: 500; color: #4A5563">16 h 15</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 4px; height: 14px; border-radius: 2px; background: #8A96A3; box-shadow: none; flex-shrink: 0"></span><span style="font-weight: 600">Projet Python</span></span><span style="color: #4A5563; font-size: 13px">Devoir · 1 h 30</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #E3E8EE; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">16 h 15<br><span style="font-weight: 500; color: #4A5563">17 h 20</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 4px; height: 14px; border-radius: 2px; background: #C9D1DA; box-shadow: none; flex-shrink: 0"></span><span style="font-weight: 600">Temps libre</span></span><span style="color: #4A5563; font-size: 13px">Libre · 1 h 05</span></span>
+</li>
+
+<li style="display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid #E3E8EE; font-size: 14px; align-items: start">
+<span style="font-variant-numeric: tabular-nums; font-weight: 700; color: #172231; line-height: 1.35">17 h 20<br><span style="font-weight: 500; color: #4A5563">18 h 50</span></span>
+<span style="display: flex; flex-direction: column; gap: 2px; line-height: 1.35"><span style="display: flex; gap: 6px; align-items: center"><span style="width: 4px; height: 14px; border-radius: 2px; background: #004488; box-shadow: none; flex-shrink: 0"></span><span style="font-weight: 600">Annale Économétrie 2024</span></span><span style="color: #4A5563; font-size: 13px">Révision · 1 h 30</span></span>
+</li>
+
+</ol>
+</section>
+</aside>
+</div>
+<p style="margin: 0; font-size: 13px; color: #4A5563">Données fictives à titre d'illustration. Graduation tous les quarts d'heure ; horaires affichés à la minute.</p>
+</div>
+
+
+
+
+</body></html>

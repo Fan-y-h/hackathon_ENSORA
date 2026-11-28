@@ -1,0 +1,8 @@
+.status-choice { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.status-choice__option { text-align: left; display: flex; flex-direction: column; gap: 6px; padding: 16px; border-radius: var(--radius-m); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; font: inherit; }
+.status-choice__option:hover:not(:disabled) { border-color: var(--border-meaningful); }
+.status-choice__option:disabled { cursor: progress; }
+.status-choice__option--selected { border: 2px solid var(--navy); padding: 15px; background: var(--surface-2); }
+.status-choice__head { display: flex; align-items: center; gap: 10px; color: var(--text-title); font-size: 15px; }
+.status-choice__radio { width: 20px; height: 20px; flex: none; border-radius: 999px; border: 2px solid var(--border-meaningful); display: inline-flex; align-items: center; justify-content: center; color: var(--surface); }
+.status-choice__option--selected .status-choice__radio { background: var(--navy); border-color: var(--navy); }

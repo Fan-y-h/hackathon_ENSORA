@@ -1,0 +1,28 @@
+ENSORA+ — Maquettes (propositions visuelles)
+============================================
+
+Ensora_maquettes_compilation.pdf : tous les écrans dans un seul PDF, dans cet ordre :
+palette, mode normal, dark mode, mode accessible, dark mode accessible.
+
+Dossiers :
+  0_palette/                 Palette de couleurs (référence, avec contrastes)
+  1_mode_normal/             Système visuel, Dashboard, Learning Analytics, Smart Planner (Semaine et Jour),
+                             Couleurs des matières, Focus Room (version claire)
+  2_dark_mode/               Les mêmes écrans en mode sombre
+  3_mode_accessible/         Planner accessible : vues Semaine et Jour
+  4_dark_mode_accessible/    Planner accessible en mode sombre
+
+  fonts/                     Police Inter (seule police utilisée), chargée par les pages HTML
+
+Chaque dossier contient :
+  images/  les captures PNG (largeur 1920 px)
+  html/    le code HTML de chaque page : un fichier autonome à ouvrir dans un navigateur.
+           Les liens entre pages (onglets Jour / Semaine, menu) fonctionnent entre ces fichiers.
+
+Palettes matières du mode accessible (Paul Tol, medium contrast) :
+  clair  : ECO #004488 · STAT #994455 · ST #EECC66 · ML #6699CC
+  sombre : ECO #4477AA · STAT #CC6677 · ST #EECC66 · ML #99DDFF
+
+Focus Room : cases à cocher en bleu Brume #7FB2E5 (sombre) et #2B6CB0 (clair).
+
+Les données affichées sont fictives.

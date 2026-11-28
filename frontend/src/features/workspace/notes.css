@@ -1,0 +1,7 @@
+.notes-layout { display: grid; gap: 16px; grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(240px, 300px); align-items: start; }
+@media (max-width: 1100px) { .notes-layout { grid-template-columns: 1fr; } }
+.notes-nav { display: flex; gap: 8px; align-items: center; min-height: 40px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; font-size: 14px; }
+.notes-nav:hover { background: var(--surface-2); }
+.notes-nav--on { background: var(--surface-sunken); font-weight: 600; }
+.notes-item { display: flex; flex-direction: column; gap: 2px; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; width: 100%; }
+.notes-editor { min-height: 360px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 14px; }
