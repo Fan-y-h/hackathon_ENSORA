@@ -65,22 +65,17 @@ export function DashboardPage() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow={[formatLongDate(today), [profile.data?.cohort, profile.data?.track].filter(Boolean).join(" "), statusLabel]
-          .filter(Boolean)
-          .join(" · ")}
-        title={`Bonjour${firstName ? ` ${firstName}` : ""} — ${sessionsToday.length} séance${sessionsToday.length > 1 ? "s" : ""} prévue${sessionsToday.length > 1 ? "s" : ""} aujourd'hui`}
+        eyebrow={[formatLongDate(today), statusLabel].filter(Boolean).join(" · ")}
+        title={`Bonjour${firstName ? ` ${firstName}` : ""}`}
         actions={
           <>
-            <button type="button" className="btn" disabled title="Connexion Moodle / Pamplemousse / Drive : module de synchronisation à venir">
-              Synchroniser (à venir)
-            </button>
             {nextSession ? (
               <Link className="btn btn--primary" to={`/focus?session=${nextSession.session!.id}`}>
-                Démarrer la séance de {formatClock(nextSession.startAt, tz)}
+                <Icon name="play" /> Démarrer · {formatClock(nextSession.startAt, tz)}
               </Link>
             ) : (
               <Link className="btn btn--primary" to="/planner">
-                Ouvrir le Smart Planner
+                Planner
               </Link>
             )}
           </>
@@ -88,14 +83,14 @@ export function DashboardPage() {
       />
 
       {profile.data && !profile.data.student_status && (
-        <Card title="Êtes-vous élève fonctionnaire ou ingénieur·e ?" aside={<Link to="/settings">Modifiable dans Mon profil</Link>}>
+        <Card title="Élève fonctionnaire ou ingénieur·e ?">
           <StudentStatusPicker />
         </Card>
       )}
 
       {status.data?.dirty && (
-        <StatusLine tone="warning" label="Votre planning n'est plus à jour">
-          <Link to="/planner">recalculer la proposition</Link>
+        <StatusLine tone="warning" label="Planning à mettre à jour">
+          <Link to="/planner">recalculer</Link>
         </StatusLine>
       )}
 
@@ -104,51 +99,49 @@ export function DashboardPage() {
           <Meter value={todayStats?.actual_min ?? 0} max={dailyMax} label={`${formatDuration(todayStats?.actual_min ?? 0)} sur ${formatDuration(dailyMax)}`} />
         </Stat>
         <Stat
-          label="Répétitions dues"
+          label="À réviser"
           value={due.data?.length ?? "—"}
-          unit="flashcards"
-          delta={due.data?.length ? <Link to="/flashcards">Réviser maintenant</Link> : "Rien à réviser"}
+          unit="cartes"
+          delta={due.data?.length ? <Link to="/flashcards">Réviser</Link> : undefined}
         />
         <Stat
           label="Régularité"
           value={streak ?? "—"}
           unit={streak === 1 ? "jour d'affilée" : "jours d'affilée"}
-          delta={heatmap.data ? `${heatmap.data.regularity.active_days} jours actifs sur ${heatmap.data.regularity.days_in_range}` : undefined}
         />
         {nextExam ? (
           <Stat
             tone="accent"
-            label="Prochaine évaluation"
+            label={nextExam.title}
             value={countdownLabel(nextExam.deadline_at!, new Date(), tz)}
-            unit={nextExam.title}
-            delta={
-              nextExam.readiness.estimate === null
-                ? "Préparation : pas encore évaluée"
-                : `Préparation estimée : ${formatPercent(nextExam.readiness.estimate)}`
-            }
+            delta={nextExam.readiness.estimate === null ? undefined : `Prêt à ${formatPercent(nextExam.readiness.estimate)}`}
           />
         ) : (
-          <Stat label="Prochaine évaluation" value="—" delta="Aucune évaluation à venir" />
+          <Stat label="Prochaine évaluation" value="—" />
         )}
       </section>
 
       <div className="grid-2">
-        <Card title="Aujourd'hui" aside="Agenda + Smart Planner">
+        <Card title="Aujourd'hui">
           {events.isPending || plan.isPending ? null : blocks.length === 0 ? (
-            <EmptyState title="Journée libre">Aucun cours ni séance prévus aujourd'hui.</EmptyState>
+            <EmptyState title="Journée libre" />
           ) : (
             <ol className="today-list">
               {blocks.map((b) => (
                 <li key={b.id}>
                   <span className="tabular muted">{formatClock(b.startAt, tz)}</span>
-                  <div className={`today-item today-item--${b.kind}${b === nextSession ? " today-item--next" : ""}`} style={{ borderLeftColor: subjects.color(b.subjectId) }}>
+                  <div
+                    className={`today-item today-item--${b.kind}${b === nextSession ? " today-item--next" : ""}`}
+                    style={{ borderLeftColor: b.kind === "personal" ? undefined : subjects.color(b.subjectId) }}
+                    aria-label={`${KIND_LABEL[b.kind]} : ${b.title}${b === nextSession ? ", prochaine" : ""}`}
+                  >
                     <Icon name={KIND_ICON[b.kind]} size={15} />
-                    <div className="stack" style={{ gap: 2, flex: 1, minWidth: 0 }}>
+                    <div className="stack" style={{ gap: 0, flex: 1, minWidth: 0 }}>
+                      <span className="today-item__tag">{b.tag}</span>
                       <strong>{b.title}</strong>
-                      <span className="xsmall muted">{b.subtitle || formatDuration(b.endMin - b.startMin)}</span>
                     </div>
                     <SubjectBadge acronym={subjects.acronym(b.subjectId)} color={subjects.color(b.subjectId)} />
-                    <span className="xsmall strong">{b === nextSession ? "Prochaine" : KIND_LABEL[b.kind]}</span>
+                    {b.kind !== "deadline" && <span className="xsmall tabular">{formatDuration(b.endMin - b.startMin)}</span>}
                   </div>
                 </li>
               ))}
@@ -156,11 +149,11 @@ export function DashboardPage() {
           )}
         </Card>
 
-        <Card title="Préparation aux évaluations" aside="bande = incertitude">
+        <Card title="Préparation">
           <QueryState query={readiness}>
             {(data) =>
               data.assessments.length === 0 ? (
-                <EmptyState title="Aucune évaluation">Les partiels importés apparaîtront ici.</EmptyState>
+                <EmptyState title="Aucune évaluation" />
               ) : (
                 <div className="stack">
                   {data.assessments.slice(0, 4).map((a) => (
@@ -168,6 +161,11 @@ export function DashboardPage() {
                       <div className="row" style={{ justifyContent: "space-between" }}>
                         <strong className="small">{a.title}</strong>
                         <span className="small muted tabular">
+                          {a.scope_status !== "confirmed" && (
+                            <span style={{ color: "var(--warning)", marginRight: 4 }}>
+                              <Icon name="warning" size={12} label="Programme à confirmer" />
+                            </span>
+                          )}
                           {a.deadline_at ? countdownLabel(a.deadline_at, new Date(), tz) : "date ?"} ·{" "}
                           <strong style={{ color: "var(--text)" }}>
                             {a.readiness.estimate === null ? "non évaluée" : formatPercent(a.readiness.estimate)}
@@ -175,7 +173,6 @@ export function DashboardPage() {
                         </span>
                       </div>
                       <ReadinessBar low={a.readiness.low} high={a.readiness.high} estimate={a.readiness.estimate} />
-                      {a.scope_status !== "confirmed" && <span className="xsmall muted">Programme à confirmer : estimation partielle.</span>}
                     </div>
                   ))}
                 </div>
@@ -184,17 +181,17 @@ export function DashboardPage() {
           </QueryState>
         </Card>
 
-        <Card title="Temps de travail · 7 jours" aside={analytics.data ? `total ${formatDuration(analytics.data.study.actual_min)}` : undefined}>
+        <Card title="7 derniers jours" aside={analytics.data ? formatDuration(analytics.data.study.actual_min) : undefined}>
           <QueryState query={heatmap}>
             {(data) => <WeekBars days={data.days} today={today} />}
           </QueryState>
         </Card>
 
-        <Card title="Notions à risque d'oubli" aside={<Link to="/analytics">Voir l'analyse</Link>}>
+        <Card title="À risque d'oubli" aside={<Link to="/analytics">Analyse</Link>}>
           <QueryState query={mastery}>
             {() =>
               atRisk.length === 0 ? (
-                <EmptyState title="Rien à signaler">Les notions fragiles apparaissent après vos premiers quiz et flashcards.</EmptyState>
+                <EmptyState title="Rien à signaler" />
               ) : (
                 <ul className="list">
                   {atRisk.map((m) => (

@@ -46,20 +46,20 @@
   --accent-soft-text: #8a3a10;
 
   /* Activity types (validated categorical trio) */
-  --type-course-bg: #f1f4f7;
-  --type-course-border: #d5dce4;
+  --type-course-bg: #ffffff;
+  --type-course-border: #c9d1da;
   --type-course-bar: #aab4c0;
   --type-revision: #2563eb;
   --type-revision-bg: #e9eff6;
-  --type-revision-border: #cfe0fb;
+  --type-revision-border: #a9c1e8;
   --type-revision-text: #1b4fc4;
   --type-task: #0f9d8a;
-  --type-task-bg: #e9f7f4;
-  --type-task-border: #c2e7e0;
+  --type-task-bg: #ffffff;
+  --type-task-border: #4a5563;
   --type-task-text: #0b5e53;
-  --type-exam-bg: #ffe6d8;
-  --type-exam-border: #e8692a;
-  --type-exam-text: #8a3a10;
+  --type-exam-bg: #15314b;
+  --type-exam-border: #15314b;
+  --type-exam-text: #ffffff;
 
   /* Sequential mastery ramp (one hue, light -> dark) */
   --seq-0: #cce3fd;
@@ -130,7 +130,7 @@
   --accent-soft-border: #6b3a22;
   --accent-soft-text: #f7a57a;
 
-  --type-course-bg: #18242f;
+  --type-course-bg: #111c27;
   --type-course-border: #2e3e4d;
   --type-course-bar: #4a5866;
   --type-revision: #4f86f7;
@@ -138,12 +138,12 @@
   --type-revision-border: #284777;
   --type-revision-text: #a9c4ff;
   --type-task: #1fa896;
-  --type-task-bg: #0f2b27;
-  --type-task-border: #1f5048;
+  --type-task-bg: #111c27;
+  --type-task-border: #9aa8b6;
   --type-task-text: #5fd3c2;
-  --type-exam-bg: #38200f;
-  --type-exam-border: #e8692a;
-  --type-exam-text: #f7a57a;
+  --type-exam-bg: #dce6f0;
+  --type-exam-border: #dce6f0;
+  --type-exam-text: #0b141d;
 
   /* Dark ramp: dark = low, light = high (selected, not flipped) */
   --seq-0: #1c3a57;

@@ -31,8 +31,7 @@ export function AnalyticsPage() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Learning Analytics"
-        title="Où en est ma maîtrise ?"
+        title="Learning Analytics"
         actions={
           <div className="segmented" role="group" aria-label="Période">
             {RANGES.map((r) => (
@@ -73,8 +72,8 @@ export function AnalyticsPage() {
       </QueryState>
 
       <Card
-        title="Maîtrise par notion et par dimension"
-        subtitle="Seules les activités de rappel, exercices et évaluations comptent — lire un cours ne fait pas monter le score."
+        title="Maîtrise par notion"
+       
         aside={<RampLegend />}
       >
         <QueryState query={masteryMap} lines={5}>
@@ -118,17 +117,16 @@ export function AnalyticsPage() {
             )
           }
         </QueryState>
-        <p className="xsmall muted">Estimations pédagogiques, pas des notes. Case hachurée = aucune preuve objective (inconnu, pas zéro).</p>
       </Card>
 
       <div className="grid-auto" style={{ ["--min" as string]: "380px" }}>
-        <Card title="Régularité · 12 semaines" subtitle="Minutes de travail effectif par jour (planning et Focus Room).">
+        <Card title="Régularité · 12 sem.">
           <QueryState query={heatmap}>
             {(h) => <Calendar days={h.days} start={heatStart} today={today} />}
           </QueryState>
         </Card>
 
-        <Card title="Préparation aux évaluations" subtitle="Notion la plus faible de chaque concept, pondérée par son importance.">
+        <Card title="Préparation">
           <QueryState query={readiness}>
             {(r) =>
               r.assessments.length === 0 ? (
@@ -159,7 +157,7 @@ export function AnalyticsPage() {
           </QueryState>
         </Card>
 
-        <Card title="Temps par matière" subtitle="Réalisé sur la période (planifié en gris).">
+        <Card title="Temps par matière">
           <QueryState query={analytics}>
             {(a) =>
               a.per_subject.length === 0 ? (
@@ -185,7 +183,7 @@ export function AnalyticsPage() {
           </QueryState>
         </Card>
 
-        <Card title="Flashcards" subtitle="Réponses sur la période.">
+        <Card title="Flashcards">
           <QueryState query={analytics}>
             {(a) => {
               const r = a.flashcards.ratings;

@@ -18,6 +18,10 @@ const PATHS = {
   pause: "M8 5v14M16 5v14",
   refresh: "M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  flag: "M5 21V4M5 4h11l-2 4 2 4H5",
+  user: "M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM4 21a8 8 0 0 1 16 0",
+  info: "M12 11v5M12 8h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
+  chevronDown: "m6 9 6 6 6-6",
 } as const;
 
 export type IconName = keyof typeof PATHS;

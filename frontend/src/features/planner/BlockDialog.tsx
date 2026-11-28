@@ -145,7 +145,6 @@ export function BlockDialog({ block, onClose }: { block: Block; onClose: () => v
                 Non faite
               </button>
             </div>
-            <span className="xsmall muted">Le travail restant est replanifié au prochain calcul du planning.</span>
           </fieldset>
         </div>
       )}

@@ -19,8 +19,7 @@ export function GradesPage() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Résultats & objectifs"
-        title="Mes moyennes"
+        title="Résultats"
         actions={
           programs.data && programs.data.length > 1 ? (
             <label className="field" style={{ minWidth: 240 }}>
@@ -36,9 +35,7 @@ export function GradesPage() {
           ) : undefined
         }
       />
-      <Card
-        subtitle="Moyenne provisoire = notes déjà connues, pondérées par leur couverture. Une note manquante n'est jamais comptée comme 0. Statut officiel : inconnu tant que les règles ne sont pas vérifiées."
-      >
+      <Card>
         <QueryState query={programs}>
           {(list) =>
             list.length === 0 ? (
@@ -81,9 +78,6 @@ export function GradesPage() {
           }
         </QueryState>
       </Card>
-      <p className="xsmall muted">
-        Simulateur, objectifs et notes requises : disponibles dans l'API (/grades/simulate, /grades/required), écran détaillé à venir.
-      </p>
     </div>
   );
 }

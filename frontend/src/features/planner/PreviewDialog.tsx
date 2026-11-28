@@ -25,10 +25,6 @@ export function PreviewDialog({
 
   return (
     <Dialog title="Proposition de planning" onClose={onClose}>
-      <p className="small muted">
-        Calculée sans IA (algorithme {preview.algorithm_version}) à partir de votre agenda, de vos tâches, de vos
-        révisions dues et de vos plafonds. Rien n'est modifié tant que vous n'acceptez pas.
-      </p>
 
       <div className="row" style={{ gap: 16 }}>
         <div className="stat">

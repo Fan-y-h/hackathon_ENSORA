@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 
 import { errorMessage } from "../../api/client";
 import { useActiveFocus, useFinishFocus, useFocusTransition, usePlan, useStartFocus } from "../../api/queries";
@@ -104,11 +104,6 @@ function StartForm() {
           <button type="submit" className="btn btn--primary" disabled={start.isPending}>
             <Icon name="play" /> Commencer
           </button>
-          {!session && (
-            <span className="xsmall muted">
-              Astuce : lancez une séance depuis le <Link to="/planner">Smart Planner</Link> pour la relier à votre planning.
-            </span>
-          )}
         </form>
       </div>
     </div>
@@ -207,9 +202,6 @@ function Running({ focus, fetchedAt }: { focus: Focus; fetchedAt: number }) {
         <button type="button" className="btn btn--primary focus__finish" onClick={() => setFinishing(true)}>
           Terminer et s'évaluer
         </button>
-        <p className="xsmall muted" style={{ textAlign: "center" }}>
-          Le temps est enregistré par le serveur : vous pouvez recharger la page sans le perdre. Pauses exclues.
-        </p>
       </div>
       {finishing && <FinishDialog focus={focus} onClose={() => setFinishing(false)} />}
     </div>
@@ -271,7 +263,6 @@ function FinishDialog({ focus, onClose }: { focus: Focus; onClose: () => void })
           <span>Difficultés, notions à réexpliquer</span>
           <textarea className="textarea" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={4000} />
         </label>
-        <p className="xsmall muted">Votre ressenti ajuste le planning ; il ne compte pas comme preuve de maîtrise.</p>
         {finish.error && <div className="status status--critical">{errorMessage(finish.error)}</div>}
         <button type="submit" className="btn btn--primary" disabled={finish.isPending}>
           Enregistrer

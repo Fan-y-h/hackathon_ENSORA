@@ -24,9 +24,9 @@ export function QuizPage() {
 
   return (
     <div className="page">
-      <PageHeader eyebrow="Quiz" title="Quiz et diagnostics" />
+      <PageHeader title="Quiz" />
       {start.error && <div className="status status--critical">{errorMessage(start.error)}</div>}
-      <Card title="Quiz disponibles" subtitle="Mode examen : temps limité, sans corrigé ni AI Tutor jusqu'à la remise.">
+      <Card>
         <QueryState query={quizzes}>
           {(list) =>
             list.length === 0 ? (
@@ -91,8 +91,7 @@ function AttemptView({ attempt, onSubmitted }: { attempt: Attempt; onSubmitted: 
   return (
     <div className="page" style={{ maxWidth: 820 }}>
       <PageHeader
-        eyebrow={attempt.mode === "exam" ? "Mode examen" : "Entraînement"}
-        title="Répondez aux questions"
+        title={attempt.mode === "exam" ? "Examen" : "Entraînement"}
         actions={
           remaining !== null && (
             <span className="pill" role="timer" aria-live="off">
@@ -115,7 +114,6 @@ function AttemptView({ attempt, onSubmitted }: { attempt: Attempt; onSubmitted: 
         <button type="submit" className="btn btn--primary" disabled={save.isPending || submit.isPending}>
           Remettre ma copie
         </button>
-        {attempt.mode === "exam" && <span className="xsmall muted">Le chronomètre fait foi côté serveur ; une copie expirée est corrigée telle quelle.</span>}
       </form>
     </div>
   );

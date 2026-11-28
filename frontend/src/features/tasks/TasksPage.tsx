@@ -22,8 +22,7 @@ export function TasksPage() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Mes tâches"
-        title="Devoirs, projets et tâches personnelles"
+        title="Mes tâches"
         actions={
           <div className="segmented" role="group" aria-label="Affichage">
             <button type="button" aria-pressed={view === "kanban"} onClick={() => setView("kanban")}>
@@ -40,7 +39,7 @@ export function TasksPage() {
           <QueryState query={tasks} lines={6}>
             {(page) => {
               const items = page.items.filter((t) => t.status !== "cancelled" && !t.parent_task_id);
-              if (items.length === 0) return <Card><EmptyState title="Aucune tâche">Ajoutez votre première tâche à droite.</EmptyState></Card>;
+              if (items.length === 0) return <Card><EmptyState title="Aucune tâche" /></Card>;
               return view === "kanban" ? (
                 <div className="kanban">
                   {COLUMNS.map((col) => (
@@ -190,7 +189,6 @@ function NewTask() {
         <button type="submit" className="btn btn--primary" disabled={create.isPending || !title.trim()}>
           <Icon name="plus" /> Ajouter
         </button>
-        <span className="xsmall muted">La tâche sera répartie dans vos créneaux libres au prochain calcul du planning.</span>
       </form>
     </Card>
   );

@@ -25,7 +25,7 @@ export function NotesPage() {
 
   return (
     <div className="page">
-      <PageHeader eyebrow="Mes notes" title="Cahiers et carnet d'erreurs" />
+      <PageHeader title="Mes notes" />
       <div className="notes-layout">
         <Card title="Cahiers">
           <QueryState query={notebooks}>
@@ -92,11 +92,11 @@ export function NotesPage() {
           )}
         </div>
 
-        <Card title="Carnet d'erreurs" subtitle="Les erreurs récurrentes deviennent des séances de consolidation.">
+        <Card title="Carnet d'erreurs">
           <QueryState query={errors}>
             {(list) =>
               list.length === 0 ? (
-                <p className="small muted">Aucune erreur enregistrée. Les erreurs des quiz en mode examen s'ajoutent ici.</p>
+                <p className="small muted">Aucune erreur.</p>
               ) : (
                 <ul className="list">
                   {list.slice(0, 12).map((e) => (

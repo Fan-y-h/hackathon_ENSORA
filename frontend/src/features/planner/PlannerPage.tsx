@@ -21,14 +21,22 @@ import {
   weekdayOfKey,
 } from "../../lib/time";
 import { BlockDialog } from "./BlockDialog";
-import { buildBlocks, KIND_LABEL, warningLabel, type Block, type BlockKind } from "./calendar";
+import { buildBlocks, warningLabel, type Block, type BlockKind } from "./calendar";
 import { KIND_ICON } from "./CalendarBlock";
 import { PreviewDialog } from "./PreviewDialog";
 import { reasonLabels } from "./reasons";
 import { TimeGrid } from "./TimeGrid";
 import "./planner.css";
 
-const LEGEND: BlockKind[] = ["course", "revision", "task", "exam"];
+/** Ordered by weight, as on the calendar: high stakes first. */
+const LEGEND: { kind: BlockKind; label: string }[] = [
+  { kind: "exam", label: "Partiel" },
+  { kind: "deadline", label: "Rendu" },
+  { kind: "revision", label: "Révision" },
+  { kind: "task", label: "Devoir" },
+  { kind: "course", label: "Cours" },
+  { kind: "personal", label: "Perso" },
+];
 
 export function PlannerPage() {
   const [params, setParams] = useSearchParams();
@@ -89,21 +97,12 @@ export function PlannerPage() {
     ),
   ];
 
-  const title =
-    view === "week"
-      ? plan.data
-        ? `${formatDuration(weekPlannedMin)} de travail planifiées cette semaine`
-        : "Aucun planning accepté pour l'instant"
-      : formatLongDate(selected);
+  const title = view === "week" ? `Semaine du ${formatShortDate(weekDays[0])}` : formatLongDate(selected);
 
   return (
     <div className="page">
       <PageHeader
-        eyebrow={
-          view === "week"
-            ? `Smart Planner · semaine du ${formatShortDate(weekDays[0])} au ${formatShortDate(weekDays[shownWeek.length - 1])}`
-            : "Smart Planner · vue détaillée"
-        }
+        eyebrow={view === "week" && plan.data ? `${formatDuration(weekPlannedMin)} de travail planifié` : undefined}
         title={title}
         actions={
           <>
@@ -117,7 +116,7 @@ export function PlannerPage() {
             </nav>
             <button type="button" className="btn btn--primary" onClick={compute} disabled={previewMutation.isPending}>
               <Icon name="refresh" />
-              {previewMutation.isPending ? "Calcul…" : plan.data ? "Replanifier" : "Générer mon planning"}
+              {previewMutation.isPending ? "Calcul…" : plan.data ? "Replanifier" : "Planifier"}
             </button>
           </>
         }
@@ -142,7 +141,7 @@ export function PlannerPage() {
             ))}
           {view === "week" && (
             <button type="button" className="btn btn--small" onClick={() => go({ date: today })}>
-              Cette semaine
+              Aujourd'hui
             </button>
           )}
           <button
@@ -155,20 +154,17 @@ export function PlannerPage() {
           </button>
         </nav>
         <div className="legend" aria-label="Légende">
-          {LEGEND.map((k) => (
-            <span key={k} className="legend__item">
-              <span className={`cal-block--${k}`} style={{ position: "static", width: 18, height: 14, borderRadius: 3, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--border-meaningful)" }}>
-                <Icon name={KIND_ICON[k]} size={10} />
+          {LEGEND.map(({ kind, label }) => (
+            <span key={kind} className="legend__item">
+              <span className={kind === "deadline" ? "legend__swatch cal-marker__flag" : `legend__swatch cal-block cal-block--${kind}`} style={kind === "deadline" ? { position: "static" } : undefined}>
+                <Icon name={KIND_ICON[kind]} size={10} />
               </span>
-              {KIND_LABEL[k]}
+              {label}
             </span>
           ))}
-          <span className="legend__item">
-            <Icon name="lock" size={13} /> Verrouillée
+          <span className="legend__item" title="Posé par le planner : vous pouvez le déplacer">
+            <span className="cal-block__grip" aria-hidden="true" style={{ opacity: 1 }}>⋮⋮</span> déplaçable
           </span>
-          <Link to="/settings#couleurs" className="small">
-            Couleurs des matières
-          </Link>
         </div>
       </div>
 
@@ -199,19 +195,18 @@ export function PlannerPage() {
         <aside className="split__side">
           {status.data?.dirty && (
             <Card tone="warning">
-              <StatusLine tone="warning" label="Planning à mettre à jour" />
-              <p className="small">
-                Modifié depuis l'acceptation : {status.data.changed_inputs.join(", ") || "données d'entrée"}.
-              </p>
-              <button type="button" className="btn btn--small" onClick={compute}>
-                Voir la proposition
-              </button>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <StatusLine tone="warning" label="Planning à mettre à jour" />
+                <button type="button" className="btn btn--small" onClick={compute}>
+                  Recalculer
+                </button>
+              </div>
             </Card>
           )}
 
           {view === "week" ? (
             <>
-              <Card title="Charge par jour">
+              <Card title="Charge par jour" aside={`max ${formatDuration(dailyMax)}`}>
                 {shownWeek.map((d) => {
                   const m = planned(d);
                   return (
@@ -226,10 +221,9 @@ export function PlannerPage() {
                     </div>
                   );
                 })}
-                <span className="xsmall muted">Plafond fixé dans Mon profil : {formatDuration(dailyMax)} / jour.</span>
               </Card>
               {(plan.data?.warnings.length ?? 0) > 0 && (
-                <Card tone="warning" title="Points d'attention">
+                <Card tone="warning" title="À vérifier">
                   <ul className="diff-list small">
                     {[...new Set(plan.data!.warnings.map(warningLabel))].map((w) => (
                       <li key={w}>
@@ -239,17 +233,16 @@ export function PlannerPage() {
                   </ul>
                 </Card>
               )}
-              <Card title="Pourquoi ce planning ?">
-                {weekReasons.length ? (
+              {weekReasons.length > 0 && (
+                <details className="card disclosure">
+                  <summary className="card__title">Pourquoi ce planning ?</summary>
                   <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14, lineHeight: 1.6 }}>
                     {weekReasons.map((r) => (
                       <li key={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</li>
                     ))}
                   </ul>
-                ) : (
-                  <p className="small muted">Aucune séance planifiée sur cette semaine.</p>
-                )}
-              </Card>
+                </details>
+              )}
             </>
           ) : (
             <DaySidebar day={selected} blocks={blocks.filter((b) => b.day === selected)} dailyMax={dailyMax} freeMin={availability.data?.days[0]?.free_min} />
@@ -288,18 +281,15 @@ function DaySidebar({ day, blocks, dailyMax, freeMin }: { day: string; blocks: B
       {next && (
         <Card tone="navy">
           <span className="small" style={{ opacity: 0.85 }}>
-            Prochaine activité · {formatClock(next.startAt, tz)}
+            Prochaine · {formatClock(next.startAt, tz)} – {formatClock(next.endAt, tz)}
           </span>
           <strong style={{ fontSize: 20 }}>{next.title}</strong>
-          <span className="small" style={{ opacity: 0.85 }}>
-            {formatClock(next.startAt, tz)} – {formatClock(next.endAt, tz)} · {formatDuration(next.endMin - next.startMin)}
-          </span>
           <Link className="btn btn--primary" to={`/focus?session=${next.session!.id}`} style={{ alignSelf: "flex-start" }}>
-            Lancer la Focus Room
+            <Icon name="play" /> Démarrer
           </Link>
         </Card>
       )}
-      <Card title="Bilan de la journée">
+      <Card title="Bilan">
         <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div className="stat">
             <span className="stat__label">Cours</span>
@@ -326,7 +316,7 @@ function DaySidebar({ day, blocks, dailyMax, freeMin }: { day: string; blocks: B
       </Card>
       <Card title="Déroulé">
         {sorted.length === 0 ? (
-          <p className="small muted">Rien de prévu ce jour-là.</p>
+          <p className="small muted">Rien de prévu.</p>
         ) : (
           <ol className="timeline">
             {sorted.map((b) => (
@@ -342,9 +332,7 @@ function DaySidebar({ day, blocks, dailyMax, freeMin }: { day: string; blocks: B
                     <strong>{b.title}</strong>
                     <SubjectBadge acronym={subjects.acronym(b.subjectId)} color={subjects.color(b.subjectId)} />
                   </span>
-                  <span className="small muted">
-                    {KIND_LABEL[b.kind]} · {formatDuration(b.endMin - b.startMin)}
-                  </span>
+                  <span className="small muted">{b.kind === "deadline" ? "Rendu" : formatDuration(b.endMin - b.startMin)}</span>
                 </span>
               </li>
             ))}

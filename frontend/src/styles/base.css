@@ -118,3 +118,9 @@ a { color: var(--action); }
 .dialog h2 { font-size: 20px; color: var(--text-title); }
 
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--navy); color: var(--surface); padding: 12px 16px; border-radius: var(--radius-m); font-size: 14px; z-index: 60; max-width: 420px; }
+
+/* Collapsible card (secondary explanations stay one click away). */
+.disclosure > summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+.disclosure > summary::-webkit-details-marker { display: none; }
+.disclosure > summary::after { content: "+"; font-size: 18px; color: var(--text-2); }
+.disclosure[open] > summary::after { content: "−"; }

@@ -15,7 +15,7 @@ export function SettingsPage() {
   const profile = useProfile();
   return (
     <div className="page">
-      <PageHeader eyebrow="Mon profil · Paramètres" title="Profil, affichage et préférences de travail" />
+      <PageHeader title="Profil" />
       <Card title="Catégorie d'élève">
         <StudentStatusPicker />
       </Card>
@@ -44,7 +44,7 @@ function ProfileForm({ profile }: { profile: Profile }) {
   const conflict = update.error instanceof ApiError && update.error.isConflict;
 
   return (
-    <Card title="Profil et limites de travail" subtitle="Le Smart Planner ne dépasse jamais ces plafonds.">
+    <Card title="Limites de travail">
       <form
         className="stack"
         onSubmit={(e) => {
@@ -97,7 +97,6 @@ function ProfileForm({ profile }: { profile: Profile }) {
             </label>
           ))}
         </div>
-        <p className="xsmall muted">Fuseau : {profile.timezone} · Fenêtres de travail : {prefs.work_windows.length} créneau(x) hebdomadaire(s).</p>
         {update.error && (
           <div className="status status--critical">{conflict ? "Profil modifié ailleurs : rechargez la page." : errorMessage(update.error)}</div>
         )}
@@ -118,7 +117,7 @@ function DisplayCard() {
     { id: "system", label: "Système" },
   ];
   return (
-    <Card title="Affichage" subtitle="Enregistré sur cet appareil.">
+    <Card title="Affichage">
       <div className="field">
         <span>Thème</span>
         <div className="segmented" role="group" aria-label="Thème">

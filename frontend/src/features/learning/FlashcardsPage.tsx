@@ -23,7 +23,6 @@ export function FlashcardsPage() {
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Flashcards · répétition espacée"
         title={due.data ? `${due.data.length} carte${due.data.length > 1 ? "s" : ""} à réviser` : "Flashcards"}
         actions={
           <button type="button" className="btn btn--primary" disabled={!due.data?.length} onClick={() => setReviewing(true)}>
@@ -40,7 +39,7 @@ export function FlashcardsPage() {
             <QueryState query={decks}>
               {(list) =>
                 list.length === 0 ? (
-                  <EmptyState title="Aucun paquet">Créez un paquet pour commencer.</EmptyState>
+                  <EmptyState title="Aucun paquet" />
                 ) : (
                   <ul className="list">
                     {list.map((d) => (
@@ -114,7 +113,7 @@ function ReviewSession({ cards, onExit }: { cards: CardT[]; onExit: () => void }
         {revealed ? (
           <div className="flash__back">{card.back}</div>
         ) : (
-          <p className="small muted">Essayez de répondre de mémoire avant de retourner la carte.</p>
+          <p className="small muted">Répondez de tête, puis retournez.</p>
         )}
       </div>
       {review.error && <div className="status status--critical">{errorMessage(review.error)}</div>}

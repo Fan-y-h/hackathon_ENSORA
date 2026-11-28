@@ -25,15 +25,14 @@ export function NotificationsPage() {
   return (
     <div className="page" style={{ maxWidth: 900 }}>
       <PageHeader
-        eyebrow="Notifications"
-        title={notifications.data ? `${notifications.data.unread_count} non lue(s)` : "Notifications"}
+        title="Notifications"
         actions={
           <button type="button" className="btn" disabled={!notifications.data?.unread_count || markAll.isPending} onClick={() => markAll.mutate()}>
-            Tout marquer comme lu
+            Tout lire
           </button>
         }
       />
-      <Card subtitle="Notifications dans l'application. L'envoi par e-mail se règle dans Mon profil.">
+      <Card>
         <QueryState query={notifications}>
           {(data) =>
             data.items.length === 0 ? (

@@ -63,26 +63,41 @@ export function AppShell() {
         {NAV.map((group) => (
           <div key={group.title} className="sidebar__group">
             <div className="sidebar__title">{group.title}</div>
-            {group.items.map((item) => {
-              const locked = examActive && ["/tutor", "/notes", "/studio", "/library"].includes(item.to);
-              return (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.to === "/"}
-                  className="sidebar__link"
-                  aria-disabled={locked || undefined}
-                  onClick={(e) => locked && e.preventDefault()}
-                >
-                  <span className="sidebar__dot" aria-hidden="true" />
-                  <span>{item.label}</span>
-                  {item.planned && <span className="sidebar__tag">à venir</span>}
-                  {locked && <Icon name="lock" size={14} label="Bloqué pendant l'examen" />}
-                </NavLink>
-              );
-            })}
+            {group.items
+              .filter((item) => !item.planned)
+              .map((item) => {
+                const locked = examActive && ["/notes"].includes(item.to);
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === "/"}
+                    className="sidebar__link"
+                    aria-disabled={locked || undefined}
+                    onClick={(e) => locked && e.preventDefault()}
+                  >
+                    <span className="sidebar__dot" aria-hidden="true" />
+                    <span>{item.label}</span>
+                    {locked && <Icon name="lock" size={14} label="Bloqué pendant l'examen" />}
+                  </NavLink>
+                );
+              })}
           </div>
         ))}
+        {/* Modules without a backend yet: one collapsed entry instead of five "à venir" tags. */}
+        <details className="sidebar__soon">
+          <summary className="sidebar__title">
+            Bientôt <Icon name="chevronDown" size={12} />
+          </summary>
+          {NAV.flatMap((g) => g.items)
+            .filter((item) => item.planned)
+            .map((item) => (
+              <NavLink key={item.to} to={item.to} className="sidebar__link sidebar__link--soon">
+                <span className="sidebar__dot" aria-hidden="true" />
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
+        </details>
         <div className="sidebar__group sidebar__footer">
           <NavLink to="/notifications" className="sidebar__link">
             <Icon name="bell" />
@@ -102,7 +117,7 @@ export function AppShell() {
       <main id="main" className="shell__main" tabIndex={-1}>
         {examActive && (
           <div className="exam-banner" role="status">
-            <Icon name="clock" /> Mode examen actif : AI Tutor, notes et corrigés sont bloqués jusqu'à la remise.
+            <Icon name="clock" /> Mode examen : notes et corrigés bloqués
           </div>
         )}
         <Outlet />

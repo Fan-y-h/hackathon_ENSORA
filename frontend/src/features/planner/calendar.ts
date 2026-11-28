@@ -5,8 +5,12 @@
 import type { CalendarEvent, StudySession } from "../../api/types";
 import { dayKey, minutesOfDay } from "../../lib/time";
 
-/** Visual families of the mock-ups: recognisable by icon, word and shape, not colour alone. */
-export type BlockKind = "course" | "revision" | "task" | "exam" | "personal";
+/**
+ * Visual families (proposition v3): recognisable by shape, icon and word, not colour alone.
+ * Weight follows what the event demands: exam > deadline > revision/task > course > personal.
+ * A deadline is an instant: drawn as a marker (line + flag), never as a block.
+ */
+export type BlockKind = "course" | "revision" | "task" | "exam" | "deadline" | "personal";
 
 export interface Block {
   id: string;
@@ -26,6 +30,10 @@ export interface Block {
   /** Lane index and lane count when blocks overlap. */
   lane: number;
   lanes: number;
+  /** Short uppercase word shown on the block ("PARTIEL", "CM", "RAPPEL ACTIF"). */
+  tag: string;
+  /** Exam slot imported but not yet confirmed by the student. */
+  tentative: boolean;
 }
 
 export const KIND_LABEL: Record<BlockKind, string> = {
@@ -33,6 +41,7 @@ export const KIND_LABEL: Record<BlockKind, string> = {
   revision: "Révision",
   task: "Devoir",
   exam: "Évaluation",
+  deadline: "Échéance",
   personal: "Personnel",
 };
 
@@ -42,7 +51,7 @@ export const ACTIVITY_LABEL: Record<string, string> = {
   practice: "Exercices",
   active_recall: "Rappel actif",
   flashcards: "Flashcards",
-  task_work: "Travail sur la tâche",
+  task_work: "Devoir",
   diagnostic: "Diagnostic",
 };
 
@@ -56,21 +65,21 @@ export function eventKind(type: CalendarEvent["type"]): BlockKind {
     case "presentation":
       return "exam";
     case "deadline":
-      return "task";
+      return "deadline";
     default:
       return "personal";
   }
 }
 
-const EVENT_TYPE_LABEL: Record<CalendarEvent["type"], string> = {
-  class: "Cours",
+const EVENT_TAG: Record<CalendarEvent["type"], string> = {
+  class: "CM",
   td: "TD",
   tp: "TP",
-  exam: "Examen",
-  presentation: "Soutenance",
-  deadline: "Échéance",
-  personal: "Personnel",
-  other: "Autre",
+  exam: "PARTIEL",
+  presentation: "SOUTENANCE",
+  deadline: "RENDU",
+  personal: "PERSO",
+  other: "PERSO",
 };
 
 export function sessionKind(session: Pick<StudySession, "kind" | "activity_type">): BlockKind {
@@ -96,7 +105,9 @@ export function buildBlocks(events: CalendarEvent[], sessions: StudySession[], t
       id: `event:${ev.id}`,
       kind: eventKind(ev.type),
       title: ev.title,
-      subtitle: [EVENT_TYPE_LABEL[ev.type], ev.room].filter(Boolean).join(" · "),
+      subtitle: ev.room ?? "",
+      tag: EVENT_TAG[ev.type],
+      tentative: ev.confirmation_required || ev.status === "tentative",
       subjectId: ev.subject_id ?? null,
       startAt: ev.start_at,
       endAt: ev.end_at,
@@ -113,7 +124,9 @@ export function buildBlocks(events: CalendarEvent[], sessions: StudySession[], t
       id: `session:${s.id}`,
       kind: sessionKind(s),
       title: s.title,
-      subtitle: ACTIVITY_LABEL[s.activity_type] ?? s.activity_type,
+      subtitle: "",
+      tag: (ACTIVITY_LABEL[s.activity_type] ?? s.activity_type).toUpperCase(),
+      tentative: false,
       subjectId: s.subject_id ?? null,
       startAt: s.start_at,
       endAt: s.end_at,
@@ -127,12 +140,20 @@ export function buildBlocks(events: CalendarEvent[], sessions: StudySession[], t
   return assignLanes(blocks);
 }
 
+/** Day-level highlights for the column header: exams and hand-in deadlines. */
+export function dayHighlights(blocks: Block[], day: string): Block[] {
+  return blocks.filter((b) => b.day === day && (b.kind === "exam" || b.kind === "deadline")).sort((a, b) => a.startMin - b.startMin);
+}
+
 /** Greedy interval partitioning per day so overlapping blocks sit side by side. */
 export function assignLanes(blocks: Omit<Block, "lane" | "lanes">[]): Block[] {
   const byDay = new Map<string, Omit<Block, "lane" | "lanes">[]>();
-  for (const b of blocks) byDay.set(b.day, [...(byDay.get(b.day) ?? []), b]);
-
   const out: Block[] = [];
+  for (const b of blocks) {
+    if (b.kind === "deadline") out.push({ ...b, lane: 0, lanes: 1 });
+    else byDay.set(b.day, [...(byDay.get(b.day) ?? []), b]);
+  }
+
   for (const dayBlocks of byDay.values()) {
     dayBlocks.sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin);
     let cluster: Block[] = [];
@@ -162,11 +183,15 @@ export function assignLanes(blocks: Omit<Block, "lane" | "lanes">[]): Block[] {
   return out;
 }
 
-/** Visible hour window: at least 8 h–20 h, widened to fit every block. */
+/**
+ * Visible hour window: at least 8 h–20 h, widened to fit every block.
+ * Deadlines do not widen it: a 23:59 hand-in is already announced in the column banner.
+ */
 export function hourWindow(blocks: Block[]): { from: number; to: number } {
   let from = 8 * 60;
   let to = 20 * 60;
   for (const b of blocks) {
+    if (b.kind === "deadline") continue;
     from = Math.min(from, Math.floor(b.startMin / 60) * 60);
     to = Math.max(to, Math.ceil(b.endMin / 60) * 60);
   }

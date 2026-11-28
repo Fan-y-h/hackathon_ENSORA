@@ -4,8 +4,7 @@
 .cal__dayhead:hover { background: var(--surface-2); }
 .cal__dayhead .muted { font-size: 13px; }
 .cal__dayhead strong { font-size: 18px; }
-.cal__dayhead--today strong { color: var(--action); }
-.cal__today-tag { flex-basis: auto; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--navy); color: var(--surface); }
+.cal__dayhead--today strong { color: var(--surface); background: var(--navy); border-radius: 999px; padding: 0 7px; }
 .cal__hours { position: relative; }
 .cal__hour { position: absolute; right: 6px; font-size: 11px; color: var(--text-2); transform: translateY(-50%); white-space: nowrap; }
 .cal__hour--major { font-weight: 700; color: var(--text-title); font-size: 12px; }
@@ -17,21 +16,52 @@
 .cal__now-label { position: absolute; right: 0; top: -18px; font-size: 11px; font-weight: 700; background: var(--action); color: #fff; padding: 0 6px; border-radius: 4px; white-space: nowrap; }
 .cal__allday { display: flex; flex-direction: column; gap: 4px; padding-bottom: 6px; min-height: 8px; }
 
-.cal-block { position: absolute; display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 4px 7px 4px 8px; border-radius: 6px; overflow: hidden; cursor: pointer; border: 1px solid var(--type-course-border); border-left-width: 4px; font-size: 12px; line-height: 1.25; z-index: 1; color: var(--text); }
+/* ---- Blocks (proposition v3): one visual channel per dimension ---- */
+.cal-block { position: absolute; display: flex; flex-direction: column; gap: 1px; text-align: left; padding: 3px 6px 3px 7px; border-radius: 6px; overflow: hidden; cursor: pointer; border: 1px solid var(--type-course-border); border-left-width: 5px; font-size: 12px; line-height: 1.25; z-index: 1; color: var(--text); background: var(--type-course-bg); }
 .cal-block:hover { z-index: 2; box-shadow: var(--shadow-s); }
-.cal-block__head { display: flex; gap: 5px; align-items: flex-start; font-weight: 600; min-width: 0; }
-.cal-block__head .badge { margin-left: auto; flex: none; }
-.cal-block__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.cal-block__meta { font-size: 11px; color: var(--text-2); }
-.cal-block--course { background: var(--type-course-bg); }
-.cal-block--personal { background: repeating-linear-gradient(135deg, var(--surface-2) 0 6px, var(--surface) 6px 12px); border-style: dotted; border-left-style: solid; }
+.cal-block__tagline { display: flex; gap: 4px; align-items: center; min-width: 0; color: inherit; opacity: 0.9; }
+.cal-block__tag { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.cal-block__tagline .badge { flex: none; font-size: 10px; padding: 0 4px; color: inherit; background: transparent; }
+.cal-block__grip { flex: none; font-size: 12px; letter-spacing: -2px; opacity: 0.6; }
+.cal-block__title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cal-block__meta { font-size: 11px; opacity: 0.85; }
+
+/* Level 3 — imposed context: white, thin rule, normal weight */
+.cal-block--course .cal-block__title { font-weight: 500; }
+.cal-block--course .cal-block__tagline { color: var(--text-2); }
+/* Personal: dotted, no fill, no subject stripe */
+.cal-block--personal { background: transparent; border: 1px dotted var(--border-meaningful); color: var(--text-2); }
+.cal-block--personal .cal-block__title { font-weight: 500; color: var(--text); }
+/* Level 2 — proposed by the planner, movable */
 .cal-block--revision { background: var(--type-revision-bg); border-color: var(--type-revision-border); color: var(--type-revision-text); }
-.cal-block--revision .cal-block__meta { color: inherit; }
-.cal-block--task { background: var(--type-task-bg); border: 1.5px dashed var(--type-task-border); border-left: 4px solid; color: var(--type-task-text); }
-.cal-block--task .cal-block__meta { color: inherit; }
+.cal-block--task { background: var(--type-task-bg); border: 1.5px dashed var(--type-task-border); border-left: 5px solid; color: var(--type-task-text); }
+/* Level 1 — imposed, high stakes: the only solid dark block */
 .cal-block--exam { background: var(--type-exam-bg); border-color: var(--type-exam-border); color: var(--type-exam-text); }
-.cal-block--exam .cal-block__meta { color: inherit; }
-.cal-block--done { opacity: 0.6; }
+.cal-block--exam .cal-block__title { font-weight: 700; }
+.cal-block--exam.cal-block--tentative { background: var(--surface); border: 2px solid var(--type-exam-bg); border-left-width: 5px; color: var(--text-title); }
+
+/* States */
+.cal-block--now { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); z-index: 2; }
+.cal-block--done { background: var(--surface-2); border-style: solid; border-color: var(--border); color: var(--text-2); }
+.cal-block--done .cal-block__tagline svg { color: var(--good-text); }
+.cal-block--missed { background: var(--surface); border: 1.5px dashed var(--critical-text); border-left: 5px solid; }
+.cal-block--missed .cal-block__title { text-decoration: line-through; color: var(--text-2); }
+.cal-block--missed .cal-block__meta { color: var(--critical-text); opacity: 1; font-weight: 600; }
+
+/* Deadline: an instant — line + flag, never a block */
+.cal-marker { position: absolute; left: 0; right: 0; height: 0; border: 0; border-top: 2px solid var(--navy); background: none; padding: 0; cursor: pointer; z-index: 3; }
+.cal-marker__flag { position: absolute; right: 2px; top: -11px; max-width: calc(100% - 4px); display: inline-flex; gap: 4px; align-items: center; background: var(--surface); border: 2px solid var(--navy); border-left-width: 5px; border-radius: 999px; padding: 0 7px 0 5px; height: 20px; font-size: 11px; font-weight: 700; color: var(--text-title); white-space: nowrap; }
+.cal-marker__text { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* Column header banners: exams and hand-ins visible without scrolling */
+.cal__banners { display: flex; flex-direction: column; gap: 3px; padding-bottom: 6px; }
+.cal__banner { display: flex; gap: 4px; align-items: center; min-height: 22px; padding: 0 6px; border-radius: 6px; font-size: 10px; font-weight: 800; letter-spacing: 0.04em; cursor: pointer; text-align: left; white-space: nowrap; overflow: hidden; }
+.cal__banner span { overflow: hidden; text-overflow: ellipsis; }
+.cal__banner--exam { background: var(--type-exam-bg); color: var(--type-exam-text); border: 0; }
+.cal__banner--exam.cal__banner--tentative, .cal__banner--deadline { background: var(--surface); color: var(--text-title); border: 1.5px solid var(--navy); }
+
+/* Legend swatches reuse the block styles */
+.legend__swatch { position: static; width: 22px; height: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; border-left-width: 1px; }
 
 .day-strip { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .day-strip__btn { min-height: 44px; min-width: 64px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-title); font-weight: 600; font-size: 13px; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2; cursor: pointer; }
@@ -51,3 +81,5 @@
 
 .diff-list { list-style: none; margin: 0; padding: 0; font-size: 14px; display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow: auto; }
 .diff-list li { display: flex; gap: 8px; align-items: baseline; }
+.cal-block__tag--short { flex: none; }
+.cal-block__title--inline { flex: 1; min-width: 0; display: block; white-space: nowrap; -webkit-line-clamp: unset; }

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 
 import { useSubjects } from "../../app/subjects";
+import { Icon } from "../../components/Icon";
 import { dayKey, formatClock, minutesOfDay, shortDay, weekdayOfKey } from "../../lib/time";
-import { hourWindow, type Block } from "./calendar";
+import { dayHighlights, hourWindow, type Block } from "./calendar";
 import { CalendarBlock } from "./CalendarBlock";
 
 function useNow(intervalMs = 60_000) {
@@ -12,6 +13,14 @@ function useNow(intervalMs = 60_000) {
     return () => window.clearInterval(id);
   }, [intervalMs]);
   return now;
+}
+
+/** Next planner session of today (or the one in progress): the only item ringed in coral. */
+export function nextSessionId(blocks: Block[], today: string, nowMin: number): string | null {
+  const todays = blocks.filter((b) => b.origin === "planner" && b.day === today).sort((a, b) => a.startMin - b.startMin);
+  const running = todays.find((b) => b.session?.status === "in_progress");
+  if (running) return running.id;
+  return todays.find((b) => b.session?.status === "planned" && b.endMin > nowMin)?.id ?? null;
 }
 
 export function TimeGrid({
@@ -42,6 +51,8 @@ export function TimeGrid({
   const step = detailed ? 30 : 60;
   const ticks: number[] = [];
   for (let m = from; m <= to; m += step) ticks.push(m);
+  const nextId = nextSessionId(blocks, today, nowMin);
+  const showBanners = !detailed && days.some((d) => dayHighlights(visible, d).length > 0);
 
   return (
     <section className="cal" aria-label={label}>
@@ -53,17 +64,11 @@ export function TimeGrid({
             <>
               <span className="muted">{shortDay(weekdayOfKey(d))}</span>
               <strong>{Number(d.slice(8))}</strong>
-              {isToday && <span className="cal__today-tag">Aujourd'hui</span>}
+              {isToday && <span className="sr-only">(aujourd'hui)</span>}
             </>
           );
           return onSelectDay ? (
-            <button
-              key={d}
-              type="button"
-              className={`cal__dayhead${isToday ? " cal__dayhead--today" : ""}`}
-              onClick={() => onSelectDay(d)}
-              aria-label={`Ouvrir la vue détaillée du ${shortDay(weekdayOfKey(d))} ${Number(d.slice(8))}`}
-            >
+            <button key={d} type="button" className={`cal__dayhead${isToday ? " cal__dayhead--today" : ""}`} onClick={() => onSelectDay(d)}>
               {content}
             </button>
           ) : (
@@ -73,10 +78,34 @@ export function TimeGrid({
           );
         })}
 
+        {showBanners && (
+          <>
+            <span />
+            {days.map((d) => (
+              <div key={d} className="cal__banners">
+                {dayHighlights(visible, d).map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    className={`cal__banner cal__banner--${b.kind}${b.tentative ? " cal__banner--tentative" : ""}`}
+                    onClick={() => onOpen(b)}
+                    title={b.title}
+                  >
+                    <Icon name={b.kind === "exam" ? "clock" : "flag"} size={11} />
+                    <span>
+                      {b.tag} · {formatClock(b.startAt, timezone)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </>
+        )}
+
         <div className="cal__hours" style={{ height }} aria-hidden="true">
           {ticks.map((m) => (
             <span key={m} className={`cal__hour${m % 60 === 0 ? " cal__hour--major" : ""}`} style={{ top: (m - from) * pxPerMin }}>
-              {m % 60 === 0 ? `${m / 60} h` : `${Math.floor(m / 60)} h 30`}
+              {m % 60 === 0 ? `${m / 60} h` : ""}
             </span>
           ))}
         </div>
@@ -87,7 +116,7 @@ export function TimeGrid({
               <span key={m} className="cal__line" style={{ top: (m - from) * pxPerMin, opacity: m % 60 === 0 ? 1 : 0.5 }} />
             ))}
             {visible
-              .filter((b) => b.day === d)
+              .filter((b) => b.day === d && (b.kind !== "deadline" || (b.startMin >= from && b.startMin <= to)))
               .map((b) => (
                 <CalendarBlock
                   key={b.id}
@@ -95,12 +124,12 @@ export function TimeGrid({
                   top={(b.startMin - from) * pxPerMin}
                   height={(b.endMin - b.startMin) * pxPerMin - 3}
                   onOpen={onOpen}
-                  detailed={detailed}
+                  isNext={b.id === nextId}
                 />
               ))}
             {d === today && nowMin >= from && nowMin <= to && (
               <div className="cal__now" style={{ top: (nowMin - from) * pxPerMin }} role="img" aria-label={`Maintenant, ${formatClock(now, timezone)}`}>
-                <span className="cal__now-label">Maintenant · {formatClock(now, timezone)}</span>
+                <span className="cal__now-label">{formatClock(now, timezone)}</span>
               </div>
             )}
           </div>
